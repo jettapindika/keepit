@@ -66,6 +66,7 @@ const VECTOR_PARKS = [
 ] as const;
 
 function clamp(value: number, min: number, max: number): number {
+  'worklet';
   return Math.min(max, Math.max(min, value));
 }
 
@@ -225,12 +226,12 @@ export function InteractiveCoupleMap({
   }, [partnerInGhost, motionEnabled, motionSpeed, veilOpacity]);
 
   const myPinAnimStyle = useAnimatedStyle(() => ({
-    opacity: clamp(myScale.get(), 0, 1),
+    opacity: Math.min(1, Math.max(0, myScale.get())),
     transform: [{ scale: myScale.get() }],
   }));
 
   const partnerPinAnimStyle = useAnimatedStyle(() => ({
-    opacity: clamp(partnerScale.get(), 0, 1),
+    opacity: Math.min(1, Math.max(0, partnerScale.get())),
     transform: [{ scale: partnerScale.get() }],
   }));
 

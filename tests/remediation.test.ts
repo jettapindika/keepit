@@ -9,6 +9,8 @@
 // - P2: Truthful widget pinning behavior & composite watermark SVG/export invariants
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -691,5 +693,27 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.ok(svg9x16.includes('Nov 6 · 02:30 PM'));
     assert.ok(svg9x16.includes('@sora.frames'));
     assert.ok(svg9x16.includes('neon vibe'));
+  });
+
+  it('keeps settings and memories tab routes navigable in Expo Router 58 and avoids non-worklet closures in InteractiveCoupleMap', () => {
+    const tabsLayoutSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/(tabs)/_layout.tsx'),
+      'utf8'
+    );
+    assert.equal(
+      /href:\s*null/.test(tabsLayoutSrc),
+      false,
+      'Tabs.Screen routes must not set href: null because Expo Router 58 useVisibleTabsWithRedirect redirects hidden focused tabs back to index'
+    );
+
+    const mapSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/components/map/InteractiveCoupleMap.tsx'),
+      'utf8'
+    );
+    assert.equal(
+      /useAnimatedStyle\([\s\S]{0,160}?\bclamp\(/.test(mapSrc),
+      false,
+      'useAnimatedStyle worklets must not capture non-worklet clamp() helper across UI runtime'
+    );
   });
 });
