@@ -107,3 +107,18 @@ export interface TodayMomentBundle {
   mine: MomentRecord | null;
   partner: PartnerMomentView | null;
 }
+
+export interface StatusRecord {
+  user_id: string;
+  couple_id: string;
+  emoji: string;
+  text: string;
+  duration_preset: StatusDurationPreset;
+  expires_at: string;
+  updated_at: string;
+}
+
+export interface CoupleStatusBundle {
+  mine: StatusRecord | null;
+  partner: StatusRecord | null;
+}

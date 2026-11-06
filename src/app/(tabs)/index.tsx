@@ -11,8 +11,14 @@ import {
   simulateSandboxPromptState,
   updateMomentCaption,
 } from '@/api/moments';
+import {
+  fetchCoupleStatuses,
+  simulateSandboxPartnerStatus,
+  STATUS_PRESETS,
+} from '@/api/statuses';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { DualMomentCard, LockedMomentCard } from '@/components/moment/MomentCards';
+import { StatusHeaderCard } from '@/components/status/StatusHeaderCard';
 import { DualFrameMark, InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
@@ -46,7 +52,18 @@ export default function HomeScreen() {
       }),
   });
 
-  // Realtime subscription to public.moments so partner posts unlock/appear live
+  const statusQuery = useQuery({
+    queryKey: ['couple-statuses', couple?.id, user?.id],
+    enabled: Boolean(couple?.id && user?.id),
+    queryFn: () =>
+      fetchCoupleStatuses({
+        coupleId: couple!.id,
+        userId: user!.id,
+      }),
+    refetchInterval: 30_000,
+  });
+
+  // Realtime subscription to public.moments and public.statuses
   useEffect(() => {
     const client = supabase;
     if (!couple?.id || !isSupabaseConfigured || !client) return;
@@ -63,6 +80,18 @@ export default function HomeScreen() {
         },
         () => {
           void queryClient.invalidateQueries({ queryKey: ['today-moment', couple.id] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'statuses',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] });
         }
       )
       .subscribe();
@@ -151,7 +180,13 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Live 2-Minute Prompt Banner (when user hasn't posted yet) */}
+        {/* Partner & Self Ephemeral Status Card */}
+        <StatusHeaderCard
+          partnerName={partnerName}
+          partnerStatus={statusQuery.data?.partner ?? null}
+          myStatus={statusQuery.data?.mine ?? null}
+          onOpenStatusSheet={() => router.push('/status-sheet')}
+        />
         {bundle?.prompt && !myMoment ? (
           <View
             style={[
@@ -412,6 +447,19 @@ export default function HomeScreen() {
                 style={styles.flex}
               />
             </View>
+            <KeepItButton
+              label={`Simulate ${partnerName} Status (📚 In class)`}
+              variant="secondary"
+              onPress={() => {
+                void simulateSandboxPartnerStatus({
+                  coupleId: couple.id,
+                  partnerId,
+                  preset: STATUS_PRESETS[0],
+                }).then(() =>
+                  queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] })
+                );
+              }}
+            />
           </View>
         ) : null}
       </ScrollView>

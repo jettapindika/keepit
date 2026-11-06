@@ -147,6 +147,13 @@ export default function RootLayout() {
               animation: 'fade_from_bottom',
             }}
           />
+          <Stack.Screen
+            name="status-sheet"
+            options={{
+              presentation: 'modal',
+              animation: 'slide_from_bottom',
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </QueryClientProvider>
