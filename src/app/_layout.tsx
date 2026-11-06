@@ -140,6 +140,13 @@ export default function RootLayout() {
           }}>
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="camera"
+            options={{
+              presentation: 'fullScreenModal',
+              animation: 'fade_from_bottom',
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </QueryClientProvider>
