@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { buildSimulatedDualPhotos, DEFAULT_WARM_BLURHASH } from '@/api/moments';
+import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
 import {
@@ -109,6 +110,7 @@ export async function sendPartnerNudge(params: {
 
   const nextEvents = [record, ...events].slice(0, 60);
   await AsyncStorage.setItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
+  void broadcastCoupleSync(params.coupleId, { kind: 'nudge_sent', event: record });
   return record;
 }
 

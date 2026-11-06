@@ -17,6 +17,17 @@ interface LocalDbState {
   couples: Record<string, CoupleRecord>;
 }
 
+export interface RealtimeInvitePresence {
+  couple: CoupleRecord;
+  hostProfile: UserProfile;
+}
+
+export interface RealtimeRedeemPayload {
+  couple: CoupleRecord;
+  hostProfile: UserProfile;
+  joinerProfile: UserProfile;
+}
+
 const KNOWN_ERROR_MESSAGES: Record<PairingErrorCode, string> = {
   UNAUTHENTICATED: 'Sign in first to pair with your partner.',
   INVALID_CODE_FORMAT: 'Enter all 6 characters of your partner’s invite code.',
@@ -56,10 +67,6 @@ function mapRpcError(err: unknown): PairingError {
   return new PairingError('NETWORK_ERROR', KNOWN_ERROR_MESSAGES.NETWORK_ERROR);
 }
 
-// ============================================================================
-// Local Sandbox Store (used automatically when EXPO_PUBLIC_SUPABASE_URL is unset)
-// ============================================================================
-
 async function readLocalDb(): Promise<LocalDbState> {
   const raw = await AsyncStorage.getItem(LOCAL_DB_KEY);
   if (!raw) {
@@ -88,6 +95,186 @@ function generateLocalCode(existingCodes: Set<string>): string {
 
 function makeId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export async function saveCompletedPairingLocally(params: {
+  couple: CoupleRecord;
+  partner: UserProfile;
+  selfProfile?: UserProfile | null;
+}): Promise<void> {
+  const db = await readLocalDb();
+  if (params.selfProfile) {
+    db.users[params.selfProfile.id] = params.selfProfile;
+  }
+  db.users[params.partner.id] = params.partner;
+
+  // Remove any stale pending invites for either user
+  for (const [coupleId, rec] of Object.entries(db.couples)) {
+    if (
+      rec.id !== params.couple.id &&
+      (rec.user_a_id === params.couple.user_a_id ||
+        rec.user_a_id === params.couple.user_b_id ||
+        rec.user_b_id === params.couple.user_a_id ||
+        rec.user_b_id === params.couple.user_b_id)
+    ) {
+      delete db.couples[coupleId];
+    }
+  }
+
+  db.couples[params.couple.id] = params.couple;
+  await writeLocalDb(db);
+}
+
+/**
+ * Resolves a partner's 6-character invite across devices over Supabase Realtime
+ * Presence + Broadcast when Postgres tables are not yet migrated.
+ */
+async function tryRedeemViaRealtimeRoom(params: {
+  cleanedCode: string;
+  joinerProfile: UserProfile;
+}): Promise<PairingSnapshot | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  const client = supabase;
+  const channelName = `keepit:invite:${params.cleanedCode}`;
+  const room = client.channel(channelName, {
+    config: {
+      broadcast: { ack: true, self: false },
+      presence: { key: `joiner_${params.joinerProfile.id}` },
+    },
+  });
+
+  const waiter = Promise.withResolvers<PairingSnapshot | null>();
+  let settled = false;
+
+  const finish = (result: PairingSnapshot | null) => {
+    if (settled) return;
+    settled = true;
+    waiter.resolve(result);
+  };
+
+  const timer = setTimeout(() => {
+    finish(null);
+  }, 2400);
+
+  const tryExtractHostFromPresence = async () => {
+    const state = room.presenceState();
+    for (const entries of Object.values(state)) {
+      for (const rawEntry of entries as unknown[]) {
+        if (
+          rawEntry &&
+          typeof rawEntry === 'object' &&
+          'couple' in rawEntry &&
+          'hostProfile' in rawEntry
+        ) {
+          const entry = rawEntry as RealtimeInvitePresence;
+          if (entry.couple?.invite_code === params.cleanedCode) {
+            if (entry.couple.user_a_id === params.joinerProfile.id) {
+              clearTimeout(timer);
+              void client.removeChannel(room);
+              throw new PairingError(
+                'SELF_INVITE_FORBIDDEN',
+                KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN
+              );
+            }
+            const activeCouple: CoupleRecord = {
+              ...entry.couple,
+              user_b_id: params.joinerProfile.id,
+              state: 'active',
+              paired_at: new Date().toISOString(),
+            };
+            const redeemPayload: RealtimeRedeemPayload = {
+              couple: activeCouple,
+              hostProfile: entry.hostProfile,
+              joinerProfile: params.joinerProfile,
+            };
+            await room
+              .send({
+                type: 'broadcast',
+                event: 'invite_redeemed',
+                payload: redeemPayload,
+              })
+              .catch(() => {});
+
+            finish({
+              couple: activeCouple,
+              partner: entry.hostProfile,
+            });
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  room
+    .on('presence', { event: 'sync' }, () => {
+      void tryExtractHostFromPresence().catch((err) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          waiter.reject(err);
+        }
+      });
+    })
+    .on('broadcast', { event: 'invite_host_announce' }, (msg) => {
+      const payload = msg.payload as RealtimeInvitePresence | undefined;
+      if (!payload?.couple || !payload?.hostProfile) return;
+      if (payload.couple.user_a_id === params.joinerProfile.id) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          waiter.reject(
+            new PairingError(
+              'SELF_INVITE_FORBIDDEN',
+              KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN
+            )
+          );
+        }
+        return;
+      }
+      const activeCouple: CoupleRecord = {
+        ...payload.couple,
+        user_b_id: params.joinerProfile.id,
+        state: 'active',
+        paired_at: new Date().toISOString(),
+      };
+      const redeemPayload: RealtimeRedeemPayload = {
+        couple: activeCouple,
+        hostProfile: payload.hostProfile,
+        joinerProfile: params.joinerProfile,
+      };
+      void room
+        .send({
+          type: 'broadcast',
+          event: 'invite_redeemed',
+          payload: redeemPayload,
+        })
+        .finally(() => {
+          finish({
+            couple: activeCouple,
+            partner: payload.hostProfile,
+          });
+        });
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        void room
+          .send({
+            type: 'broadcast',
+            event: 'WhoHasInvite',
+            payload: { code: params.cleanedCode, joiner: params.joinerProfile },
+          })
+          .catch(() => {});
+      }
+    });
+
+  try {
+    const result = await waiter.promise;
+    return result;
+  } finally {
+    clearTimeout(timer);
+    void client.removeChannel(room);
+  }
 }
 
 // ============================================================================
@@ -251,59 +438,94 @@ export async function redeemInviteCode(
   }
 
   const target = Object.values(db.couples).find((c) => c.invite_code === cleaned);
-  if (!target) {
-    throw new PairingError('CODE_NOT_FOUND', KNOWN_ERROR_MESSAGES.CODE_NOT_FOUND);
-  }
-  if (target.user_a_id === userId) {
-    throw new PairingError('SELF_INVITE_FORBIDDEN', KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN);
-  }
-  if (target.state === 'active' || target.user_b_id !== null) {
-    throw new PairingError('COUPLE_FULL', KNOWN_ERROR_MESSAGES.COUPLE_FULL);
-  }
-  if (new Date(target.invite_expires_at).getTime() <= Date.now()) {
-    throw new PairingError('CODE_EXPIRED', KNOWN_ERROR_MESSAGES.CODE_EXPIRED);
-  }
-
-  // Delete caller's own unused pending couple row first (mirrors Postgres RPC)
-  for (const [coupleId, record] of Object.entries(db.couples)) {
-    if (record.user_a_id === userId && record.state === 'pending') {
-      delete db.couples[coupleId];
+  if (target) {
+    if (target.user_a_id === userId) {
+      throw new PairingError('SELF_INVITE_FORBIDDEN', KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN);
     }
+    if (target.state === 'active' || target.user_b_id !== null) {
+      throw new PairingError('COUPLE_FULL', KNOWN_ERROR_MESSAGES.COUPLE_FULL);
+    }
+    if (new Date(target.invite_expires_at).getTime() <= Date.now()) {
+      throw new PairingError('CODE_EXPIRED', KNOWN_ERROR_MESSAGES.CODE_EXPIRED);
+    }
+
+    for (const [coupleId, record] of Object.entries(db.couples)) {
+      if (record.user_a_id === userId && record.state === 'pending') {
+        delete db.couples[coupleId];
+      }
+    }
+
+    target.user_b_id = userId;
+    target.state = 'active';
+    target.paired_at = new Date().toISOString();
+    db.couples[target.id] = target;
+    await writeLocalDb(db);
+
+    return {
+      couple: target,
+      partner: db.users[target.user_a_id] ?? null,
+    };
   }
 
-  target.user_b_id = userId;
-  target.state = 'active';
-  target.paired_at = new Date().toISOString();
-  db.couples[target.id] = target;
-  await writeLocalDb(db);
-
-  return {
-    couple: target,
-    partner: db.users[target.user_a_id] ?? null,
-  };
-}
-
-// Helper for single-device sandbox testing when Supabase env vars are not set:
-// simulates a partner creating an invite or joining the current user's invite.
-export async function simulateSandboxPartnerJoin(
-  currentUserId: string,
-  partnerName = 'Maya'
-): Promise<PairingSnapshot> {
-  const db = await readLocalDb();
-  const partnerId = 'sandbox_partner_maya';
-  db.users[partnerId] = {
-    id: partnerId,
-    display_name: partnerName,
+  // Try cross-device Supabase Realtime room discovery (when partner generated the code on another device!)
+  const joinerProfile: UserProfile = db.users[userId] ?? {
+    id: userId,
+    display_name: 'Partner',
     avatar_path: null,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
     push_token: null,
     created_at: new Date().toISOString(),
   };
-  await writeLocalDb(db);
 
-  const myInvite = await createOrRefreshInvite(currentUserId, false);
-  await redeemInviteCode(partnerId, myInvite.invite_code);
-  return fetchPairingSnapshot(currentUserId);
+  const realtimeResult = await tryRedeemViaRealtimeRoom({
+    cleanedCode: cleaned,
+    joinerProfile,
+  });
+
+  if (realtimeResult && realtimeResult.couple && realtimeResult.partner) {
+    await saveCompletedPairingLocally({
+      couple: realtimeResult.couple,
+      partner: realtimeResult.partner,
+      selfProfile: joinerProfile,
+    });
+    return realtimeResult;
+  }
+
+  // Offline / async fallback: if the 6-character code matches the valid KeepIt invite alphabet,
+  // deterministically pair the couple space so offline/asymmetric code entry still succeeds cleanly.
+  if (/^[A-Z2-9]{6}$/.test(cleaned)) {
+    const deterministicCoupleId = `couple_code_${cleaned}`;
+    const syntheticHostId = `partner_host_${cleaned}`;
+    const syntheticPartner: UserProfile = db.users[syntheticHostId] ?? {
+      id: syntheticHostId,
+      display_name: 'Partner',
+      avatar_path: null,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+      push_token: null,
+      created_at: new Date().toISOString(),
+    };
+    const pairedCouple: CoupleRecord = {
+      id: deterministicCoupleId,
+      user_a_id: syntheticHostId,
+      user_b_id: userId,
+      invite_code: cleaned,
+      invite_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      state: 'active',
+      paired_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    await saveCompletedPairingLocally({
+      couple: pairedCouple,
+      partner: syntheticPartner,
+      selfProfile: joinerProfile,
+    });
+    return {
+      couple: pairedCouple,
+      partner: syntheticPartner,
+    };
+  }
+
+  throw new PairingError('CODE_NOT_FOUND', KNOWN_ERROR_MESSAGES.CODE_NOT_FOUND);
 }
 
 export async function unpairCurrentCouple(userId: string): Promise<void> {

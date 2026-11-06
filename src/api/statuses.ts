@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   CoupleStatusBundle,
@@ -146,6 +147,7 @@ export async function upsertMyStatus(params: {
   };
   map[params.userId] = record;
   await writeLocalStatuses(map);
+  void broadcastCoupleSync(params.coupleId, { kind: 'status_upsert', status: record });
   return record;
 }
 
@@ -157,8 +159,12 @@ export async function clearMyStatus(userId: string): Promise<void> {
   }
 
   const map = await readLocalStatuses();
+  const prevCoupleId = map[userId]?.couple_id;
   delete map[userId];
   await writeLocalStatuses(map);
+  if (prevCoupleId) {
+    void broadcastCoupleSync(prevCoupleId, { kind: 'status_clear', userId });
+  }
 }
 
 // Sandbox helper: lets user simulate partner setting or expiring a status

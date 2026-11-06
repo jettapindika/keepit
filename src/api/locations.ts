@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
 import {
@@ -412,6 +413,7 @@ export async function updateMyLocationShare(params: {
 
   await AsyncStorage.setItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
 
+  let modeEvent: CoupleEventRecord | undefined;
   if (previousMode !== params.mode) {
     await appendLocationModeEvent({
       coupleId: params.coupleId,
@@ -420,8 +422,15 @@ export async function updateMyLocationShare(params: {
       newMode: params.mode,
       createdAtIso: nowIso,
     });
+    const events = await readLocalEvents();
+    modeEvent = events[0];
   }
 
+  void broadcastCoupleSync(params.coupleId, {
+    kind: 'location_upsert',
+    location: locationsMap[myKey],
+    event: modeEvent,
+  });
   return fetchCoupleLocations({
     coupleId: params.coupleId,
     userId: params.userId,

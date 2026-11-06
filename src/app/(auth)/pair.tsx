@@ -20,7 +20,11 @@ import {
   formatInviteCodeDisplay,
   normalizeInviteCode,
   redeemInviteCode,
+  RealtimeInvitePresence,
+  RealtimeRedeemPayload,
+  saveCompletedPairingLocally,
 } from '@/api/pairing';
+import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -107,6 +111,68 @@ export default function PairScreen() {
     return () => clearInterval(timer);
   }, [inviteRecord?.invite_expires_at]);
 
+  // Host Realtime invite room so a partner on another phone can discover & redeem this code live
+  useEffect(() => {
+    const client = supabase;
+    if (
+      !isSupabaseConfigured ||
+      !client ||
+      !user ||
+      !inviteRecord?.invite_code ||
+      inviteRecord.state === 'active'
+    ) {
+      return;
+    }
+
+    const code = normalizeInviteCode(inviteRecord.invite_code);
+    const channelName = `keepit:invite:${code}`;
+    const presencePayload: RealtimeInvitePresence = {
+      couple: inviteRecord,
+      hostProfile: user,
+    };
+
+    const room = client.channel(channelName, {
+      config: {
+        broadcast: { ack: true, self: false },
+        presence: { key: `host_${user.id}` },
+      },
+    });
+
+    room
+      .on('broadcast', { event: 'WhoHasInvite' }, () => {
+        void room
+          .send({
+            type: 'broadcast',
+            event: 'invite_host_announce',
+            payload: presencePayload,
+          })
+          .catch(() => {});
+      })
+      .on('broadcast', { event: 'invite_redeemed' }, (msg) => {
+        const payload = msg.payload as RealtimeRedeemPayload | undefined;
+        if (!payload?.couple || !payload?.joinerProfile) return;
+        void saveCompletedPairingLocally({
+          couple: payload.couple,
+          partner: payload.joinerProfile,
+          selfProfile: user,
+        }).then(() => {
+          if (Platform.OS !== 'web') {
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
+          setPairing(payload.couple, payload.joinerProfile);
+          router.replace('/(tabs)');
+        });
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void room.track(presencePayload).catch(() => {});
+        }
+      });
+
+    return () => {
+      void client.removeChannel(room);
+    };
+  }, [user, inviteRecord, setPairing, router]);
   const handleShareInvite = async () => {
     if (!inviteRecord) return;
     const link = buildInviteDeepLink(inviteRecord.invite_code);

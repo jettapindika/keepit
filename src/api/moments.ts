@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   DailyPromptRecord,
@@ -366,6 +367,7 @@ export async function submitDailyMoment(params: {
   }
 
   await writeLocalMoments(state);
+  void broadcastCoupleSync(params.coupleId, { kind: 'moment_upsert', moment: record });
   return record;
 }
 
@@ -398,6 +400,7 @@ export async function updateMomentCaption(params: {
   const updated: MomentRecord = { ...record, caption: trimmed };
   state.moments[key] = updated;
   await writeLocalMoments(state);
+  void broadcastCoupleSync(updated.couple_id, { kind: 'moment_upsert', moment: updated });
   return updated;
 }
 
