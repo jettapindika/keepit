@@ -1,54 +1,30 @@
 package com.keepit.app.widget
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.net.Uri
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.glance.GlanceId
-import androidx.glance.GlanceModifier
-import androidx.glance.Image
-import androidx.glance.ImageProvider
-import androidx.glance.LocalSize
-import androidx.glance.action.clickable
-import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.action.actionStartActivity
-import androidx.glance.appwidget.cornerRadius
-import androidx.glance.appwidget.provideContent
-import androidx.glance.background
-import androidx.glance.layout.Alignment
-import androidx.glance.layout.Box
-import androidx.glance.layout.Column
-import androidx.glance.layout.ContentScale
-import androidx.glance.layout.Row
-import androidx.glance.layout.Spacer
-import androidx.glance.layout.fillMaxHeight
-import androidx.glance.layout.fillMaxSize
-import androidx.glance.layout.fillMaxWidth
-import androidx.glance.layout.height
-import androidx.glance.layout.padding
-import androidx.glance.layout.size
-import androidx.glance.layout.width
-import androidx.glance.text.FontWeight
-import androidx.glance.text.Text
-import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import android.os.Bundle
+import android.util.TypedValue
+import android.widget.RemoteViews
 import org.json.JSONObject
 import java.io.File
 import java.net.URL
 import java.time.Duration
 import java.time.Instant
+import kotlin.concurrent.thread
 
-data class GlanceWidgetSnapshot(
+data class WidgetSnapshotData(
   val coupleId: String,
   val partnerName: String,
   val statusEmoji: String?,
@@ -63,36 +39,67 @@ data class GlanceWidgetSnapshot(
   val updatedAt: String,
 )
 
-private object MochyGlanceColors {
-  val canvas = ColorProvider(Color(0xFF000000))
-  val surface = ColorProvider(Color(0xFF141416))
-  val surfaceElevated = ColorProvider(Color(0xFF1E1E21))
-  val ink = ColorProvider(Color(0xFFFFFFFF))
-  val inkMuted = ColorProvider(Color(0xFF9A9AA0))
-  val accent = ColorProvider(Color(0xFFE0E0E0))
-  val accentSoft = ColorProvider(Color(0xFF282830))
-  val success = ColorProvider(Color(0xFF34C759))
-}
-
-class KeepItGlanceWidget : GlanceAppWidget() {
+class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
   companion object {
     const val PREFS_NAME = "keepit_widget_prefs"
     const val SNAPSHOT_KEY = "widget_snapshot"
 
-    private val SMALL_SQUARE = DpSize(110.dp, 110.dp)
-    private val MEDIUM_WIDE = DpSize(250.dp, 110.dp)
+    fun updateAllWidgets(context: Context) {
+      val manager = AppWidgetManager.getInstance(context)
+      val component = ComponentName(context, KeepItGlanceWidgetReceiver::class.java)
+      val ids = manager.getAppWidgetIds(component)
+      if (ids.isNotEmpty()) {
+        val intent = Intent(context, KeepItGlanceWidgetReceiver::class.java).apply {
+          action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+          putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+        }
+        context.sendBroadcast(intent)
+      }
+    }
   }
 
-  override val sizeMode: SizeMode = SizeMode.Responsive(
-    setOf(SMALL_SQUARE, MEDIUM_WIDE)
-  )
+  override fun onUpdate(
+    context: Context,
+    appWidgetManager: AppWidgetManager,
+    appWidgetIds: IntArray
+  ) {
+    for (widgetId in appWidgetIds) {
+      val options = appWidgetManager.getAppWidgetOptions(widgetId)
+      renderWidgetAsync(context, appWidgetManager, widgetId, options)
+    }
+  }
 
-  override suspend fun provideGlance(context: Context, id: GlanceId) {
-    val snapshot = readSnapshot(context)
-    val bitmap = loadMomentBitmap(snapshot)
+  override fun onAppWidgetOptionsChanged(
+    context: Context,
+    appWidgetManager: AppWidgetManager,
+    appWidgetId: Int,
+    newOptions: Bundle
+  ) {
+    renderWidgetAsync(context, appWidgetManager, appWidgetId, newOptions)
+  }
 
-    provideContent {
-      val size = LocalSize.current
+  private fun renderWidgetAsync(
+    context: Context,
+    appWidgetManager: AppWidgetManager,
+    widgetId: Int,
+    options: Bundle?
+  ) {
+    val minWidthDp = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 160) ?: 160
+    val minHeightDp = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 150) ?: 150
+    val isMedium = minWidthDp >= 220
+
+    thread(start = true) {
+      val snapshot = readSnapshot(context)
+      val photoBitmap = loadMomentBitmap(snapshot)
+      val cardBitmap = drawMochyWidgetBitmap(
+        context = context,
+        snapshot = snapshot,
+        photo = photoBitmap,
+        isMedium = isMedium,
+        widthDp = if (isMedium) 320 else 160,
+        heightDp = minHeightDp.coerceIn(140, 180)
+      )
+
       val targetUri = when {
         snapshot == null -> "keepit://"
         snapshot.momentLocked -> "keepit://camera"
@@ -105,28 +112,82 @@ class KeepItGlanceWidget : GlanceAppWidget() {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
       }
 
-      Box(
-        modifier = GlanceModifier
-          .fillMaxSize()
-          .background(MochyGlanceColors.canvas)
-          .cornerRadius(24.dp)
-          .clickable(actionStartActivity(launchIntent))
-      ) {
-        if (size.width >= MEDIUM_WIDE.width) {
-          MediumGlanceLayout(snapshot = snapshot, bitmap = bitmap)
-        } else {
-          SmallGlanceLayout(snapshot = snapshot, bitmap = bitmap)
-        }
+      val pendingIntent = PendingIntent.getActivity(
+        context,
+        widgetId,
+        launchIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+
+      val views = RemoteViews(context.packageName, android.R.layout.activity_list_item).apply {
+        setImageViewBitmap(android.R.id.icon, cardBitmap)
+        setTextViewText(
+          android.R.id.text1,
+          snapshot?.let { "${it.partnerName} · ${activeStatusText(it) ?: formatTimeAgo(it.momentPostedAt ?: it.updatedAt)}" }
+            ?: "KeepIt · Tap to pair"
+        )
+        setOnClickPendingIntent(android.R.id.icon, pendingIntent)
+        setOnClickPendingIntent(android.R.id.text1, pendingIntent)
       }
+
+      appWidgetManager.updateAppWidget(widgetId, views)
     }
   }
 
-  private fun readSnapshot(context: Context): GlanceWidgetSnapshot? {
+  private fun drawMochyWidgetBitmap(
+    context: Context,
+    snapshot: WidgetSnapshotData?,
+    photo: Bitmap?,
+    isMedium: Boolean,
+    widthDp: Int,
+    heightDp: Int
+  ): Bitmap {
+    val metrics = context.resources.displayMetrics
+    val w = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, widthDp.toFloat(), metrics).toInt().coerceAtLeast(240)
+    val h = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, heightDp.toFloat(), metrics).toInt().coerceAtLeast(240)
+    val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(out)
+
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.parseColor("#141416")
+    }
+    val radius = 24f * metrics.density
+    canvas.drawRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()), radius, radius, bgPaint)
+
+    if (photo != null && snapshot != null && !snapshot.momentLocked) {
+      val dst = RectF(0f, 0f, w.toFloat(), h.toFloat())
+      canvas.drawBitmap(photo, null, dst, null)
+    }
+
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.WHITE
+      textSize = 15f * metrics.scaledDensity
+      typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+    val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.parseColor("#9A9AA0")
+      textSize = 12f * metrics.scaledDensity
+    }
+
+    val pad = 16f * metrics.density
+    val title = snapshot?.partnerName ?: "KeepIt"
+    val subtitle = when {
+      snapshot == null -> "Tap to pair with your partner"
+      snapshot.momentLocked -> "Moment locked · Post yours to reveal"
+      else -> activeStatusText(snapshot) ?: snapshot.momentCaption ?: "Captured today's Moment"
+    }
+
+    canvas.drawText(title, pad, pad + titlePaint.textSize, titlePaint)
+    canvas.drawText(subtitle, pad, h - pad, subPaint)
+    return out
+  }
+
+  private fun readSnapshot(context: Context): WidgetSnapshotData? {
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     val raw = prefs.getString(SNAPSHOT_KEY, null) ?: return null
     return try {
       val json = JSONObject(raw)
-      GlanceWidgetSnapshot(
+      WidgetSnapshotData(
         coupleId = json.optString("coupleId", ""),
         partnerName = json.optString("partnerName", "Your partner"),
         statusEmoji = json.optStringOrNull("statusEmoji"),
@@ -145,360 +206,26 @@ class KeepItGlanceWidget : GlanceAppWidget() {
     }
   }
 
-  private suspend fun loadMomentBitmap(snapshot: GlanceWidgetSnapshot?): Bitmap? =
-    withContext(Dispatchers.IO) {
-      if (snapshot == null || snapshot.momentLocked) return@withContext null
-      val uriStr = snapshot.momentPhotoUri ?: return@withContext null
-      try {
-        when {
-          uriStr.startsWith("file://") -> {
-            val path = Uri.parse(uriStr).path ?: return@withContext null
-            val file = File(path)
-            if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
-          }
-          uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
-            URL(uriStr).openStream().use { stream ->
-              BitmapFactory.decodeStream(stream)
-            }
-          }
-          else -> null
-        }
-      } catch (_: Throwable) {
-        null
-      }
-    }
-}
-
-class KeepItGlanceWidgetReceiver : GlanceAppWidgetReceiver() {
-  override val glanceAppWidget: GlanceAppWidget = KeepItGlanceWidget()
-}
-
-@Composable
-private fun SmallGlanceLayout(
-  snapshot: GlanceWidgetSnapshot?,
-  bitmap: Bitmap?,
-) {
-  if (snapshot == null) {
-    UnpairedGlanceState(compact = true)
-    return
-  }
-
-  val statusLabel = activeStatusText(snapshot)
-  val relativeAge = formatTimeAgo(snapshot.momentPostedAt ?: snapshot.updatedAt)
-
-  Box(modifier = GlanceModifier.fillMaxSize()) {
-    if (!snapshot.momentLocked && bitmap != null) {
-      Image(
-        provider = ImageProvider(bitmap),
-        contentDescription = "${snapshot.partnerName}'s Moment",
-        contentScale = ContentScale.Crop,
-        modifier = GlanceModifier.fillMaxSize()
-      )
-    }
-
-    Column(
-      modifier = GlanceModifier
-        .fillMaxSize()
-        .background(
-          if (!snapshot.momentLocked && bitmap != null) {
-            ColorProvider(Color(0x88000000))
-          } else {
-            MochyGlanceColors.surface
-          }
-        )
-        .padding(12.dp)
-    ) {
-      Row(
-        modifier = GlanceModifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text(
-          text = snapshot.partnerName,
-          maxLines = 1,
-          style = TextStyle(
-            color = MochyGlanceColors.ink,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
-          )
-        )
-        Spacer(modifier = GlanceModifier.defaultWeight())
-        Text(
-          text = relativeAge,
-          maxLines = 1,
-          style = TextStyle(
-            color = MochyGlanceColors.inkMuted,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Medium
-          )
-        )
-      }
-
-      Spacer(modifier = GlanceModifier.defaultWeight())
-
+  private fun loadMomentBitmap(snapshot: WidgetSnapshotData?): Bitmap? {
+    if (snapshot == null || snapshot.momentLocked) return null
+    val uriStr = snapshot.momentPhotoUri ?: return null
+    return try {
       when {
-        snapshot.momentLocked -> {
-          Text(
-            text = "Moment locked",
-            maxLines = 1,
-            style = TextStyle(
-              color = MochyGlanceColors.ink,
-              fontSize = 13.sp,
-              fontWeight = FontWeight.Bold
-            )
-          )
-          Text(
-            text = "Post yours to reveal",
-            maxLines = 1,
-            style = TextStyle(
-              color = MochyGlanceColors.inkMuted,
-              fontSize = 11.sp
-            )
-          )
+        uriStr.startsWith("file://") -> {
+          val path = Uri.parse(uriStr).path ?: return null
+          val file = File(path)
+          if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
         }
-        statusLabel != null -> {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = GlanceModifier
-              .background(MochyGlanceColors.surfaceElevated)
-              .cornerRadius(999.dp)
-              .padding(horizontal = 8.dp, vertical = 4.dp)
-          ) {
-            Box(
-              modifier = GlanceModifier
-                .size(6.dp)
-                .background(MochyGlanceColors.success)
-                .cornerRadius(999.dp)
-            ) {}
-            Spacer(modifier = GlanceModifier.width(5.dp))
-            Text(
-              text = statusLabel,
-              maxLines = 1,
-              style = TextStyle(
-                color = MochyGlanceColors.ink,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium
-              )
-            )
+        uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
+          URL(uriStr).openStream().use { stream ->
+            BitmapFactory.decodeStream(stream)
           }
         }
-        !snapshot.momentCaption.isNullOrBlank() -> {
-          Text(
-            text = snapshot.momentCaption,
-            maxLines = 2,
-            style = TextStyle(
-              color = MochyGlanceColors.ink,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Medium
-            )
-          )
-        }
-        else -> {
-          Text(
-            text = "No active status",
-            maxLines = 1,
-            style = TextStyle(
-              color = MochyGlanceColors.inkMuted,
-              fontSize = 11.sp
-            )
-          )
-        }
+        else -> null
       }
+    } catch (_: Throwable) {
+      null
     }
-  }
-}
-
-@Composable
-private fun MediumGlanceLayout(
-  snapshot: GlanceWidgetSnapshot?,
-  bitmap: Bitmap?,
-) {
-  if (snapshot == null) {
-    UnpairedGlanceState(compact = false)
-    return
-  }
-
-  val statusLabel = activeStatusText(snapshot)
-  val relativeAge = formatTimeAgo(snapshot.momentPostedAt ?: snapshot.updatedAt)
-
-  Row(
-    modifier = GlanceModifier
-      .fillMaxSize()
-      .background(MochyGlanceColors.canvas)
-      .padding(12.dp),
-    verticalAlignment = Alignment.CenterVertically
-  ) {
-    Box(
-      modifier = GlanceModifier
-        .width(96.dp)
-        .fillMaxHeight()
-        .background(MochyGlanceColors.surface)
-        .cornerRadius(18.dp),
-      contentAlignment = Alignment.Center
-    ) {
-      when {
-        snapshot.momentLocked -> {
-          Text(
-            text = "Locked",
-            style = TextStyle(
-              color = MochyGlanceColors.accent,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Bold
-            )
-          )
-        }
-        bitmap != null -> {
-          Image(
-            provider = ImageProvider(bitmap),
-            contentDescription = "${snapshot.partnerName}'s Moment",
-            contentScale = ContentScale.Crop,
-            modifier = GlanceModifier.fillMaxSize()
-          )
-        }
-        else -> {
-          Text(
-            text = "No photo",
-            style = TextStyle(
-              color = MochyGlanceColors.inkMuted,
-              fontSize = 10.sp
-            )
-          )
-        }
-      }
-    }
-
-    Spacer(modifier = GlanceModifier.width(12.dp))
-
-    Column(
-      modifier = GlanceModifier
-        .defaultWeight()
-        .fillMaxHeight()
-    ) {
-      Row(
-        modifier = GlanceModifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text(
-          text = snapshot.partnerName,
-          maxLines = 1,
-          style = TextStyle(
-            color = MochyGlanceColors.ink,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
-          )
-        )
-        Spacer(modifier = GlanceModifier.defaultWeight())
-        if (snapshot.streakCount > 0) {
-          Text(
-            text = "${snapshot.streakCount}d",
-            style = TextStyle(
-              color = MochyGlanceColors.accent,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Bold
-            ),
-            modifier = GlanceModifier
-              .background(MochyGlanceColors.accentSoft)
-              .cornerRadius(999.dp)
-              .padding(horizontal = 7.dp, vertical = 2.dp)
-          )
-        }
-      }
-
-      Spacer(modifier = GlanceModifier.height(4.dp))
-
-      if (statusLabel != null) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          modifier = GlanceModifier
-            .background(MochyGlanceColors.surface)
-            .cornerRadius(999.dp)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-        ) {
-          Box(
-            modifier = GlanceModifier
-              .size(6.dp)
-              .background(MochyGlanceColors.success)
-              .cornerRadius(999.dp)
-          ) {}
-          Spacer(modifier = GlanceModifier.width(5.dp))
-          Text(
-            text = statusLabel,
-            maxLines = 1,
-            style = TextStyle(
-              color = MochyGlanceColors.ink,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Medium
-            )
-          )
-        }
-      } else {
-        Text(
-          text = "No active status",
-          maxLines = 1,
-          style = TextStyle(
-            color = MochyGlanceColors.inkMuted,
-            fontSize = 11.sp
-          )
-        )
-      }
-
-      Spacer(modifier = GlanceModifier.defaultWeight())
-
-      val detailLine = when {
-        snapshot.momentLocked -> "Post your Moment to unlock ${snapshot.partnerName}'s photo."
-        !snapshot.momentCaption.isNullOrBlank() -> snapshot.momentCaption
-        snapshot.momentPostedAt != null -> "Captured today's Moment."
-        else -> "Waiting for today's daily window."
-      }
-
-      Text(
-        text = detailLine,
-        maxLines = 1,
-        style = TextStyle(
-          color = if (snapshot.momentLocked) MochyGlanceColors.inkMuted else MochyGlanceColors.ink,
-          fontSize = 11.sp
-        )
-      )
-
-      Spacer(modifier = GlanceModifier.height(2.dp))
-
-      Text(
-        text = "$relativeAge · ${if (snapshot.momentLocked) "Tap to capture" else "Tap to open"}",
-        maxLines = 1,
-        style = TextStyle(
-          color = MochyGlanceColors.inkMuted,
-          fontSize = 10.sp,
-          fontWeight = FontWeight.Medium
-        )
-      )
-    }
-  }
-}
-
-@Composable
-private fun UnpairedGlanceState(compact: Boolean) {
-  Column(
-    modifier = GlanceModifier
-      .fillMaxSize()
-      .background(MochyGlanceColors.surface)
-      .padding(14.dp)
-  ) {
-    Text(
-      text = "KeepIt",
-      style = TextStyle(
-        color = MochyGlanceColors.ink,
-        fontSize = if (compact) 14.sp else 16.sp,
-        fontWeight = FontWeight.Bold
-      )
-    )
-    Spacer(modifier = GlanceModifier.height(4.dp))
-    Text(
-      text = "Open KeepIt to pair with your partner and sync Moments here.",
-      maxLines = if (compact) 3 else 2,
-      style = TextStyle(
-        color = MochyGlanceColors.inkMuted,
-        fontSize = 11.sp
-      )
-    )
   }
 }
 
@@ -508,7 +235,7 @@ private fun JSONObject.optStringOrNull(key: String): String? {
   return value.ifBlank { null }
 }
 
-private fun activeStatusText(snapshot: GlanceWidgetSnapshot): String? {
+private fun activeStatusText(snapshot: WidgetSnapshotData): String? {
   val text = snapshot.statusText?.takeIf { it.isNotBlank() } ?: return null
   val expiresIso = snapshot.statusExpiresAt
   if (!expiresIso.isNullOrBlank()) {

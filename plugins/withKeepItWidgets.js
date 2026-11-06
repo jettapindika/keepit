@@ -126,7 +126,7 @@ function withAndroidWidgetStrings(config) {
         },
         {
           $: { name: 'keepit_widget_description', translatable: 'false' },
-          _: "Shows your partner's latest daily Moment and live status on your Home Screen.",
+          _: 'Latest partner Moment and status on your Home Screen.',
         },
       ],
       modConfig.modResults
@@ -215,7 +215,6 @@ function withKeepItWidgets(config, props = {}) {
   nextConfig = withIosWidgetTargetFiles(nextConfig, appGroupId);
   nextConfig = withAndroidWidgetStrings(nextConfig);
   nextConfig = withAndroidWidgetManifest(nextConfig);
-  nextConfig = withAndroidGlanceDependencies(nextConfig);
   nextConfig = withAndroidWidgetResources(nextConfig);
   return nextConfig;
 }
