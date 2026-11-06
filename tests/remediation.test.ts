@@ -15,6 +15,7 @@ import { beforeEach, describe, it } from 'node:test';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 
 import { fetchMonthMemories } from '@/api/extras';
 import { fetchCoupleLocations } from '@/api/locations';
@@ -723,15 +724,37 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.equal(iosPin.mode, 'manual_instructions');
 
     const svgSaveMsg = await exportAndShareCompositeMoment({
-      backUri: 'data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E',
-      frontUri: 'data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E',
+      backUri: 'data:image/jpeg;base64,PRIMARY_PHOTO_BYTES',
+      frontUri: 'data:image/jpeg;base64,SECONDARY_PIP_PHOTO_BYTES',
       authorName: 'Jetta',
-      postedAtIso: '2026-11-06T14:30:00.000Z',
+      timestampLabel: 'Nov 6 · 02:30 PM',
       aspect: '3:4',
       baseFilename: 'keepit-jetta-3x4',
       title: 'Jetta’s KeepIt Moment',
     });
     assert.ok(svgSaveMsg.includes('Saved'));
+
+    const savedCompositeFile = new FileSystem.File(
+      FileSystem.Paths.cache,
+      'keepit-jetta-3x4.svg'
+    );
+    const savedContent = await savedCompositeFile.text();
+    assert.ok(
+      savedContent.includes('PRIMARY_PHOTO_BYTES'),
+      'Exported file must include primary photo'
+    );
+    assert.ok(
+      savedContent.includes('SECONDARY_PIP_PHOTO_BYTES'),
+      'Exported file must include secondary PIP photo'
+    );
+    assert.ok(
+      savedContent.includes('#keepit'),
+      'Exported file must include #keepit watermark'
+    );
+    assert.ok(
+      savedContent.includes('Nov 6 · 02:30 PM'),
+      'Exported file must include watermark timestamp'
+    );
     Platform.OS = 'web';
 
     const svg3x4 = decodeURIComponent(
@@ -783,6 +806,16 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       /useAnimatedStyle\([\s\S]{0,160}?\bclamp\(/.test(mapSrc),
       false,
       'useAnimatedStyle worklets must not capture non-worklet clamp() helper across UI runtime'
+    );
+    assert.equal(
+      mapSrc.includes('tile.openstreetmap.org'),
+      false,
+      'InteractiveCoupleMap must not use tile.openstreetmap.org which blocks web/app Referer/User-Agent with Access Blocked tiles'
+    );
+    assert.equal(
+      mapSrc.includes('basemaps.cartocdn.com'),
+      true,
+      'InteractiveCoupleMap should use CartoDB basemaps for unblocked light/dark street tiles'
     );
   });
 });
