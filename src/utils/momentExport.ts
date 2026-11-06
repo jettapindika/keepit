@@ -330,6 +330,255 @@ export function buildMomentCompositeSvgDataUri(params: {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg9x16.trim())}`;
 }
 
+async function loadDrawableImageOnWeb(uri: string): Promise<HTMLImageElement | null> {
+  if (!uri || typeof Image === 'undefined') return null;
+
+  const tryLoad = (src: string, useCors: boolean) =>
+    new Promise<HTMLImageElement | null>((resolve) => {
+      const img = new Image();
+      if (useCors) {
+        img.crossOrigin = 'anonymous';
+      }
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+
+  if (uri.startsWith('data:')) {
+    return tryLoad(uri, false);
+  }
+  const withCors = await tryLoad(uri, true);
+  if (withCors) return withCors;
+  return tryLoad(uri, false);
+}
+
+function drawRoundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+function drawImageCenterCrop(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number
+) {
+  const sw = Math.max(1, img.naturalWidth || img.width || dw);
+  const sh = Math.max(1, img.naturalHeight || img.height || dh);
+  const scale = Math.max(dw / sw, dh / sh);
+  const rw = sw * scale;
+  const rh = sh * scale;
+  const rx = dx + (dw - rw) / 2;
+  const ry = dy + (dh - rh) / 2;
+  ctx.drawImage(img, rx, ry, rw, rh);
+}
+
+async function renderDirectCompositePngDataUriOnWeb(params: {
+  backUri: string;
+  frontUri: string;
+  authorName: string;
+  timestampLabel: string;
+  caption?: string | null;
+  locationLabel?: string | null;
+  musicTitle?: string | null;
+  taggedUsers?: TaggedPerson[];
+  filterPreset?: MomentFilterPreset;
+  overlays?: PhotoOverlayItem[];
+  aspect: '3:4' | '9:16';
+  storyTheme?: StoryThemePreset;
+}): Promise<string | null> {
+  if (typeof document === 'undefined') return null;
+  try {
+    const [backImg, frontImg] = await Promise.all([
+      loadDrawableImageOnWeb(params.backUri),
+      loadDrawableImageOnWeb(params.frontUri),
+    ]);
+    const filterMeta = getFilterPresetMeta(params.filterPreset);
+    const theme =
+      STORY_THEME_PRESETS.find((t) => t.id === params.storyTheme) ?? STORY_THEME_PRESETS[0];
+    const isStory = params.aspect === '9:16';
+    const outW = isStory ? 1080 : 900;
+    const outH = isStory ? 1920 : 1200;
+    const cardX = isStory ? 90 : 0;
+    const cardY = isStory ? 230 : 0;
+    const cardW = 900;
+    const cardH = 1200;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    if (isStory) {
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, outH);
+      bgGrad.addColorStop(0, theme.topHex);
+      bgGrad.addColorStop(0.52, theme.midHex);
+      bgGrad.addColorStop(1, theme.bottomHex);
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, outW, outH);
+    } else {
+      ctx.fillStyle = '#141416';
+      ctx.fillRect(0, 0, outW, outH);
+    }
+
+    // Main 3:4 photo card
+    ctx.save();
+    drawRoundedRectPath(ctx, cardX, cardY, cardW, cardH, isStory ? 56 : 42);
+    ctx.clip();
+
+    if (backImg) {
+      drawImageCenterCrop(ctx, backImg, cardX, cardY, cardW, cardH);
+    } else {
+      const fallbackGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
+      fallbackGrad.addColorStop(0, '#EBD8C8');
+      fallbackGrad.addColorStop(1, '#231E1B');
+      ctx.fillStyle = fallbackGrad;
+      ctx.fillRect(cardX, cardY, cardW, cardH);
+    }
+
+    if (params.filterPreset && params.filterPreset !== 'normal') {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = filterMeta.svgTintHex;
+      ctx.fillRect(cardX, cardY, cardW, cardH);
+      ctx.restore();
+    }
+
+    // Bottom scrim for legible watermark
+    const bottomScrim = ctx.createLinearGradient(
+      cardX,
+      cardY + cardH - 290,
+      cardX,
+      cardY + cardH
+    );
+    bottomScrim.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    bottomScrim.addColorStop(1, 'rgba(0, 0, 0, 0.72)');
+    ctx.fillStyle = bottomScrim;
+    ctx.fillRect(cardX, cardY + cardH - 290, cardW, 290);
+
+    // Secondary PIP photo (top-left)
+    const pipX = cardX + 38;
+    const pipY = cardY + 38;
+    const pipW = isStory ? 244 : 236;
+    const pipH = isStory ? 324 : 314;
+    const pipR = isStory ? 36 : 34;
+
+    ctx.save();
+    drawRoundedRectPath(ctx, pipX, pipY, pipW, pipH, pipR);
+    ctx.clip();
+    if (frontImg) {
+      drawImageCenterCrop(ctx, frontImg, pipX, pipY, pipW, pipH);
+    } else {
+      ctx.fillStyle = '#221D1A';
+      ctx.fillRect(pipX, pipY, pipW, pipH);
+    }
+    ctx.restore();
+
+    ctx.save();
+    drawRoundedRectPath(ctx, pipX, pipY, pipW, pipH, pipR);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#FAF7F2';
+    ctx.stroke();
+    ctx.restore();
+
+    // Overlays
+    for (const ov of params.overlays ?? []) {
+      const ox = cardX + Math.round((Math.min(90, Math.max(8, ov.xPct)) / 100) * cardW);
+      const oy = cardY + Math.round((Math.min(88, Math.max(10, ov.yPct)) / 100) * cardH);
+      if (ov.kind === 'emoji') {
+        ctx.font = '60px system-ui, -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(ov.content, ox, oy);
+      } else {
+        const pillWidth = Math.max(160, Math.min(540, ov.content.length * 20 + 48));
+        const px = Math.max(cardX + 20, ox - Math.round(pillWidth / 2));
+        const py = oy - 34;
+        ctx.save();
+        drawRoundedRectPath(ctx, px, py, pillWidth, 52, 26);
+        ctx.fillStyle =
+          ov.bgStyle === 'neon'
+            ? 'rgba(168, 85, 247, 0.88)'
+            : 'rgba(20, 20, 22, 0.88)';
+        ctx.fill();
+        ctx.font = '700 25px system-ui, -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(ov.content, px + pillWidth / 2, py + 34);
+        ctx.restore();
+      }
+    }
+
+    // BeReal-style bottom-left #keepit + timestamp watermark directly on photo
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 2;
+    ctx.shadowBlur = 8;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '900 38px system-ui, -apple-system, sans-serif';
+    ctx.fillText('#keepit', cardX + 42, cardY + cardH - 82);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.font = '700 22px system-ui, -apple-system, sans-serif';
+    ctx.fillText(params.timestampLabel, cardX + 42, cardY + cardH - 46);
+    ctx.restore();
+
+    const handle =
+      (params.authorName || 'keepit').toLowerCase().replace(/[^a-z0-9_]+/g, '') || 'keepit';
+    ctx.save();
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(250, 247, 242, 0.92)';
+    ctx.font = '700 24px system-ui, -apple-system, sans-serif';
+    ctx.fillText(`@${handle} · ${filterMeta.label}`, cardX + cardW - 38, cardY + cardH - 52);
+    ctx.restore();
+
+    ctx.restore();
+
+    if (isStory) {
+      ctx.save();
+      drawRoundedRectPath(ctx, 90, 1484, 900, 270, 40);
+      ctx.fillStyle = 'rgba(20, 20, 22, 0.88)';
+      ctx.fill();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '700 34px system-ui, -apple-system, sans-serif';
+      const storyTitle = params.caption
+        ? `“${params.caption.slice(0, 80)}”`
+        : `${params.authorName || 'KeepIt'}’s KeepIt Moment`;
+      ctx.fillText(storyTitle, 540, 1558);
+      ctx.fillStyle = '#9A9AA0';
+      ctx.font = '700 24px system-ui, -apple-system, sans-serif';
+      ctx.fillText('KeepIt · Keep every moment, together', 540, 1704);
+      ctx.restore();
+    }
+
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
+}
+
 async function rasterizeSvgDataUriOnWeb(
   svgDataUri: string,
   width: number,
@@ -362,71 +611,47 @@ async function rasterizeSvgDataUriOnWeb(
   return promise;
 }
 
-async function resolveExportSourceFileOnNative(params: {
-  sourceUri: string;
-  svgDataUri: string;
-  jpgName: string;
-  svgName: string;
-}): Promise<{ file: FileSystem.File; filename: string; mimeType: string } | null> {
-  const { sourceUri, svgDataUri, jpgName, svgName } = params;
-
-  // 1. Base64 data URI (e.g. data:image/jpeg;base64,... or data:image/png;base64,...)
-  if (sourceUri.startsWith('data:image/') && sourceUri.includes(';base64,')) {
+async function ensureSelfContainedImageUriForComposite(uri: string): Promise<string> {
+  if (!uri) return uri;
+  if (uri.startsWith('data:')) return uri;
+  if (Platform.OS !== 'web' && uri.startsWith('file://')) {
     try {
-      const commaIdx = sourceUri.indexOf(',');
-      const b64 = sourceUri.slice(commaIdx + 1);
-      const binary = atob(b64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) {
-        bytes[i] = binary.charCodeAt(i);
+      const file = new FileSystem.File(uri);
+      const b64 = await file.base64();
+      if (b64) {
+        return `data:image/jpeg;base64,${b64}`;
       }
-      const outFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
-      await outFile.write(bytes);
-      return { file: outFile, filename: jpgName, mimeType: 'image/jpeg' };
     } catch {
-      // Continue to next strategy
+      // Keep original URI
     }
   }
-
-  // 2. Local file:// URI
-  if (sourceUri.startsWith('file://')) {
+  if (Platform.OS !== 'web' && (uri.startsWith('http://') || uri.startsWith('https://'))) {
     try {
-      const srcFile = new FileSystem.File(sourceUri);
-      const dstFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
-      if (srcFile.uri !== dstFile.uri) {
-        const b64 = await srcFile.base64();
+      const tmpFile = new FileSystem.File(
+        FileSystem.Paths.cache,
+        `keepit-embed-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`
+      );
+      if (typeof FileSystem.File.downloadFileAsync === 'function') {
+        const dl = await FileSystem.File.downloadFileAsync(uri, tmpFile, { idempotent: true });
+        const b64 = await dl.base64();
         if (b64) {
-          const binary = atob(b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i += 1) {
-            bytes[i] = binary.charCodeAt(i);
-          }
-          await dstFile.write(bytes);
-          return { file: dstFile, filename: jpgName, mimeType: 'image/jpeg' };
+          return `data:image/jpeg;base64,${b64}`;
         }
       }
-      return { file: srcFile, filename: jpgName, mimeType: 'image/jpeg' };
     } catch {
-      // Continue to next strategy
+      // Keep original URI
     }
   }
+  return uri;
+}
 
-  // 3. Remote http(s):// URI
-  if (sourceUri.startsWith('http://') || sourceUri.startsWith('https://')) {
-    try {
-      const dstFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
-      if (typeof FileSystem.File.downloadFileAsync === 'function') {
-        const downloaded = await FileSystem.File.downloadFileAsync(sourceUri, dstFile, {
-          idempotent: true,
-        });
-        return { file: downloaded, filename: jpgName, mimeType: 'image/jpeg' };
-      }
-    } catch {
-      // Continue to SVG fallback
-    }
-  }
+async function resolveExportSourceFileOnNative(params: {
+  svgDataUri: string;
+  svgName: string;
+}): Promise<{ file: FileSystem.File; filename: string; mimeType: string } | null> {
+  const { svgDataUri, svgName } = params;
 
-  // 4. Composite SVG data URI written to local file
+  // Always write the full composite SVG (which contains both primary + secondary PIP photos + #keepit + timestamp watermark)
   if (svgDataUri.startsWith('data:image/svg+xml;utf8,')) {
     try {
       const rawSvg = decodeURIComponent(
@@ -463,9 +688,14 @@ export async function exportAndShareCompositeMoment(params: {
   const timestampLabel =
     params.timestampLabel?.trim() || formatMomentWatermarkTimestamp(params.postedAtIso);
 
+  const [embeddedBackUri, embeddedFrontUri] = await Promise.all([
+    ensureSelfContainedImageUriForComposite(params.backUri),
+    ensureSelfContainedImageUriForComposite(params.frontUri),
+  ]);
+
   const svgDataUri = buildMomentCompositeSvgDataUri({
-    backUri: params.backUri,
-    frontUri: params.frontUri,
+    backUri: embeddedBackUri,
+    frontUri: embeddedFrontUri,
     authorName: params.authorName,
     postedAtIso: params.postedAtIso,
     timestampLabel,
@@ -478,13 +708,27 @@ export async function exportAndShareCompositeMoment(params: {
     aspect: params.aspect,
     storyTheme: params.storyTheme,
   });
-
   const cleanStem = params.baseFilename.replace(/\.(svg|png|jpe?g)$/i, '');
 
   if (Platform.OS === 'web') {
     const targetW = params.aspect === '9:16' ? 1080 : 900;
     const targetH = params.aspect === '9:16' ? 1920 : 1200;
-    const pngDataUri = await rasterizeSvgDataUriOnWeb(svgDataUri, targetW, targetH);
+    const directPng = await renderDirectCompositePngDataUriOnWeb({
+      backUri: embeddedBackUri,
+      frontUri: embeddedFrontUri,
+      authorName: params.authorName,
+      timestampLabel,
+      caption: params.caption,
+      locationLabel: params.locationLabel,
+      musicTitle: params.musicTitle,
+      taggedUsers: params.taggedUsers,
+      filterPreset: params.filterPreset,
+      overlays: params.overlays,
+      aspect: params.aspect,
+      storyTheme: params.storyTheme,
+    });
+    const pngDataUri =
+      directPng ?? (await rasterizeSvgDataUriOnWeb(svgDataUri, targetW, targetH));
     const downloadHref = pngDataUri ?? svgDataUri;
     const finalName = pngDataUri ? `${cleanStem}.png` : `${cleanStem}.svg`;
 
@@ -504,7 +748,6 @@ export async function exportAndShareCompositeMoment(params: {
     }
     return `Saved ${finalName} to device`;
   }
-
   const filterMeta = getFilterPresetMeta(params.filterPreset);
   const theme =
     STORY_THEME_PRESETS.find((t) => t.id === params.storyTheme) ?? STORY_THEME_PRESETS[0];
@@ -513,8 +756,8 @@ export async function exportAndShareCompositeMoment(params: {
 
   const nativeRes = await exportNativeCompositeMomentJpeg({
     aspect: params.aspect,
-    backUri: params.backUri,
-    frontUri: params.frontUri,
+    backUri: embeddedBackUri,
+    frontUri: embeddedFrontUri,
     authorName: params.authorName,
     timestampLabel,
     caption: params.caption ?? '',
@@ -556,14 +799,11 @@ export async function exportAndShareCompositeMoment(params: {
   }
 
   // Fallback when running inside Expo Go or without custom native module compiled:
-  // Persist file to document & cache storage and open native preview / share sheet
+  // Write the full composite SVG (with embedded primary photo, secondary PIP photo, and #keepit + timestamp watermark)
   const resolved = await resolveExportSourceFileOnNative({
-    sourceUri: params.backUri,
     svgDataUri,
-    jpgName,
     svgName,
   });
-
   if (resolved) {
     try {
       const docCopy = new FileSystem.File(FileSystem.Paths.document, resolved.filename);

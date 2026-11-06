@@ -94,18 +94,25 @@ public final class KeepItWidgetBridgeModule: Module {
           ctx.fill(cardRect)
         }
 
+        // Always draw the top-left secondary PIP photo frame
+        let pipRect = CGRect(x: cardRect.minX + 38, y: cardRect.minY + 38, width: 240, height: 320)
+        ctx.cgContext.saveGState()
+        UIBezierPath(roundedRect: pipRect, cornerRadius: 34).addClip()
         if let frontImage = frontImage {
-          let pipRect = CGRect(x: cardRect.minX + 38, y: cardRect.minY + 38, width: 240, height: 320)
-          ctx.cgContext.saveGState()
-          UIBezierPath(roundedRect: pipRect, cornerRadius: 34).addClip()
           frontImage.draw(in: pipRect)
-          ctx.cgContext.restoreGState()
-          UIColor.white.setStroke()
-          let border = UIBezierPath(roundedRect: pipRect, cornerRadius: 34)
-          border.lineWidth = 6
-          border.stroke()
+        } else {
+          UIColor(red: 0.14, green: 0.11, blue: 0.10, alpha: 1.0).setFill()
+          ctx.fill(pipRect)
+          UIColor(red: 0.89, green: 0.73, blue: 0.61, alpha: 1.0).setFill()
+          UIBezierPath(ovalIn: CGRect(x: pipRect.midX - 48, y: pipRect.minY + 72, width: 96, height: 96)).fill()
+          UIColor(red: 0.85, green: 0.36, blue: 0.22, alpha: 1.0).setFill()
+          UIBezierPath(roundedRect: CGRect(x: pipRect.minX + 44, y: pipRect.minY + 182, width: pipRect.width - 88, height: 120), cornerRadius: 42).fill()
         }
-
+        ctx.cgContext.restoreGState()
+        UIColor.white.setStroke()
+        let border = UIBezierPath(roundedRect: pipRect, cornerRadius: 34)
+        border.lineWidth = 6
+        border.stroke()
         // #keepit + Timestamp Watermark directly on photo (bottom-left)
         let wmShadow = NSShadow()
         wmShadow.shadowColor = UIColor(white: 0.0, alpha: 0.85)

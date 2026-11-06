@@ -141,21 +141,36 @@ class KeepItWidgetBridgeModule : Module() {
         canvas.drawRect(cardRect, tintPaint)
       }
 
+      // Always draw the top-left secondary PIP photo frame (even when source is SVG / simulated)
+      val pipRect = RectF(cardRect.left + 38f, cardRect.top + 38f, cardRect.left + 278f, cardRect.top + 358f)
+      val pipPath = Path().apply { addRoundRect(pipRect, 34f, 34f, Path.Direction.CW) }
+      canvas.save()
+      canvas.clipPath(pipPath)
       if (frontBmp != null) {
-        val pipRect = RectF(cardRect.left + 38f, cardRect.top + 38f, cardRect.left + 278f, cardRect.top + 358f)
-        val pipPath = Path().apply { addRoundRect(pipRect, 34f, 34f, Path.Direction.CW) }
-        canvas.save()
-        canvas.clipPath(pipPath)
         drawCenterCrop(canvas, frontBmp, pipRect)
-        canvas.restore()
-        val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-          style = Paint.Style.STROKE
-          strokeWidth = 6f
-          color = Color.parseColor("#FAF7F2")
+      } else {
+        val pipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          shader = LinearGradient(
+            pipRect.left, pipRect.top, pipRect.left, pipRect.bottom,
+            Color.parseColor("#2A221E"), Color.parseColor("#181412"), Shader.TileMode.CLAMP
+          )
         }
-        canvas.drawRoundRect(pipRect, 34f, 34f, strokePaint)
+        canvas.drawRect(pipRect, pipBgPaint)
+        val headPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E3B99B") }
+        canvas.drawCircle(pipRect.centerX(), pipRect.top + 120f, 48f, headPaint)
+        val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor(filterHex) }
+        canvas.drawRoundRect(
+          RectF(pipRect.left + 44f, pipRect.top + 182f, pipRect.right - 44f, pipRect.bottom - 18f),
+          42f, 42f, bodyPaint
+        )
       }
-
+      canvas.restore()
+      val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 6f
+        color = Color.parseColor("#FAF7F2")
+      }
+      canvas.drawRoundRect(pipRect, 34f, 34f, strokePaint)
       // Overlays
       val overlaysArr = json.optJSONArray("overlays")
       if (overlaysArr != null) {

@@ -25,6 +25,12 @@ export class File {
     }
   }
 
+  async text(): Promise<string> {
+    const bytes = fileBytesMap.get(this.uri);
+    if (!bytes) return '';
+    return new TextDecoder().decode(bytes);
+  }
+
   async base64(): Promise<string> {
     const bytes = fileBytesMap.get(this.uri);
     if (!bytes) return '';
