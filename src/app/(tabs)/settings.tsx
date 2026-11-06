@@ -163,7 +163,7 @@ export default function SettingsScreen() {
             <Text style={[styles.rowLabel, { color: colors.ink }]}>Partner: {partnerName}</Text>
             {couple?.paired_at ? (
               <Text style={[styles.muted, { color: colors.inkMuted }]}>
-                Paired on {new Date(couple.paired_at).toLocaleDateString()} · Strictly 2 members
+                Paired {new Date(couple.paired_at).toLocaleDateString()}
               </Text>
             ) : null}
           </View>
@@ -231,11 +231,8 @@ export default function SettingsScreen() {
             {/* Mochy AppMotion Controls */}
             <View style={{ gap: spacing.md }}>
               <View style={styles.switchRow}>
-                <View style={{ flex: 1, gap: 2 }}>
+                <View style={{ flex: 1 }}>
                   <Text style={[styles.sectionTitle, { color: colors.ink }]}>Spring animations</Text>
-                  <Text style={[styles.muted, { color: colors.inkMuted }]}>
-                    Squish-and-rebound buttons, stretching tab pill, and cascade reveals
-                  </Text>
                 </View>
                 <Switch
                   accessibilityLabel="Enable spring animations"
@@ -286,33 +283,6 @@ export default function SettingsScreen() {
           </View>
         </RevealOnAppear>
 
-        {/* Group 3: PrivacyGuarantees */}
-        <RevealOnAppear revealKey="settings-privacy">
-          <View
-            style={[
-              styles.groupCard,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderRadius: radii.group,
-                padding: spacing.xl,
-                gap: spacing.sm,
-              },
-            ]}>
-            <Text style={[styles.sectionTitle, { color: colors.ink }]}>Privacy guarantees</Text>
-            <Text style={[styles.muted, { color: colors.inkMuted }]}>
-              · Location starts in Ghost mode (off) until you explicitly opt in on the Map tab.
-            </Text>
-            <Text style={[styles.muted, { color: colors.inkMuted }]}>
-              · {partnerName} receives an automatic alert every time location sharing turns on or
-              off.
-            </Text>
-            <Text style={[styles.muted, { color: colors.inkMuted }]}>
-              · Moment photos stay locked on the server until both partners post for the day.
-            </Text>
-          </View>
-        </RevealOnAppear>
-
         {/* Group 4: Danger Zone (Unpair + Delete All Data) */}
         <RevealOnAppear revealKey="settings-danger">
           <View
@@ -326,11 +296,7 @@ export default function SettingsScreen() {
                 gap: spacing.md,
               },
             ]}>
-            <Text style={[styles.sectionTitle, { color: colors.ink }]}>Unpair & data control</Text>
-            <Text style={[styles.muted, { color: colors.inkMuted }]}>
-              Unpairing disconnects both accounts and removes shared Moments and streaks. Deleting
-              your account permanently purges your profile, auth login, and all stored media.
-            </Text>
+            <Text style={[styles.sectionTitle, { color: colors.ink }]}>Account</Text>
 
             {error ? <InlineNotice message={error} tone="error" /> : null}
 

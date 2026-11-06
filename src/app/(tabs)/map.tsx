@@ -12,7 +12,6 @@ import {
   formatDistanceApart,
   formatLocationModeLabel,
   formatRelativeTimeAgo,
-  simulateSandboxPartnerLocation,
   updateMyLocationShare,
 } from '@/api/locations';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
@@ -25,23 +24,10 @@ import { LocationMode } from '@/types/database';
 const MODE_OPTIONS: readonly {
   mode: LocationMode;
   label: string;
-  description: string;
 }[] = [
-  {
-    mode: 'live',
-    label: 'Live',
-    description: 'Updates while app is open',
-  },
-  {
-    mode: 'on_moment',
-    label: 'On Moment',
-    description: 'Only when you post a Moment',
-  },
-  {
-    mode: 'ghost',
-    label: 'Ghost',
-    description: 'Sharing off (coords cleared)',
-  },
+  { mode: 'live', label: 'Live' },
+  { mode: 'on_moment', label: 'On Moment' },
+  { mode: 'ghost', label: 'Ghost' },
 ] as const;
 
 export default function MapScreen() {
@@ -58,11 +44,6 @@ export default function MapScreen() {
   );
 
   const partnerName = partner?.display_name ?? 'Your partner';
-  const partnerId =
-    couple && user
-      ? (couple.user_a_id === user.id ? couple.user_b_id : couple.user_a_id) ??
-        'sandbox_partner_maya'
-      : 'sandbox_partner_maya';
 
   const locationQuery = useQuery({
     queryKey: ['couple-locations', couple?.id, user?.id],
@@ -81,7 +62,7 @@ export default function MapScreen() {
     if (!couple?.id || !isSupabaseConfigured || !client) return;
 
     const channel = client
-      .channel(`locations:${couple.id}`)
+      .channel(`locations:${couple.id}:${Date.now().toString(36)}`)
       .on(
         'postgres_changes',
         {
@@ -195,20 +176,6 @@ export default function MapScreen() {
     }
   };
 
-  const handleSimulatePartnerMode = async (mode: LocationMode) => {
-    if (!couple || !user) return;
-    await simulateSandboxPartnerLocation({
-      coupleId: couple.id,
-      partnerId,
-      mode,
-      userId: user.id,
-    });
-    setNotice({
-      text: `${partnerName} switched location sharing to ${formatLocationModeLabel(mode)}.`,
-      tone: 'info',
-    });
-    await queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
-  };
 
   const latestEvent = events[0] ?? null;
 
@@ -228,10 +195,7 @@ export default function MapScreen() {
         <RevealOnAppear revealKey="map-header">
           <View style={styles.headerRow}>
             <View style={styles.flex}>
-              <Text style={[styles.title, { color: colors.ink }]}>Map & Location</Text>
-              <Text style={[styles.subtitle, { color: colors.inkMuted }]}>
-                End-to-end consent · {partnerName} is notified on every sharing change
-              </Text>
+              <Text style={[styles.title, { color: colors.ink }]}>Map</Text>
             </View>
           </View>
         </RevealOnAppear>
@@ -285,15 +249,14 @@ export default function MapScreen() {
                 <Text style={[styles.distanceValue, { color: colors.ink }]}>
                   {distanceMeters !== null
                     ? formatDistanceApart(distanceMeters)
-                    : partnerShare?.mode === 'ghost'
-                      ? `${partnerName} is in Ghost mode`
-                      : 'Share your location to see distance apart'}
+                    : `${partnerName} · Ghost mode`}
                 </Text>
-                <Text style={[styles.distanceMeta, { color: colors.inkMuted }]}>
-                  {partnerShare && partnerShare.mode !== 'ghost'
-                    ? `${partnerName}: ${formatLocationModeLabel(partnerShare.mode)} · Updated ${formatRelativeTimeAgo(partnerShare.location_updated_at)}`
-                    : `${partnerName}’s coordinates are hidden (${formatRelativeTimeAgo(partnerShare?.mode_changed_at)})`}
-                </Text>
+                {partnerShare && partnerShare.mode !== 'ghost' ? (
+                  <Text style={[styles.distanceMeta, { color: colors.inkMuted }]}>
+                    {partnerName}: {formatLocationModeLabel(partnerShare.mode)} ·{' '}
+                    {formatRelativeTimeAgo(partnerShare.location_updated_at)}
+                  </Text>
+                ) : null}
               </View>
 
               <View
@@ -356,18 +319,12 @@ export default function MapScreen() {
                         ]}>
                         {opt.label}
                       </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.modeDescription, { color: colors.inkMuted }]}>
-                        {opt.description}
-                      </Text>
                     </Pressable>
                   );
                 })}
               </View>
               <Text style={[styles.disclosureText, { color: colors.inkMuted }]}>
-                Changing modes notifies {partnerName} immediately. Ghost mode wipes stored
-                coordinates on the server.
+                {partnerName} is notified when your mode changes.
               </Text>
             </View>
           </View>
@@ -391,7 +348,7 @@ export default function MapScreen() {
             </Text>
             {events.length === 0 ? (
               <Text style={[styles.disclosureText, { color: colors.inkMuted }]}>
-                No location mode changes recorded yet. Both partners start in Ghost mode by default.
+                No mode changes yet.
               </Text>
             ) : (
               events.slice(0, 5).map((evt) => {
@@ -413,47 +370,6 @@ export default function MapScreen() {
           </View>
         </RevealOnAppear>
 
-        {/* Local Sandbox Partner Location Simulator */}
-        {!isSupabaseConfigured && couple ? (
-          <View
-            style={[
-              styles.groupCard,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderRadius: radii.group,
-                padding: spacing.lg,
-                gap: 10,
-              },
-            ]}>
-            <Text style={[styles.sandboxHeader, { color: colors.inkMuted }]}>
-              Local Sandbox Controls ({partnerName}’s Location Mode)
-            </Text>
-            <View style={styles.sandboxRow}>
-              <KeepItButton
-                label="Live"
-                accessibilityLabel={`${partnerName}: Live`}
-                variant="secondary"
-                onPress={() => void handleSimulatePartnerMode('live')}
-                style={styles.flex}
-              />
-              <KeepItButton
-                label="Moment"
-                accessibilityLabel={`${partnerName}: On Moment`}
-                variant="secondary"
-                onPress={() => void handleSimulatePartnerMode('on_moment')}
-                style={styles.flex}
-              />
-              <KeepItButton
-                label="Ghost"
-                accessibilityLabel={`${partnerName}: Ghost`}
-                variant="secondary"
-                onPress={() => void handleSimulatePartnerMode('ghost')}
-                style={styles.flex}
-              />
-            </View>
-          </View>
-        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

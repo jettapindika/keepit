@@ -257,10 +257,6 @@ export default function CameraModalScreen() {
                           ? 'Hold steady for selfie...'
                           : 'Dual-Camera Moment'}
                     </Text>
-                    <Text style={[styles.viewfinderSubtitle, { color: colors.inkMuted }]}>
-                      Captures your back scene and front reaction together. No gallery uploads or
-                      filters.
-                    </Text>
 
                     {permission && !permission.granted && Platform.OS !== 'web' ? (
                       <KeepItButton

@@ -132,11 +132,8 @@ export default function StatusSheetScreen() {
           ]}>
           {/* Top Header */}
           <View style={styles.headerRow}>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={[styles.title, { color: colors.ink }]}>Share your status</Text>
-              <Text style={[styles.subtitle, { color: colors.inkMuted }]}>
-                Visible to {partnerName} and synced to your Home widget.
-              </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.title, { color: colors.ink }]}>Share status</Text>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -307,9 +304,6 @@ export default function StatusSheetScreen() {
                         },
                       ]}>
                       {opt.label}
-                    </Text>
-                    <Text style={[styles.durationSub, { color: colors.inkMuted }]}>
-                      {opt.description}
                     </Text>
                   </Pressable>
                 );

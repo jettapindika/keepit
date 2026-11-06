@@ -20,9 +20,7 @@ import {
   formatInviteCodeDisplay,
   normalizeInviteCode,
   redeemInviteCode,
-  simulateSandboxPartnerJoin,
 } from '@/api/pairing';
-import { isSupabaseConfigured } from '@/api/supabase';
 import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -159,24 +157,6 @@ export default function PairScreen() {
     }
   };
 
-  const handleSandboxPair = async () => {
-    if (!user) return;
-    setJoinError(null);
-    setJoining(true);
-    try {
-      const snapshot = await simulateSandboxPartnerJoin(user.id, 'Maya');
-      if (Platform.OS !== 'web') {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-      setPairing(snapshot.couple, snapshot.partner);
-      router.replace('/(tabs)');
-    } catch (err) {
-      setJoinError(err instanceof Error ? err.message : 'Sandbox pairing failed.');
-    } finally {
-      setJoining(false);
-    }
-  };
-
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <KeyboardAvoidingView
@@ -192,13 +172,9 @@ export default function PairScreen() {
           <RevealOnAppear revealKey="pair-header">
             <View style={styles.headerBlock}>
               <Text style={[styles.greeting, { color: colors.inkMuted }]}>
-                Signed in as {user?.display_name ?? 'You'}
+                {user?.display_name ?? 'You'}
               </Text>
               <Text style={[styles.title, { color: colors.ink }]}>Pair with your partner</Text>
-              <Text style={[styles.subtitle, { color: colors.inkMuted }]}>
-                Share your 6-character invite link or enter your partner’s code. A KeepIt space holds
-                two people and closes once connected.
-              </Text>
             </View>
           </RevealOnAppear>
 
@@ -255,14 +231,16 @@ export default function PairScreen() {
 
             <View style={styles.secondaryRow}>
               <KeepItButton
-                label="Copy Code"
+                label="Copy"
+                accessibilityLabel="Copy Code"
                 variant="secondary"
                 disabled={loadingInvite || !inviteRecord}
                 onPress={() => void handleCopyCode()}
                 style={styles.flex}
               />
               <KeepItButton
-                label="Refresh Code"
+                label="Refresh"
+                accessibilityLabel="Refresh Code"
                 variant="secondary"
                 loading={refreshingCode}
                 disabled={loadingInvite}
@@ -323,14 +301,6 @@ export default function PairScreen() {
               onPress={() => void handleJoinPartner()}
             />
 
-            {!isSupabaseConfigured ? (
-              <KeepItButton
-                label="Simulate Partner ‘Maya’ Joining (Sandbox)"
-                variant="secondary"
-                disabled={joining}
-                onPress={() => void handleSandboxPair()}
-              />
-            ) : null}
           </View>
           </RevealOnAppear>
           <KeepItButton

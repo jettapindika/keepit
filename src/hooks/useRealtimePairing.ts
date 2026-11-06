@@ -13,7 +13,7 @@ export function useRealtimePairing() {
     if (!userId || !isSupabaseConfigured || !client) return;
 
     const channel = client
-      .channel(`pairing:${userId}`)
+      .channel(`pairing:${userId}:${Date.now().toString(36)}`)
       .on(
         'postgres_changes',
         {

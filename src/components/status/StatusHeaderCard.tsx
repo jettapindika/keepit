@@ -109,9 +109,6 @@ export function StatusHeaderCard({
               <Text style={[styles.partnerPrimary, { color: colors.ink }]}>
                 {partnerName} has no active status
               </Text>
-              <Text style={[styles.partnerMeta, { color: colors.inkMuted }]}>
-                Updates appear here in realtime when {partnerName} shares one
-              </Text>
             </>
           )}
         </View>
@@ -205,11 +202,11 @@ export function StatusHeaderCard({
               ? `You: ${myActive.emoji} ${myActive.text}`
               : 'Share what you’re up to'}
           </Text>
-          <Text style={[styles.myMeta, { color: colors.inkMuted }]}>
-            {myActive
-              ? `${formatStatusRemaining(myActive.expires_at)} · Tap to change`
-              : 'Pick a preset (In class, On my way...) or custom status'}
-          </Text>
+          {myActive ? (
+            <Text style={[styles.myMeta, { color: colors.inkMuted }]}>
+              {formatStatusRemaining(myActive.expires_at)}
+            </Text>
+          ) : null}
         </View>
 
         <View

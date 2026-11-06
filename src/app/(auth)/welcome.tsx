@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { isSupabaseConfigured } from '@/api/supabase';
 import { DualFrameMark, InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -107,8 +106,8 @@ export default function WelcomeScreen() {
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.ink }]}>Your first name</Text>
                   <TextInput
+                    key="input-first-name"
                     accessibilityLabel="Your first name"
-                    autoCapitalize="words"
                     autoCorrect={false}
                     maxLength={40}
                     placeholder="Your Name"
@@ -131,8 +130,8 @@ export default function WelcomeScreen() {
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.ink }]}>Email address</Text>
                   <TextInput
+                    key="input-email-address"
                     accessibilityLabel="Email address"
-                    autoCapitalize="none"
                     autoComplete="email"
                     autoCorrect={false}
                     keyboardType="email-address"
@@ -167,16 +166,14 @@ export default function WelcomeScreen() {
                 <View style={{ gap: 4 }}>
                   <Text style={[styles.stepTitle, { color: colors.ink }]}>Check your email</Text>
                   <Text style={[styles.stepBody, { color: colors.inkMuted }]}>
-                    We sent a 6-digit code to {submittedEmail}.
-                    {!isSupabaseConfigured
-                      ? ' (Local sandbox mode: enter any 6 digits such as 123456.)'
-                      : ''}
+                    Code sent to {submittedEmail}
                   </Text>
                 </View>
 
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.ink }]}>6-digit code</Text>
                   <TextInput
+                    key="input-otp-code"
                     accessibilityLabel="6-digit verification code"
                     autoFocus
                     keyboardType="number-pad"
@@ -222,9 +219,6 @@ export default function WelcomeScreen() {
             )}
           </View>
           </RevealOnAppear>
-          <Text style={[styles.footerNote, { color: colors.inkMuted }]}>
-            Made strictly for two. No public feed, no follower counts, no contact scraping.
-          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

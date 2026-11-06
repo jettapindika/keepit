@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { buildSimulatedDualPhotos, DEFAULT_WARM_BLURHASH } from '@/api/moments';
-import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   CoupleEventRecord,
@@ -56,30 +56,27 @@ export async function sendPartnerNudge(params: {
       p_note: cleanedNote,
     });
 
-    if (error) {
-      if (error.message.includes('NUDGE_COOLDOWN')) {
-        throw new Error(NUDGE_COOLDOWN_MESSAGE);
-      }
+    if (!error && data) {
+      const eventRecord = data as CoupleEventRecord;
+      void supabase.functions
+        .invoke('dispatch-push', {
+          body: {
+            eventId: eventRecord.id,
+            coupleId: params.coupleId,
+            actorId: params.userId,
+            eventType: 'nudge',
+            payload: eventRecord.payload ?? { note: cleanedNote },
+          },
+        })
+        .catch(() => {});
+      return eventRecord;
+    }
+    if (error && error.message.includes('NUDGE_COOLDOWN')) {
+      throw new Error(NUDGE_COOLDOWN_MESSAGE);
+    }
+    if (error && !isSchemaNotMigratedError(error)) {
       throw new Error(error.message);
     }
-
-    const eventRecord = data as CoupleEventRecord;
-
-    void supabase.functions
-      .invoke('dispatch-push', {
-        body: {
-          eventId: eventRecord.id,
-          coupleId: params.coupleId,
-          actorId: params.userId,
-          eventType: 'nudge',
-          payload: eventRecord.payload ?? { note: cleanedNote },
-        },
-      })
-      .catch(() => {
-        // Non-blocking push dispatch
-      });
-
-    return eventRecord;
   }
 
   const events = await readLocalEvents();
@@ -127,8 +124,8 @@ export async function fetchRecentNudges(params: {
       .order('created_at', { ascending: false })
       .limit(12);
 
-    if (error) throw new Error(error.message);
-    return (data ?? []) as CoupleEventRecord[];
+    if (!error) return (data ?? []) as CoupleEventRecord[];
+    if (!isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const events = await readLocalEvents();
@@ -183,52 +180,50 @@ export async function fetchMonthMemories(params: {
       p_year: params.year,
       p_month: params.month,
     });
-    if (error) throw new Error(error.message);
-
-    const rawBundle = data as MonthMemoriesBundle;
-    const days = [...(rawBundle.days ?? [])].sort((a, b) =>
-      a.prompt_date < b.prompt_date ? 1 : a.prompt_date > b.prompt_date ? -1 : 0
-    );
-
-    const client = supabase;
-    await Promise.all(
-      days.map(async (day) => {
-        if (!day.mine && !day.partner) return;
-        const { data: signedData } = await client.functions.invoke('sign-moment-urls', {
-          body: { promptId: day.prompt_id },
-        });
-        const urlMap = (signedData as { urls?: Record<string, string> } | null)?.urls ?? {};
-
-        if (day.mine) {
-          day.mine.back_photo_url =
-            urlMap[day.mine.back_photo_path] ?? day.mine.back_photo_url ?? day.mine.back_photo_path;
-          day.mine.front_photo_url =
-            urlMap[day.mine.front_photo_path] ??
-            day.mine.front_photo_url ??
-            day.mine.front_photo_path;
-        }
-        if (day.partner) {
-          day.partner.back_photo_url =
-            urlMap[day.partner.back_photo_path] ??
-            day.partner.back_photo_url ??
-            day.partner.back_photo_path;
-          day.partner.front_photo_url =
-            urlMap[day.partner.front_photo_path] ??
-            day.partner.front_photo_url ??
-            day.partner.front_photo_path;
-        }
-      })
-    );
-
-    return {
-      days,
-      streak: rawBundle.streak ?? {
-        couple_id: params.coupleId,
-        current_count: 0,
-        longest_count: 0,
-        last_completed_date: null,
-      },
-    };
+    if (!error && data) {
+      const rawBundle = data as MonthMemoriesBundle;
+      const days = [...(rawBundle.days ?? [])].sort((a, b) =>
+        a.prompt_date < b.prompt_date ? 1 : a.prompt_date > b.prompt_date ? -1 : 0
+      );
+      const client = supabase;
+      await Promise.all(
+        days.map(async (day) => {
+          if (!day.mine && !day.partner) return;
+          const { data: signedData } = await client.functions.invoke('sign-moment-urls', {
+            body: { promptId: day.prompt_id },
+          });
+          const urlMap = (signedData as { urls?: Record<string, string> } | null)?.urls ?? {};
+          if (day.mine) {
+            day.mine.back_photo_url =
+              urlMap[day.mine.back_photo_path] ?? day.mine.back_photo_url ?? day.mine.back_photo_path;
+            day.mine.front_photo_url =
+              urlMap[day.mine.front_photo_path] ??
+              day.mine.front_photo_url ??
+              day.mine.front_photo_path;
+          }
+          if (day.partner) {
+            day.partner.back_photo_url =
+              urlMap[day.partner.back_photo_path] ??
+              day.partner.back_photo_url ??
+              day.partner.back_photo_path;
+            day.partner.front_photo_url =
+              urlMap[day.partner.front_photo_path] ??
+              day.partner.front_photo_url ??
+              day.partner.front_photo_path;
+          }
+        })
+      );
+      return {
+        days,
+        streak: rawBundle.streak ?? {
+          couple_id: params.coupleId,
+          current_count: 0,
+          longest_count: 0,
+          last_completed_date: null,
+        },
+      };
+    }
+    if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const state = await readLocalMoments();
@@ -493,20 +488,17 @@ export async function deleteAccountAndAllData(params: { userId: string }): Promi
   }
 
   if (isSupabaseConfigured && supabase) {
-    const { error: fnError } = await supabase.functions.invoke('delete-couple-or-user', {
-      body: { mode: 'delete_account' },
-    });
-
-    if (fnError) {
-      const { error: rpcError } = await supabase.rpc('delete_my_account_data');
-      if (rpcError) {
-        throw new Error(rpcError.message);
+    try {
+      const { error: fnError } = await supabase.functions.invoke('delete-couple-or-user', {
+        body: { mode: 'delete_account' },
+      });
+      if (fnError) {
+        await supabase.rpc('delete_my_account_data');
       }
+      await supabase.auth.signOut().catch(() => {});
+    } catch {
+      // Proceed to local wipe
     }
-
-    await supabase.auth.signOut().catch(() => {
-      // Auth user may already be purged by the Edge Function
-    });
   }
 
   await useSessionStore.getState().wipeLocalAccount();

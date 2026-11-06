@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { fetchMonthMemories, seedSandboxSampleMemories } from '@/api/extras';
+import { fetchMonthMemories } from '@/api/extras';
 import { DEFAULT_WARM_BLURHASH } from '@/api/moments';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
@@ -48,15 +48,10 @@ export default function MemoriesScreen() {
   const [cursorMonth, setCursorMonth] = useState(currentUtcMonth);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [recapOpen, setRecapOpen] = useState(false);
-  const [seeding, setSeeding] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const myName = user?.display_name ?? 'You';
   const partnerName = partner?.display_name ?? 'Your partner';
-  const partnerId =
-    couple && user
-      ? (couple.user_a_id === user.id ? couple.user_b_id : couple.user_a_id) ?? 'sandbox_partner_maya'
-      : 'sandbox_partner_maya';
 
   const memoriesQuery = useQuery({
     queryKey: ['month-memories', couple?.id, user?.id, cursorYear, cursorMonth],
@@ -76,7 +71,7 @@ export default function MemoriesScreen() {
     if (!couple?.id || !isSupabaseConfigured || !client) return;
 
     const channel = client
-      .channel(`memories:${couple.id}`)
+      .channel(`memories:${couple.id}:${Date.now().toString(36)}`)
       .on(
         'postgres_changes',
         {
@@ -213,32 +208,6 @@ export default function MemoriesScreen() {
     return { togetherCount, totalPosts, onTimePct };
   }, [days]);
 
-  const handleSeedSandbox = async () => {
-    if (!couple || !user) return;
-    setActionError(null);
-    setSeeding(true);
-    try {
-      await seedSandboxSampleMemories({
-        coupleId: couple.id,
-        userId: user.id,
-        partnerId,
-        userName: myName,
-        partnerName,
-      });
-      setCursorYear(currentUtcYear);
-      setCursorMonth(currentUtcMonth);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['month-memories', couple.id] }),
-        queryClient.invalidateQueries({ queryKey: ['today-moment', couple.id] }),
-      ]);
-    } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : 'Could not load sample sandbox days.'
-      );
-    } finally {
-      setSeeding(false);
-    }
-  };
 
   const selectedRecord = selectedDate ? dayMap.get(selectedDate) ?? null : null;
 
@@ -266,7 +235,7 @@ export default function MemoriesScreen() {
                 Memories
               </Text>
               <Text style={[styles.screenSub, { color: colors.inkMuted }]}>
-                {myName} & {partnerName} · Daily archive
+                {myName} & {partnerName}
               </Text>
             </View>
 
@@ -399,13 +368,6 @@ export default function MemoriesScreen() {
             </View>
 
             <View style={styles.recapFooterRow}>
-              <Text style={[styles.recapHeroBody, { color: colors.inkMuted }]}>
-                {days.length > 0
-                  ? `Tap to step through ${days.length} archived ${
-                      days.length === 1 ? 'day' : 'days'
-                    }, streak milestones, and side-by-side collages.`
-                  : 'Complete daily prompts together in this month to unlock the interactive recap reel.'}
-              </Text>
 
               {days.length > 0 ? (
                 <View
@@ -610,27 +572,8 @@ export default function MemoriesScreen() {
                 },
               ]}>
               <Text style={[styles.stateTitle, { color: colors.ink }]}>
-                No archived Moments yet
+                No Moments in {monthLabel}
               </Text>
-              <Text style={[styles.stateBody, { color: colors.inkMuted }]}>
-                No archived Moments yet. Once today’s window closes, your daily archive and Together
-                collages build here.
-              </Text>
-
-              {!isSupabaseConfigured ? (
-                <View style={{ paddingTop: spacing.xs, gap: spacing.xs }}>
-                  <KeepItButton
-                    label="Load 5 Sample Past Days (Sandbox)"
-                    variant="secondary"
-                    loading={seeding}
-                    onPress={() => void handleSeedSandbox()}
-                  />
-                  <Text style={[styles.sandboxFootnote, { color: colors.inkMuted }]}>
-                    Sandbox helper: populates 5 sample days in this month to preview the Calendar,
-                    Together collages, and Monthly Recap.
-                  </Text>
-                </View>
-              ) : null}
             </View>
           </RevealOnAppear>
         ) : selectedRecord ? (

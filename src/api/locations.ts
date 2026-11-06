@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   CoupleEventRecord,
@@ -230,13 +230,15 @@ export async function fetchCoupleLocations(params: {
 }): Promise<CoupleLocationBundle> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase.rpc('get_couple_locations');
-    if (error) throw new Error(error.message);
-    const raw = data as CoupleLocationBundle | null;
-    return {
-      mine: redactGhostShare(raw?.mine ?? null),
-      partner: redactGhostShare(raw?.partner ?? null),
-      events: Array.isArray(raw?.events) ? raw.events : [],
-    };
+    if (!error && data) {
+      const raw = data as CoupleLocationBundle;
+      return {
+        mine: redactGhostShare(raw.mine ?? null),
+        partner: redactGhostShare(raw.partner ?? null),
+        events: Array.isArray(raw.events) ? raw.events : [],
+      };
+    }
+    if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const locationsMap = await readLocalLocations();
@@ -322,34 +324,33 @@ export async function updateMyLocationShare(params: {
       p_accuracy_m: params.mode === 'ghost' ? null : (params.accuracyM ?? null),
     });
 
-    if (error) throw new Error(error.message);
+    if (!error) {
+      const updatedBundle = await fetchCoupleLocations({
+        coupleId: params.coupleId,
+        userId: params.userId,
+      });
 
-    const updatedBundle = await fetchCoupleLocations({
-      coupleId: params.coupleId,
-      userId: params.userId,
-    });
-
-    if (previousMode !== params.mode) {
-      const latestEvent = updatedBundle.events.find((e) => e.actor_id === params.userId);
-      void supabase.functions
-        .invoke('dispatch-push', {
-          body: {
-            eventId: latestEvent?.id,
-            coupleId: params.coupleId,
-            actorId: params.userId,
-            eventType: 'location_mode_changed',
-            payload: {
-              previous_mode: previousMode,
-              new_mode: params.mode,
+      if (previousMode !== params.mode) {
+        const latestEvent = updatedBundle.events.find((e) => e.actor_id === params.userId);
+        void supabase.functions
+          .invoke('dispatch-push', {
+            body: {
+              eventId: latestEvent?.id,
+              coupleId: params.coupleId,
+              actorId: params.userId,
+              eventType: 'location_mode_changed',
+              payload: {
+                previous_mode: previousMode,
+                new_mode: params.mode,
+              },
             },
-          },
-        })
-        .catch(() => {
-          // Best-effort push notification; DB audit event is already persisted by trigger
-        });
-    }
+          })
+          .catch(() => {});
+      }
 
-    return updatedBundle;
+      return updatedBundle;
+    }
+    if (!isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const locationsMap = await readLocalLocations();

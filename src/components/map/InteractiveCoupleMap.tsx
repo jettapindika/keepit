@@ -670,9 +670,6 @@ export function InteractiveCoupleMap({
                 {partnerName} is in Ghost mode
               </Text>
             </View>
-            <Text style={[styles.ghostVeilBody, { color: colors.inkMuted }]}>
-              Coordinates stay hidden until {partnerName} chooses Live or On Moment.
-            </Text>
           </View>
         </Animated.View>
       ) : null}

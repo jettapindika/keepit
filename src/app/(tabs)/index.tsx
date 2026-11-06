@@ -4,23 +4,13 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  fetchRecentNudges,
-  sendPartnerNudge,
-  simulateSandboxPartnerNudge,
-} from '@/api/extras';
+import { fetchRecentNudges, sendPartnerNudge } from '@/api/extras';
 import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
-  simulateSandboxPartnerMoment,
-  simulateSandboxPromptState,
   updateMomentCaption,
 } from '@/api/moments';
-import {
-  fetchCoupleStatuses,
-  simulateSandboxPartnerStatus,
-  STATUS_PRESETS,
-} from '@/api/statuses';
+import { fetchCoupleStatuses } from '@/api/statuses';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { DualMomentCard, LockedMomentCard } from '@/components/moment/MomentCards';
@@ -55,12 +45,6 @@ export default function HomeScreen() {
   const [nudgeFeedback, setNudgeFeedback] = useState<string | null>(null);
 
   const partnerName = partner?.display_name ?? 'Your partner';
-  const partnerId =
-    couple && user
-      ? (couple.user_a_id === user.id ? couple.user_b_id : couple.user_a_id) ??
-        'sandbox_partner_maya'
-      : 'sandbox_partner_maya';
-
   const bundleQuery = useQuery({
     queryKey: ['today-moment', couple?.id, user?.id],
     enabled: Boolean(couple?.id && user?.id),
@@ -94,7 +78,7 @@ export default function HomeScreen() {
     if (!couple?.id || !isSupabaseConfigured || !client) return;
 
     const channel = client
-      .channel(`home:${couple.id}`)
+      .channel(`home:${couple.id}:${Date.now().toString(36)}`)
       .on(
         'postgres_changes',
         {
@@ -307,11 +291,7 @@ export default function HomeScreen() {
               {countdown.phase === 'upcoming' ? (
                 <>
                   <Text style={[styles.bannerTitle, { color: colors.ink }]}>
-                    Today’s window hasn’t opened yet
-                  </Text>
-                  <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
-                    Both phones will ring at the same random moment today (
-                    {countdown.formattedTimer} until window).
+                    Next window in {countdown.formattedTimer}
                   </Text>
                 </>
               ) : (
@@ -333,11 +313,11 @@ export default function HomeScreen() {
                       {countdown.formattedTimer}
                     </Text>
                   </View>
-                  <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
-                    {countdown.phase === 'live'
-                      ? 'Capture your front and back photo within 2 minutes.'
-                      : `The 2-minute window passed, but you can still post (${countdown.formattedTimer}) to unlock ${partnerName}’s Moment.`}
-                  </Text>
+                  {countdown.phase === 'late' ? (
+                    <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
+                      Post to unlock {partnerName}’s Moment.
+                    </Text>
+                  ) : null}
                   <KeepItButton
                     label={
                       countdown.phase === 'live'
@@ -489,12 +469,7 @@ export default function HomeScreen() {
               ]}>
               <DualFrameMark size={48} />
               <Text style={[styles.emptyTitle, { color: colors.ink }]}>
-                {partnerName} hasn’t posted today’s Moment yet
-              </Text>
-              <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
-                {myMoment
-                  ? `Your Moment is posted and waiting. As soon as ${partnerName} captures theirs, it unlocks right here.`
-                  : `Post your Moment first so ${partnerName} gets a notification to unlock yours.`}
+                Waiting on {partnerName}
               </Text>
             </View>
           )
@@ -527,10 +502,7 @@ export default function HomeScreen() {
             ]}>
             <DualFrameMark size={48} />
             <Text style={[styles.emptyTitle, { color: colors.ink }]}>
-              You haven’t posted today’s Moment
-            </Text>
-            <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
-              Capture your back and front camera together to unlock today’s shared memory.
+              No Moment posted today
             </Text>
             {countdown.phase !== 'upcoming' ? (
               <KeepItButton label="Open Dual Camera" onPress={openCameraModal} />
@@ -547,84 +519,6 @@ export default function HomeScreen() {
           onPressSyncNow={widgetSync.forceSync}
         />
 
-        {/* Sandbox Simulator Controls (only when Supabase URL is unset) */}
-        {!isSupabaseConfigured && couple && bundle?.prompt ? (
-          <View
-            style={[
-              styles.sandboxCard,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderRadius: radii.group,
-                padding: spacing.lg,
-              },
-            ]}>
-            <Text style={[styles.sandboxHeader, { color: colors.inkMuted }]}>
-              Local Sandbox Controls
-            </Text>
-            <View style={styles.sandboxRow}>
-              <KeepItButton
-                label={`Simulate ${partnerName} Posts`}
-                variant="secondary"
-                onPress={() => {
-                  void simulateSandboxPartnerMoment({
-                    coupleId: couple.id,
-                    promptId: bundle.prompt.id,
-                    partnerId,
-                    partnerName,
-                    postLate: false,
-                  }).then(() =>
-                    queryClient.invalidateQueries({ queryKey: ['today-moment', couple.id] })
-                  );
-                }}
-                style={styles.flex}
-              />
-              <KeepItButton
-                label="Simulate Late Window"
-                variant="secondary"
-                onPress={() => {
-                  void simulateSandboxPromptState({
-                    coupleId: couple.id,
-                    mode: 'late_window',
-                  }).then(() =>
-                    queryClient.invalidateQueries({ queryKey: ['today-moment', couple.id] })
-                  );
-                }}
-                style={styles.flex}
-              />
-            </View>
-            <View style={styles.sandboxRow}>
-              <KeepItButton
-                label={`${partnerName} Status (In class)`}
-                variant="secondary"
-                onPress={() => {
-                  void simulateSandboxPartnerStatus({
-                    coupleId: couple.id,
-                    partnerId,
-                    preset: STATUS_PRESETS[0],
-                  }).then(() =>
-                    queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] })
-                  );
-                }}
-                style={styles.flex}
-              />
-              <KeepItButton
-                label={`${partnerName} Nudges You`}
-                variant="secondary"
-                onPress={() => {
-                  void simulateSandboxPartnerNudge({
-                    coupleId: couple.id,
-                    partnerId,
-                    partnerName,
-                  }).then(() =>
-                    queryClient.invalidateQueries({ queryKey: ['couple-nudges', couple.id] })
-                  );
-                }}
-                style={styles.flex}
-              />
-            </View>
-          </View>
-        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

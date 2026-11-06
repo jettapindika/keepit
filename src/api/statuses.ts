@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   CoupleStatusBundle,
   StatusDurationPreset,
@@ -79,8 +79,8 @@ export async function fetchCoupleStatuses(params: {
 }): Promise<CoupleStatusBundle> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase.rpc('get_couple_statuses');
-    if (error) throw new Error(error.message);
-    return data as CoupleStatusBundle;
+    if (!error && data) return data as CoupleStatusBundle;
+    if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const map = await readLocalStatuses();
@@ -130,8 +130,8 @@ export async function upsertMyStatus(params: {
       p_duration_preset: params.durationPreset,
       p_expires_at: expiresAtIso,
     });
-    if (error) throw new Error(error.message);
-    return data as StatusRecord;
+    if (!error && data) return data as StatusRecord;
+    if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const map = await readLocalStatuses();
@@ -152,8 +152,8 @@ export async function upsertMyStatus(params: {
 export async function clearMyStatus(userId: string): Promise<void> {
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase.rpc('clear_my_status');
-    if (error) throw new Error(error.message);
-    return;
+    if (!error) return;
+    if (!isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const map = await readLocalStatuses();

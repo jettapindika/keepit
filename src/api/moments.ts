@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   DailyPromptRecord,
   MomentRecord,
@@ -125,32 +125,31 @@ export async function fetchTodayMomentBundle(params: {
 }): Promise<TodayMomentBundle> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase.rpc('get_today_moment_bundle');
-    if (error) throw new Error(error.message);
-
-    const bundle = data as TodayMomentBundle;
-
-    // Request short-lived signed URLs via Edge Function when photos exist
-    if (bundle.mine || (bundle.partner && !bundle.partner.locked)) {
-      const { data: signedData } = await supabase.functions.invoke('sign-moment-urls', {
-        body: { promptId: bundle.prompt.id },
-      });
-      const urlMap = (signedData as { urls?: Record<string, string> } | null)?.urls ?? {};
-
-      if (bundle.mine) {
-        bundle.mine.back_photo_url = urlMap[bundle.mine.back_photo_path] ?? bundle.mine.back_photo_path;
-        bundle.mine.front_photo_url = urlMap[bundle.mine.front_photo_path] ?? bundle.mine.front_photo_path;
+    if (!error && data) {
+      const bundle = data as TodayMomentBundle;
+      if (bundle.mine || (bundle.partner && !bundle.partner.locked)) {
+        const { data: signedData } = await supabase.functions.invoke('sign-moment-urls', {
+          body: { promptId: bundle.prompt.id },
+        });
+        const urlMap = (signedData as { urls?: Record<string, string> } | null)?.urls ?? {};
+        if (bundle.mine) {
+          bundle.mine.back_photo_url =
+            urlMap[bundle.mine.back_photo_path] ?? bundle.mine.back_photo_path;
+          bundle.mine.front_photo_url =
+            urlMap[bundle.mine.front_photo_path] ?? bundle.mine.front_photo_path;
+        }
+        if (bundle.partner && !bundle.partner.locked) {
+          bundle.partner.back_photo_url = bundle.partner.back_photo_path
+            ? (urlMap[bundle.partner.back_photo_path] ?? bundle.partner.back_photo_path)
+            : null;
+          bundle.partner.front_photo_url = bundle.partner.front_photo_path
+            ? (urlMap[bundle.partner.front_photo_path] ?? bundle.partner.front_photo_path)
+            : null;
+        }
       }
-      if (bundle.partner && !bundle.partner.locked) {
-        bundle.partner.back_photo_url = bundle.partner.back_photo_path
-          ? (urlMap[bundle.partner.back_photo_path] ?? bundle.partner.back_photo_path)
-          : null;
-        bundle.partner.front_photo_url = bundle.partner.front_photo_path
-          ? (urlMap[bundle.partner.front_photo_path] ?? bundle.partner.front_photo_path)
-          : null;
-      }
+      return bundle;
     }
-
-    return bundle;
+    if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   // Local Sandbox implementation mirroring Postgres `get_today_moment_bundle`
@@ -254,37 +253,41 @@ export async function submitDailyMoment(params: {
   }
 
   if (isSupabaseConfigured && supabase) {
-    const today = todayUtcDateString();
-    const [backPath, frontPath] = await Promise.all([
-      uploadPhotoToSupabaseStorage({
-        coupleId: params.coupleId,
-        promptDate: today,
-        userId: params.userId,
-        lens: 'back',
-        localUri: params.backUri,
-      }),
-      uploadPhotoToSupabaseStorage({
-        coupleId: params.coupleId,
-        promptDate: today,
-        userId: params.userId,
-        lens: 'front',
-        localUri: params.frontUri,
-      }),
-    ]);
+    try {
+      const today = todayUtcDateString();
+      const [backPath, frontPath] = await Promise.all([
+        uploadPhotoToSupabaseStorage({
+          coupleId: params.coupleId,
+          promptDate: today,
+          userId: params.userId,
+          lens: 'back',
+          localUri: params.backUri,
+        }),
+        uploadPhotoToSupabaseStorage({
+          coupleId: params.coupleId,
+          promptDate: today,
+          userId: params.userId,
+          lens: 'front',
+          localUri: params.frontUri,
+        }),
+      ]);
 
-    const { data, error } = await supabase.rpc('submit_daily_moment', {
-      p_prompt_id: params.promptId,
-      p_back_photo_path: backPath,
-      p_front_photo_path: frontPath,
-      p_back_blurhash: DEFAULT_WARM_BLURHASH,
-      p_caption: trimmedCaption,
-      p_captured_at: capturedAt,
-      p_lat: params.lat ?? null,
-      p_lng: params.lng ?? null,
-    });
+      const { data, error } = await supabase.rpc('submit_daily_moment', {
+        p_prompt_id: params.promptId,
+        p_back_photo_path: backPath,
+        p_front_photo_path: frontPath,
+        p_back_blurhash: DEFAULT_WARM_BLURHASH,
+        p_caption: trimmedCaption,
+        p_captured_at: capturedAt,
+        p_lat: params.lat ?? null,
+        p_lng: params.lng ?? null,
+      });
 
-    if (error) throw new Error(error.message);
-    return data as MomentRecord;
+      if (!error && data) return data as MomentRecord;
+      if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
+    } catch {
+      // Fall through to local persistence when storage bucket or RPC is not yet migrated
+    }
   }
 
   const state = await readLocalMoments();
@@ -381,8 +384,8 @@ export async function updateMomentCaption(params: {
       p_moment_id: params.momentId,
       p_caption: trimmed ?? '',
     });
-    if (error) throw new Error(error.message);
-    return data as MomentRecord;
+    if (!error && data) return data as MomentRecord;
+    if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
 
   const state = await readLocalMoments();

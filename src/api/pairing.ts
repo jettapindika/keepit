@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   CoupleRecord,
   PairingError,
@@ -116,8 +116,8 @@ export async function upsertUserProfile(params: {
       .select('*')
       .single();
 
-    if (error) throw mapRpcError(error);
-    return data as UserProfile;
+    if (!error) return data as UserProfile;
+    if (!isSchemaNotMigratedError(error)) throw mapRpcError(error);
   }
 
   const db = await readLocalDb();
@@ -143,21 +143,20 @@ export async function fetchPairingSnapshot(userId: string): Promise<PairingSnaps
       .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
       .maybeSingle();
 
-    if (coupleError) throw mapRpcError(coupleError);
-    if (!coupleData) return { couple: null, partner: null };
-
-    const couple = coupleData as CoupleRecord;
-    const partnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
-    if (!partnerId) return { couple, partner: null };
-
-    const { data: partnerData, error: partnerError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', partnerId)
-      .maybeSingle();
-
-    if (partnerError) throw mapRpcError(partnerError);
-    return { couple, partner: (partnerData as UserProfile | null) ?? null };
+    if (!coupleError) {
+      if (!coupleData) return { couple: null, partner: null };
+      const couple = coupleData as CoupleRecord;
+      const partnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
+      if (!partnerId) return { couple, partner: null };
+      const { data: partnerData, error: partnerError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', partnerId)
+        .maybeSingle();
+      if (partnerError && !isSchemaNotMigratedError(partnerError)) throw mapRpcError(partnerError);
+      return { couple, partner: (partnerData as UserProfile | null) ?? null };
+    }
+    if (!isSchemaNotMigratedError(coupleError)) throw mapRpcError(coupleError);
   }
 
   const db = await readLocalDb();
@@ -182,8 +181,8 @@ export async function createOrRefreshInvite(
     const { data, error } = await supabase.rpc('create_or_refresh_invite', {
       force_refresh: forceRefresh,
     });
-    if (error) throw mapRpcError(error);
-    return data as CoupleRecord;
+    if (!error) return data as CoupleRecord;
+    if (!isSchemaNotMigratedError(error)) throw mapRpcError(error);
   }
 
   const db = await readLocalDb();
@@ -239,8 +238,8 @@ export async function redeemInviteCode(
 
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase.rpc('redeem_invite_code', { raw_code: cleaned });
-    if (error) throw mapRpcError(error);
-    return fetchPairingSnapshot(userId);
+    if (!error) return fetchPairingSnapshot(userId);
+    if (!isSchemaNotMigratedError(error)) throw mapRpcError(error);
   }
 
   const db = await readLocalDb();
@@ -314,8 +313,8 @@ export async function unpairCurrentCouple(userId: string): Promise<void> {
 
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase.rpc('unpair_current_couple');
-    if (error) throw mapRpcError(error);
-    return;
+    if (!error) return;
+    if (!isSchemaNotMigratedError(error)) throw mapRpcError(error);
   }
 
   const db = await readLocalDb();

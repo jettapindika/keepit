@@ -331,8 +331,7 @@ export function LockedMomentCard({
           {partnerName}’s Moment is waiting
         </Text>
         <Text style={[styles.lockedBody, { color: colors.inkMuted }]}>
-          Partners only see each other’s Moment after posting their own. Capture yours now to
-          unlock both photos side by side.
+          Post yours to unlock both Moments.
         </Text>
 
         <KeepItButton label="Post Yours to Reveal" onPress={onCaptureMine} />

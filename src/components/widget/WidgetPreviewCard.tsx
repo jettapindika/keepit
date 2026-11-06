@@ -597,14 +597,6 @@ export function WidgetPreviewCard({
 
         {/* Bottom Instruction & Optional Sync Trigger */}
         <View style={styles.footerRow}>
-          <Text
-            style={[
-              styles.footerHint,
-              { color: colors.inkMuted, letterSpacing: type.bodyTracking },
-            ]}>
-            Long-press your iOS or Android Home Screen to pin KeepIt in 2x2 or 4x2.
-          </Text>
-
           {onPressSyncNow ? (
             <Pressable
               accessibilityRole="button"
