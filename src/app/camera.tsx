@@ -45,6 +45,7 @@ import {
   PostVisibility,
   TaggedPerson,
 } from '@/types/database';
+import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 
 type CaptureStage =
   | 'ready'
@@ -619,6 +620,8 @@ export default function CameraModalScreen() {
         ? 121 + countdown.secondsOverdue
         : 0;
 
+  const watermarkTimestamp = formatMomentWatermarkTimestamp(capturedAtIso);
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <KeyboardAvoidingView
@@ -834,9 +837,10 @@ export default function CameraModalScreen() {
                   />
                 ) : null}
 
-                {/* Permanent #KeepIt Bottom-Left Watermark Preview */}
-                <View pointerEvents="none" style={styles.keepItWatermarkBadge}>
-                  <Text style={styles.keepItWatermarkText}>#KeepIt</Text>
+                {/* Permanent #keepit + Timestamp Bottom-Left Watermark on Photo */}
+                <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
+                  <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+                  <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
               </View>
 
@@ -1126,9 +1130,10 @@ export default function CameraModalScreen() {
                   ) : null}
                 </View>
 
-                {/* Mandatory Bottom-Left #KeepIt Watermark (Item #8) */}
-                <View pointerEvents="none" style={styles.keepItWatermarkBadge}>
-                  <Text style={styles.keepItWatermarkText}>#KeepIt</Text>
+                {/* Mandatory Bottom-Left #keepit + Timestamp Watermark on Photo (Item #8) */}
+                <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
+                  <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+                  <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
               </View>
 
@@ -1833,22 +1838,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
   },
-  keepItWatermarkBadge: {
+  keepItPhotoWatermark: {
     position: 'absolute',
     bottom: 14,
-    left: 14,
-    backgroundColor: 'rgba(12, 12, 14, 0.74)',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
+    left: 16,
+    alignItems: 'flex-start',
+    gap: 1,
   },
-  keepItWatermarkText: {
+  keepItWatermarkTitle: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.6,
+    lineHeight: 20,
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 5,
+  },
+  keepItWatermarkTime: {
+    color: 'rgba(255, 255, 255, 0.92)',
+    fontSize: 11,
+    fontWeight: '700',
     letterSpacing: -0.2,
+    lineHeight: 14,
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   filterStrip: {
     gap: 8,

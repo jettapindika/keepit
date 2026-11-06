@@ -81,6 +81,9 @@ class KeepItWidgetBridgeModule : Module() {
       val backUri = json.optString("backUri", "")
       val frontUri = json.optString("frontUri", "")
       val authorName = json.optString("authorName", "KeepIt")
+      val timestampLabel = json.optString("timestampLabel", "").ifBlank {
+        java.text.SimpleDateFormat("MMM d · hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+      }
       val caption = json.optString("caption", "")
       val filterHex = json.optString("filterHex", "#D95D39")
       val filterActive = json.optBoolean("filterActive", false)
@@ -173,19 +176,25 @@ class KeepItWidgetBridgeModule : Module() {
         }
       }
 
-      // Permanent #KeepIt Watermark Pill
-      val wmRect = RectF(cardRect.left + 36f, cardRect.bottom - 92f, cardRect.left + 216f, cardRect.bottom - 34f)
-      val wmBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(215, 11, 11, 12) }
-      canvas.drawRoundRect(wmRect, 29f, 29f, wmBg)
-      val wmText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      // Permanent BeReal-style #keepit + timestamp watermark on bottom-left of photo
+      val wmX = cardRect.left + 40f
+      val wmTitlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 28f
+        textSize = 38f
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textAlign = Paint.Align.CENTER
+        textAlign = Paint.Align.LEFT
+        setShadowLayer(8f, 0f, 3f, Color.argb(210, 0, 0, 0))
       }
-      canvas.drawText("#KeepIt", wmRect.centerX(), wmRect.centerY() + 10f, wmText)
+      val wmTimePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(235, 255, 255, 255)
+        textSize = 22f
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textAlign = Paint.Align.LEFT
+        setShadowLayer(6f, 0f, 2f, Color.argb(210, 0, 0, 0))
+      }
+      canvas.drawText("#keepit", wmX, cardRect.bottom - 80f, wmTitlePaint)
+      canvas.drawText(timestampLabel, wmX, cardRect.bottom - 44f, wmTimePaint)
       canvas.restore()
-
       if (aspect == "9:16") {
         val footerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
           color = Color.WHITE

@@ -12,6 +12,11 @@ export class File {
     this.uri = parts.join('/').replace(/([^:]\/)\/+/g, '$1');
   }
 
+  static async downloadFileAsync(url: string, destination: File): Promise<File> {
+    fileBytesMap.set(destination.uri, new TextEncoder().encode(url));
+    return destination;
+  }
+
   async write(content: string | Uint8Array): Promise<void> {
     if (typeof content === 'string') {
       fileBytesMap.set(this.uri, new TextEncoder().encode(content));

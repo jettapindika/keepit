@@ -13,7 +13,9 @@
       "infoPlist": {
         "NSCameraUsageDescription": "KeepIt uses your front and back cameras together to capture your daily Moment.",
         "NSMicrophoneUsageDescription": "KeepIt uses your microphone when recording 15-second Dual Video Moments.",
-        "NSLocationWhenInUseUsageDescription": "KeepIt shares your location with your partner only when you opt into Live or On-Moment sharing."
+        "NSLocationWhenInUseUsageDescription": "KeepIt shares your location with your partner only when you opt into Live or On-Moment sharing.",
+        "NSPhotoLibraryAddUsageDescription": "KeepIt saves your dual-camera Moments and 9:16 Stories to your photo library when you tap Save.",
+        "NSPhotoLibraryUsageDescription": "KeepIt saves your dual-camera Moments to your photo library."
       }
     },
     "android": {

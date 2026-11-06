@@ -50,10 +50,26 @@ export const STORY_THEME_PRESETS: readonly {
   },
 ] as const;
 
+export function formatMomentWatermarkTimestamp(postedAtIso?: string | null): string {
+  const parsed = postedAtIso ? new Date(postedAtIso) : new Date();
+  const validDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  const datePart = validDate.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  });
+  const timePart = validDate.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${datePart} · ${timePart}`;
+}
+
 export function buildMomentCompositeSvgDataUri(params: {
   backUri: string;
   frontUri: string;
   authorName: string;
+  postedAtIso?: string | null;
+  timestampLabel?: string | null;
   caption?: string | null;
   locationLabel?: string | null;
   musicTitle?: string | null;
@@ -92,6 +108,14 @@ export function buildMomentCompositeSvgDataUri(params: {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
     .slice(0, 64);
+  const rawTimestamp =
+    params.timestampLabel?.trim() || formatMomentWatermarkTimestamp(params.postedAtIso);
+  const safeTimestamp = rawTimestamp
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   const safeBackHref = params.backUri
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -105,7 +129,6 @@ export function buildMomentCompositeSvgDataUri(params: {
 
   const tintStopOpacity =
     params.filterPreset && params.filterPreset !== 'normal' ? '0.22' : '0';
-
   if (params.aspect === '3:4') {
     const frameW = 900;
     const frameH = 1200;
@@ -151,6 +174,9 @@ export function buildMomentCompositeSvgDataUri(params: {
             <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
             <stop offset="100%" stop-color="#000000" stop-opacity="0.72"/>
           </linearGradient>
+          <filter id="wmShadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.82"/>
+          </filter>
         </defs>
         <g clip-path="url(#mainClip)">
           <rect width="${frameW}" height="${frameH}" fill="#141416"/>
@@ -163,8 +189,10 @@ export function buildMomentCompositeSvgDataUri(params: {
           </g>
           <rect x="38" y="38" width="236" height="314" rx="34" fill="none" stroke="#FAF7F2" stroke-width="6"/>
           ${overlaysSvg}
-          <rect x="36" y="1108" width="172" height="56" rx="28" fill="#0B0B0C" opacity="0.82" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="2"/>
-          <text x="122" y="1145" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="800" fill="#FFFFFF">#KeepIt</text>
+          <g filter="url(#wmShadow)">
+            <text x="42" y="1118" text-anchor="start" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="900" letter-spacing="-0.8" fill="#FFFFFF">#keepit</text>
+            <text x="42" y="1154" text-anchor="start" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#FFFFFF" opacity="0.92">${safeTimestamp}</text>
+          </g>
           <text x="862" y="1144" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="700" fill="#FAF7F2" opacity="0.92">@${safeHandle} · ${filterMeta.label}</text>
         </g>
       </svg>
@@ -242,6 +270,9 @@ export function buildMomentCompositeSvgDataUri(params: {
           <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
           <stop offset="100%" stop-color="#000000" stop-opacity="0.68"/>
         </linearGradient>
+        <filter id="storyWmShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.82"/>
+        </filter>
       </defs>
 
       <rect width="1080" height="1920" fill="url(#storyBg)"/>
@@ -269,14 +300,15 @@ export function buildMomentCompositeSvgDataUri(params: {
 
         ${storyOverlaysSvg}
 
-        <!-- Bottom-Left #KeepIt Watermark inside frame -->
-        <rect x="${cardX + 34}" y="${cardY + cardH - 92}" width="184" height="58" rx="29" fill="#0B0B0C" opacity="0.84" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="2"/>
-        <text x="${cardX + 126}" y="${cardY + cardH - 53}" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="800" fill="#FFFFFF">#KeepIt</text>
+        <!-- Bottom-Left #keepit + Timestamp Watermark directly on photo -->
+        <g filter="url(#storyWmShadow)">
+          <text x="${cardX + 42}" y="${cardY + cardH - 82}" text-anchor="start" font-family="system-ui, -apple-system, sans-serif" font-size="40" font-weight="900" letter-spacing="-0.8" fill="#FFFFFF">#keepit</text>
+          <text x="${cardX + 42}" y="${cardY + cardH - 44}" text-anchor="start" font-family="system-ui, -apple-system, sans-serif" font-size="23" font-weight="700" fill="#FFFFFF" opacity="0.92">${safeTimestamp}</text>
+        </g>
 
         <rect x="${cardX + cardW - 224}" y="${cardY + 38}" width="186" height="52" rx="26" fill="#0B0B0C" opacity="0.78" stroke="#FFFFFF" stroke-opacity="0.2" stroke-width="2"/>
         <text x="${cardX + cardW - 131}" y="${cardY + 73}" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="700" fill="#FAF7F2">${filterMeta.label}</text>
       </g>
-
       <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="56" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="3"/>
 
       <!-- Bottom Story Footer -->
@@ -330,10 +362,93 @@ async function rasterizeSvgDataUriOnWeb(
   return promise;
 }
 
+async function resolveExportSourceFileOnNative(params: {
+  sourceUri: string;
+  svgDataUri: string;
+  jpgName: string;
+  svgName: string;
+}): Promise<{ file: FileSystem.File; filename: string; mimeType: string } | null> {
+  const { sourceUri, svgDataUri, jpgName, svgName } = params;
+
+  // 1. Base64 data URI (e.g. data:image/jpeg;base64,... or data:image/png;base64,...)
+  if (sourceUri.startsWith('data:image/') && sourceUri.includes(';base64,')) {
+    try {
+      const commaIdx = sourceUri.indexOf(',');
+      const b64 = sourceUri.slice(commaIdx + 1);
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const outFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
+      await outFile.write(bytes);
+      return { file: outFile, filename: jpgName, mimeType: 'image/jpeg' };
+    } catch {
+      // Continue to next strategy
+    }
+  }
+
+  // 2. Local file:// URI
+  if (sourceUri.startsWith('file://')) {
+    try {
+      const srcFile = new FileSystem.File(sourceUri);
+      const dstFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
+      if (srcFile.uri !== dstFile.uri) {
+        const b64 = await srcFile.base64();
+        if (b64) {
+          const binary = atob(b64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          await dstFile.write(bytes);
+          return { file: dstFile, filename: jpgName, mimeType: 'image/jpeg' };
+        }
+      }
+      return { file: srcFile, filename: jpgName, mimeType: 'image/jpeg' };
+    } catch {
+      // Continue to next strategy
+    }
+  }
+
+  // 3. Remote http(s):// URI
+  if (sourceUri.startsWith('http://') || sourceUri.startsWith('https://')) {
+    try {
+      const dstFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
+      if (typeof FileSystem.File.downloadFileAsync === 'function') {
+        const downloaded = await FileSystem.File.downloadFileAsync(sourceUri, dstFile, {
+          idempotent: true,
+        });
+        return { file: downloaded, filename: jpgName, mimeType: 'image/jpeg' };
+      }
+    } catch {
+      // Continue to SVG fallback
+    }
+  }
+
+  // 4. Composite SVG data URI written to local file
+  if (svgDataUri.startsWith('data:image/svg+xml;utf8,')) {
+    try {
+      const rawSvg = decodeURIComponent(
+        svgDataUri.slice('data:image/svg+xml;utf8,'.length)
+      );
+      const svgFile = new FileSystem.File(FileSystem.Paths.cache, svgName);
+      await svgFile.write(rawSvg);
+      return { file: svgFile, filename: svgName, mimeType: 'image/svg+xml' };
+    } catch {
+      // Ignore
+    }
+  }
+
+  return null;
+}
+
 export async function exportAndShareCompositeMoment(params: {
   backUri: string;
   frontUri: string;
   authorName: string;
+  postedAtIso?: string | null;
+  timestampLabel?: string | null;
   caption?: string | null;
   locationLabel?: string | null;
   musicTitle?: string | null;
@@ -345,10 +460,15 @@ export async function exportAndShareCompositeMoment(params: {
   baseFilename: string;
   title: string;
 }): Promise<string> {
+  const timestampLabel =
+    params.timestampLabel?.trim() || formatMomentWatermarkTimestamp(params.postedAtIso);
+
   const svgDataUri = buildMomentCompositeSvgDataUri({
     backUri: params.backUri,
     frontUri: params.frontUri,
     authorName: params.authorName,
+    postedAtIso: params.postedAtIso,
+    timestampLabel,
     caption: params.caption,
     locationLabel: params.locationLabel,
     musicTitle: params.musicTitle,
@@ -378,7 +498,7 @@ export async function exportAndShareCompositeMoment(params: {
       document.body.removeChild(link);
     }
     try {
-      await Clipboard.setStringAsync(`${params.title} #KeepIt`);
+      await Clipboard.setStringAsync(`${params.title} #keepit`);
     } catch {
       // Clipboard optional on restricted web contexts
     }
@@ -389,12 +509,14 @@ export async function exportAndShareCompositeMoment(params: {
   const theme =
     STORY_THEME_PRESETS.find((t) => t.id === params.storyTheme) ?? STORY_THEME_PRESETS[0];
   const jpgName = `${cleanStem}.jpg`;
+  const svgName = `${cleanStem}.svg`;
 
   const nativeRes = await exportNativeCompositeMomentJpeg({
     aspect: params.aspect,
     backUri: params.backUri,
     frontUri: params.frontUri,
     authorName: params.authorName,
+    timestampLabel,
     caption: params.caption ?? '',
     filterHex: filterMeta.svgTintHex,
     filterActive: Boolean(params.filterPreset && params.filterPreset !== 'normal'),
@@ -414,17 +536,18 @@ export async function exportAndShareCompositeMoment(params: {
       } else {
         await Share.share({
           title: params.title,
-          message: `${params.title} #KeepIt`,
+          message: `${params.title} #keepit`,
+          url: nativeRes.fileUri,
         }).catch(() => {});
       }
       return nativeRes.savedToGallery
         ? `Saved ${jpgName} to Pictures/KeepIt & opened preview`
-        : `Exported ${jpgName}`;
+        : `Saved ${jpgName} & opened preview`;
     }
 
     await Share.share({
       title: params.title,
-      message: `${params.title} #KeepIt`,
+      message: `${params.title} #keepit`,
       url: nativeRes.fileUri,
     }).catch(() => {});
     return nativeRes.savedToGallery
@@ -432,37 +555,62 @@ export async function exportAndShareCompositeMoment(params: {
       : `Opened Share Sheet (${jpgName})`;
   }
 
-  // Fallback when running inside Expo Go without the custom native module compiled:
-  // Write real camera JPEG bytes from `backUri` to cache so Share/Preview receives a valid `.jpg` file
-  if (params.backUri.startsWith('data:image/jpeg;base64,')) {
+  // Fallback when running inside Expo Go or without custom native module compiled:
+  // Persist file to document & cache storage and open native preview / share sheet
+  const resolved = await resolveExportSourceFileOnNative({
+    sourceUri: params.backUri,
+    svgDataUri,
+    jpgName,
+    svgName,
+  });
+
+  if (resolved) {
     try {
-      const b64 = params.backUri.slice('data:image/jpeg;base64,'.length);
-      const binary = atob(b64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) {
-        bytes[i] = binary.charCodeAt(i);
+      const docCopy = new FileSystem.File(FileSystem.Paths.document, resolved.filename);
+      if (docCopy.uri !== resolved.file.uri) {
+        const b64 = await resolved.file.base64();
+        if (b64) {
+          const binary = atob(b64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          await docCopy.write(bytes);
+        }
       }
-      const fallbackFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
-      await fallbackFile.write(bytes);
-      if (Platform.OS === 'ios') {
-        await Share.share({
-          title: params.title,
-          message: `${params.title} #KeepIt`,
-          url: fallbackFile.uri,
-        });
-      } else {
-        await fallbackFile.preview({ title: params.title, mimeType: 'image/jpeg' }).catch(() => {});
-      }
-      return `Exported ${jpgName} for sharing`;
     } catch {
-      // Fall through to standard Share
+      // Best-effort copy into persistent app documents
     }
+
+    if (Platform.OS === 'ios') {
+      await Share.share({
+        title: params.title,
+        message: `${params.title} #keepit`,
+        url: resolved.file.uri,
+      }).catch(() => {});
+      return `Saved ${resolved.filename} & opened Share Sheet`;
+    }
+
+    const canPreview = await resolved.file.canPreview().catch(() => false);
+    if (canPreview) {
+      await resolved.file
+        .preview({ title: params.title, mimeType: resolved.mimeType })
+        .catch(() => {});
+      return `Saved ${resolved.filename} to device & opened preview`;
+    }
+
+    await Share.share({
+      title: params.title,
+      message: `${params.title} #keepit`,
+      url: resolved.file.uri,
+    }).catch(() => {});
+    return `Saved ${resolved.filename} to device`;
   }
 
   await Share.share({
     title: params.title,
-    message: `${params.title} #KeepIt`,
-  });
+    message: `${params.title} #keepit`,
+  }).catch(() => {});
   return 'Opened share sheet';
 }
 
@@ -489,7 +637,7 @@ export async function downloadOrShareMomentUri(params: {
   }
   await Share.share({
     title: params.title,
-    message: `${params.title} #KeepIt`,
-  });
+    message: `${params.title} #keepit`,
+  }).catch(() => {});
   return 'Opened share sheet';
 }

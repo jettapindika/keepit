@@ -91,9 +91,6 @@ export function buildSimulatedDualPhotos(params: {
       <text x="96" y="582" font-family="system-ui, sans-serif" font-size="25" font-weight="600" fill="#F4F4F5">
         ${safeAuthor} · ${modeLabel} · ${filterMeta.label} · ${timeStamp}
       </text>
-      <text x="96" y="1142" font-family="system-ui, sans-serif" font-size="32" font-weight="800" fill="#FFFFFF" opacity="0.95">
-        #KeepIt
-      </text>
     </svg>
   `;
 
@@ -398,7 +395,7 @@ function toPartnerMomentView(
       snap_opened_at_by_user: rawPartner.snap_opened_at_by_user ?? {},
       comments: rawPartner.comments ?? [],
       reactions: rawPartner.reactions ?? {},
-      watermark_tag: rawPartner.watermark_tag ?? '#KeepIt',
+      watermark_tag: rawPartner.watermark_tag ?? '#keepit',
       media_type: rawPartner.media_type ?? 'photo',
       video_uri: null,
       video_duration_seconds: rawPartner.video_duration_seconds ?? null,
@@ -438,7 +435,7 @@ function toPartnerMomentView(
     snap_opened_at_by_user: effectivePartner.snap_opened_at_by_user ?? {},
     comments: effectivePartner.comments ?? [],
     reactions: effectivePartner.reactions ?? {},
-    watermark_tag: effectivePartner.watermark_tag ?? '#KeepIt',
+    watermark_tag: effectivePartner.watermark_tag ?? '#keepit',
     media_type: effectivePartner.media_type ?? 'photo',
     video_uri: expiredSnap ? null : (effectivePartner.video_uri ?? null),
     video_duration_seconds: effectivePartner.video_duration_seconds ?? null,
@@ -508,7 +505,7 @@ function buildSeededFriendMoments(coupleId: string, promptId: string, today: str
       viewed_by_user_ids: [],
       comments: [],
       reactions: {},
-      watermark_tag: '#KeepIt',
+      watermark_tag: '#keepit',
       media_type: 'photo',
       filter_preset: 'warm_film',
       back_photo_url: soraPhotos.backUri,
@@ -560,7 +557,7 @@ function buildSeededFriendMoments(coupleId: string, promptId: string, today: str
       viewed_by_user_ids: [],
       comments: [],
       reactions: {},
-      watermark_tag: '#KeepIt',
+      watermark_tag: '#keepit',
       media_type: 'photo',
       filter_preset: 'vhs_retro',
       back_photo_url: leoPhotos.backUri,
@@ -690,7 +687,7 @@ export async function fetchTodayMomentBundle(params: {
       ...m,
       back_photo_url: m.back_photo_url || m.back_photo_path,
       front_photo_url: m.front_photo_url || m.front_photo_path,
-      watermark_tag: m.watermark_tag ?? '#KeepIt',
+      watermark_tag: m.watermark_tag ?? '#keepit',
       filter_preset: m.filter_preset ?? 'normal',
       media_type: m.media_type ?? 'photo',
     }));
@@ -918,7 +915,7 @@ export async function submitDailyMoment(params: {
     snap_opened_at_by_user: existingToReplace?.snap_opened_at_by_user ?? {},
     comments: existingToReplace?.comments ?? [],
     reactions: existingToReplace?.reactions ?? {},
-    watermark_tag: '#KeepIt',
+    watermark_tag: '#keepit',
     media_type: params.mediaType ?? 'photo',
     video_uri: finalVideoUri,
     video_duration_seconds: params.videoDurationSeconds ?? null,

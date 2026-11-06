@@ -61,6 +61,7 @@ import {
 import {
   buildMomentCompositeSvgDataUri,
   exportAndShareCompositeMoment,
+  formatMomentWatermarkTimestamp,
   STORY_THEME_PRESETS,
   StoryThemePreset,
 } from '@/utils/momentExport';
@@ -416,10 +417,10 @@ export function DualMomentCard({
 
   // Download & 9:16 Story Share modal state (Item #15 & #19)
   const [actionBanner, setActionBanner] = useState<string | null>(null);
+  const [savingPhoto, setSavingPhoto] = useState(false);
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyTheme, setStoryTheme] = useState<StoryThemePreset>('midnight');
   const [storySharing, setStorySharing] = useState(false);
-
   const pipScale = useSharedValue(1);
   const pipStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pipScale.get() }],
@@ -690,26 +691,38 @@ export function DualMomentCard({
     setVideoPlaying((prev) => !prev);
   };
 
+  const watermarkTimestamp = formatMomentWatermarkTimestamp(postedAtIso);
+
   const handleSave3x4Photo = async () => {
-    if (localSnapOnce && !ownerFlag) return;
-    const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
-    const msg = await exportAndShareCompositeMoment({
-      backUri: mainSource,
-      frontUri: pipSource,
-      authorName,
-      caption: localCaption,
-      locationLabel: localLocationLabel,
-      musicTitle: localMusicTrack
-        ? `${localMusicTrack.title} · ${localMusicTrack.artist}`
-        : null,
-      taggedUsers: localTaggedUsers,
-      filterPreset: localFilterPreset,
-      overlays: localOverlays,
-      aspect: '3:4',
-      baseFilename: `keepit-${safeAuthor}-3x4`,
-      title: `${authorName}’s KeepIt Moment`,
-    });
-    setActionBanner(msg);
+    if ((localSnapOnce && !ownerFlag) || savingPhoto) return;
+    setSavingPhoto(true);
+    setActionBanner(null);
+    try {
+      const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
+      const msg = await exportAndShareCompositeMoment({
+        backUri: mainSource,
+        frontUri: pipSource,
+        authorName,
+        postedAtIso,
+        timestampLabel: watermarkTimestamp,
+        caption: localCaption,
+        locationLabel: localLocationLabel,
+        musicTitle: localMusicTrack
+          ? `${localMusicTrack.title} · ${localMusicTrack.artist}`
+          : null,
+        taggedUsers: localTaggedUsers,
+        filterPreset: localFilterPreset,
+        overlays: localOverlays,
+        aspect: '3:4',
+        baseFilename: `keepit-${safeAuthor}-3x4`,
+        title: `${authorName}’s KeepIt Moment`,
+      });
+      setActionBanner(msg);
+    } catch (err) {
+      setActionBanner(err instanceof Error ? err.message : 'Could not save photo.');
+    } finally {
+      setSavingPhoto(false);
+    }
   };
 
   const storyDataUri =
@@ -719,6 +732,8 @@ export function DualMomentCard({
           backUri: mainSource,
           frontUri: pipSource,
           authorName,
+          postedAtIso,
+          timestampLabel: watermarkTimestamp,
           caption: localCaption,
           locationLabel: localLocationLabel,
           musicTitle: localMusicTrack
@@ -740,6 +755,8 @@ export function DualMomentCard({
         backUri: mainSource,
         frontUri: pipSource,
         authorName,
+        postedAtIso,
+        timestampLabel: watermarkTimestamp,
         caption: localCaption,
         locationLabel: localLocationLabel,
         musicTitle: localMusicTrack
@@ -1046,11 +1063,10 @@ export function DualMomentCard({
               </View>
             ) : null}
 
-            {/* #KeepIt Bottom-Left Watermark (Item #8) */}
-            <View style={styles.keepItWatermarkPill}>
-              <Text style={styles.keepItWatermarkText}>
-                {moment?.watermark_tag ?? '#KeepIt'}
-              </Text>
+            {/* BeReal-Style Bottom-Left On-Photo Watermark (#keepit + timestamp below) */}
+            <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
+              <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+              <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
             </View>
           </>
         )}
@@ -1761,6 +1777,7 @@ export function DualMomentCard({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Save 3:4 photo with KeepIt watermark"
+              disabled={savingPhoto}
               onPress={() => void handleSave3x4Photo()}
               style={[
                 styles.exportActionBtn,
@@ -1768,10 +1785,11 @@ export function DualMomentCard({
                   backgroundColor: colors.surfaceElevated,
                   borderColor: colors.border,
                   borderRadius: radii.pill,
+                  opacity: savingPhoto ? 0.6 : 1,
                 },
               ]}>
               <Text style={[styles.exportActionText, { color: colors.ink }]}>
-                ⬇ Save Photo
+                {savingPhoto ? 'Saving…' : '⬇ Save Photo'}
               </Text>
             </Pressable>
 
@@ -2045,23 +2063,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  keepItWatermarkPill: {
+  keepItPhotoWatermark: {
     position: 'absolute',
     bottom: 14,
-    left: 14,
-    backgroundColor: 'rgba(12, 12, 14, 0.78)',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.24)',
+    left: 16,
+    alignItems: 'flex-start',
+    gap: 1,
     zIndex: 6,
   },
-  keepItWatermarkText: {
+  keepItWatermarkTitle: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.6,
+    lineHeight: 20,
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 5,
+  },
+  keepItWatermarkTime: {
+    color: 'rgba(255, 255, 255, 0.92)',
+    fontSize: 11,
+    fontWeight: '700',
     letterSpacing: -0.2,
+    lineHeight: 14,
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   videoProgressTrack: {
     position: 'absolute',

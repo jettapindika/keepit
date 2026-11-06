@@ -58,6 +58,15 @@ public final class KeepItWidgetBridgeModule: Module {
       let backUri = (obj["backUri"] as? String) ?? ""
       let frontUri = (obj["frontUri"] as? String) ?? ""
       let authorName = (obj["authorName"] as? String) ?? "KeepIt"
+      let rawTimestamp = (obj["timestampLabel"] as? String) ?? ""
+      let timestampLabel: String = {
+        if !rawTimestamp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          return rawTimestamp
+        }
+        let df = DateFormatter()
+        df.dateFormat = "MMM d · hh:mm a"
+        return df.string(from: Date())
+      }()
       let caption = (obj["caption"] as? String) ?? ""
       let filename = ((obj["filename"] as? String) ?? "keepit-moment.jpg")
         .replacingOccurrences(of: "/", with: "_")
@@ -97,17 +106,25 @@ public final class KeepItWidgetBridgeModule: Module {
           border.stroke()
         }
 
-        // #KeepIt Watermark
-        let wmRect = CGRect(x: cardRect.minX + 36, y: cardRect.maxY - 92, width: 180, height: 58)
-        UIColor(white: 0.05, alpha: 0.84).setFill()
-        UIBezierPath(roundedRect: wmRect, cornerRadius: 29).fill()
-        let wmAttrs: [NSAttributedString.Key: Any] = [
-          .font: UIFont.systemFont(ofSize: 28, weight: .heavy),
-          .foregroundColor: UIColor.white,
-        ]
-        ("#KeepIt" as NSString).draw(at: CGPoint(x: wmRect.minX + 34, y: wmRect.minY + 12), withAttributes: wmAttrs)
-        ctx.cgContext.restoreGState()
+        // #keepit + Timestamp Watermark directly on photo (bottom-left)
+        let wmShadow = NSShadow()
+        wmShadow.shadowColor = UIColor(white: 0.0, alpha: 0.85)
+        wmShadow.shadowOffset = CGSize(width: 0, height: 2)
+        wmShadow.shadowBlurRadius = 6
 
+        let wmTitleAttrs: [NSAttributedString.Key: Any] = [
+          .font: UIFont.systemFont(ofSize: 38, weight: .black),
+          .foregroundColor: UIColor.white,
+          .shadow: wmShadow,
+        ]
+        let wmTimeAttrs: [NSAttributedString.Key: Any] = [
+          .font: UIFont.systemFont(ofSize: 22, weight: .bold),
+          .foregroundColor: UIColor(white: 1.0, alpha: 0.92),
+          .shadow: wmShadow,
+        ]
+        ("#keepit" as NSString).draw(at: CGPoint(x: cardRect.minX + 40, y: cardRect.maxY - 118), withAttributes: wmTitleAttrs)
+        (timestampLabel as NSString).draw(at: CGPoint(x: cardRect.minX + 40, y: cardRect.maxY - 68), withAttributes: wmTimeAttrs)
+        ctx.cgContext.restoreGState()
         if aspect == "9:16" {
           let footer = caption.isEmpty ? "\(authorName)’s KeepIt Moment" : "“\(caption)”"
           let footerAttrs: [NSAttributedString.Key: Any] = [

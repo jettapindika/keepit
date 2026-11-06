@@ -49,7 +49,10 @@ import {
   stopMusicPreview,
   toggleMusicTrackPreview,
 } from '@/utils/audioPreview';
-import { buildMomentCompositeSvgDataUri } from '@/utils/momentExport';
+import {
+  buildMomentCompositeSvgDataUri,
+  exportAndShareCompositeMoment,
+} from '@/utils/momentExport';
 import { requestPinKeepItWidgetDetailed } from '../modules/keepit-widget-bridge';
 
 // Force offline/local-first mode during unit tests so tests never depend on external network reachability
@@ -637,7 +640,7 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.equal(locBundle.partner, null);
   });
 
-  it('returns truthful widget pin status on Web/iOS and bakes #KeepIt + tags into 3:4 & 9:16 composites', async () => {
+  it('returns truthful widget pin status on Web/iOS, bakes #keepit + timestamp into 3:4 & 9:16 composites, and saves photos across URI formats', async () => {
     Platform.OS = 'web';
     const webPin = await requestPinKeepItWidgetDetailed();
     assert.equal(webPin.pinned, false);
@@ -647,6 +650,17 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     const iosPin = await requestPinKeepItWidgetDetailed();
     assert.equal(iosPin.pinned, false);
     assert.equal(iosPin.mode, 'manual_instructions');
+
+    const svgSaveMsg = await exportAndShareCompositeMoment({
+      backUri: 'data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E',
+      frontUri: 'data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E',
+      authorName: 'Jetta',
+      postedAtIso: '2026-11-06T14:30:00.000Z',
+      aspect: '3:4',
+      baseFilename: 'keepit-jetta-3x4',
+      title: 'Jetta’s KeepIt Moment',
+    });
+    assert.ok(svgSaveMsg.includes('Saved'));
     Platform.OS = 'web';
 
     const svg3x4 = decodeURIComponent(
@@ -654,23 +668,27 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
         backUri: 'data:image/jpeg;base64,AAA',
         frontUri: 'data:image/jpeg;base64,BBB',
         authorName: 'Jetta',
+        timestampLabel: 'Nov 6 · 02:30 PM',
         aspect: '3:4',
       })
     );
-    assert.ok(svg3x4.includes('#KeepIt'));
+    assert.ok(svg3x4.includes('#keepit'));
+    assert.ok(svg3x4.includes('Nov 6 · 02:30 PM'));
 
     const svg9x16 = decodeURIComponent(
       buildMomentCompositeSvgDataUri({
         backUri: 'data:image/jpeg;base64,AAA',
         frontUri: 'data:image/jpeg;base64,BBB',
         authorName: 'Jetta',
+        timestampLabel: 'Nov 6 · 02:30 PM',
         taggedUsers: [{ userId: 'u1', displayName: 'Sora', username: 'sora.frames' }],
         overlays: [{ id: 'ov1', kind: 'text', content: 'neon vibe', bgStyle: 'neon', xPct: 50, yPct: 50 }],
         aspect: '9:16',
         storyTheme: 'neon',
       })
     );
-    assert.ok(svg9x16.includes('#KeepIt'));
+    assert.ok(svg9x16.includes('#keepit'));
+    assert.ok(svg9x16.includes('Nov 6 · 02:30 PM'));
     assert.ok(svg9x16.includes('@sora.frames'));
     assert.ok(svg9x16.includes('neon vibe'));
   });

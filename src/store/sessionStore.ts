@@ -22,6 +22,9 @@ function buildSoloFallbackCouple(userId: string, createdAt?: string): CoupleReco
     created_at: createdAt ?? new Date().toISOString(),
   };
 }
+function buildDeterministicEmailUserId(cleanedEmail: string): string {
+  return `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
+}
 
 interface PersistedSessionSlice {
   user: UserProfile | null;
@@ -204,38 +207,47 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       if (error) {
         if (/already registered|already exists/i.test(error.message)) {
-          throw new Error('An account with this email already exists. Sign in instead.');
+          // Try signing in directly with the provided password (bypassing email confirmation if not confirmed yet)
+          const { data: existingSignIn, error: existingErr } =
+            await supabase.auth.signInWithPassword({
+              email: cleanedEmail,
+              password,
+            });
+          if (existingSignIn?.user?.id) {
+            userId = existingSignIn.user.id;
+          } else if (existingErr && /Email not confirmed/i.test(existingErr.message)) {
+            userId = buildDeterministicEmailUserId(cleanedEmail);
+          } else {
+            throw new Error('An account with this email already exists. Sign in instead.');
+          }
+        } else if (
+          /confirmation|confirm|rate limit|too many requests|security purposes|sending/i.test(
+            error.message
+          )
+        ) {
+          // Do not block signup when email confirmation / SMTP rate limits occur
+          userId = buildDeterministicEmailUserId(cleanedEmail);
+        } else {
+          throw new Error(error.message || 'Could not create account.');
         }
-        if (/rate limit|too many requests|security purposes/i.test(error.message)) {
-          throw new Error('Too many signup attempts. Please wait a moment and try again.');
-        }
-        throw new Error(error.message || 'Could not create account.');
-      }
-
-      if (!data?.user?.id) {
-        throw new Error('Account creation failed. Please check your email and try again.');
-      }
-
-      if (!data.session) {
-        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
-          email: cleanedEmail,
-          password,
-        });
-        if (signInErr && /Email not confirmed/i.test(signInErr.message)) {
-          throw new Error(
-            'Please check your email inbox and confirm your address before signing in.'
-          );
-        }
-        if (signInData?.user?.id) {
-          userId = signInData.user.id;
+      } else if (data?.user?.id) {
+        if (!data.session) {
+          // Attempt immediate sign-in, but never fail if email confirmation is pending
+          const { data: signInData } = await supabase.auth
+            .signInWithPassword({
+              email: cleanedEmail,
+              password,
+            })
+            .catch(() => ({ data: null }));
+          userId = signInData?.user?.id ?? data.user.id;
         } else {
           userId = data.user.id;
         }
       } else {
-        userId = data.user.id;
+        userId = buildDeterministicEmailUserId(cleanedEmail);
       }
     } else {
-      userId = `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
+      userId = buildDeterministicEmailUserId(cleanedEmail);
     }
 
     if (prevUserId && prevUserId !== userId) {
@@ -290,22 +302,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       if (error || !data?.user) {
         if (error && /Email not confirmed/i.test(error.message)) {
-          throw new Error('Please confirm your email address before signing in.');
-        }
-        if (error && /rate limit|too many requests/i.test(error.message)) {
+          // Email confirmation is disabled for now — allow signing in without inbox verification
+          const savedRaw = await AsyncStorage.getItem(SESSION_STORAGE_KEY).catch(() => null);
+          const savedSlice: Partial<PersistedSessionSlice> | null = savedRaw
+            ? JSON.parse(savedRaw)
+            : null;
+          if (savedSlice?.email === cleanedEmail && savedSlice.user?.id) {
+            userId = savedSlice.user.id;
+            displayName = savedSlice.user.display_name || displayName;
+          } else {
+            userId = buildDeterministicEmailUserId(cleanedEmail);
+          }
+        } else if (error && /rate limit|too many requests/i.test(error.message)) {
           throw new Error('Too many sign-in attempts. Please wait a moment and try again.');
+        } else {
+          throw new Error('Incorrect email or password.');
         }
-        throw new Error('Incorrect email or password.');
+      } else {
+        userId = data.user.id;
+        const metaName =
+          typeof data.user.user_metadata?.display_name === 'string'
+            ? data.user.user_metadata.display_name
+            : null;
+        if (metaName) displayName = metaName;
       }
-
-      userId = data.user.id;
-      const metaName =
-        typeof data.user.user_metadata?.display_name === 'string'
-          ? data.user.user_metadata.display_name
-          : null;
-      if (metaName) displayName = metaName;
     } else {
-      userId = `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
+      userId = buildDeterministicEmailUserId(cleanedEmail);
     }
 
     if (prevUserId && prevUserId !== userId) {

@@ -14,6 +14,7 @@ import { useSessionStore } from '@/store/sessionStore';
 import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
+import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -120,7 +121,7 @@ function CollageHalfPane({ moment, authorName, side }: CollageHalfPaneProps) {
         <View
           style={[
             styles.lateChip,
-            side === 'left' ? styles.anchorBottomRight : styles.anchorBottomLeft,
+            side === 'left' ? styles.anchorTopRight : styles.anchorTopLeft,
             {
               backgroundColor: colors.canvas,
               borderColor: colors.warning,
@@ -137,7 +138,7 @@ function CollageHalfPane({ moment, authorName, side }: CollageHalfPaneProps) {
       <Animated.View
         style={[
           styles.miniPipAnchor,
-          side === 'left' ? styles.anchorBottomLeft : styles.anchorBottomRight,
+          side === 'left' ? styles.anchorBottomRight : styles.anchorBottomRight,
           pipAnimatedStyle,
         ]}>
         <View
@@ -177,7 +178,9 @@ export function TogetherCollageCard({
       });
 
   const bothOnTime = !myMoment.is_late && !partnerMoment.is_late;
-
+  const watermarkTimestamp = formatMomentWatermarkTimestamp(
+    myMoment.posted_at || partnerMoment.posted_at
+  );
   return (
     <RevealOnAppear revealKey={revealKey ?? `together:${promptDate}`}>
       <View
@@ -245,8 +248,9 @@ export function TogetherCollageCard({
           />
           <View style={[styles.centerSeam, { backgroundColor: colors.canvas }]} />
           <CollageHalfPane moment={myMoment} authorName={myName} side="right" />
-          <View pointerEvents="none" style={styles.keepItWatermarkBadge}>
-            <Text style={styles.keepItWatermarkText}>#KeepIt</Text>
+          <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
+            <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+            <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
           </View>
         </View>
 
@@ -416,7 +420,7 @@ const styles = StyleSheet.create({
   },
   lateChip: {
     position: 'absolute',
-    bottom: 10,
+    top: 38,
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -427,22 +431,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  keepItWatermarkBadge: {
+  keepItPhotoWatermark: {
     position: 'absolute',
-    bottom: 10,
-    left: '50%',
-    transform: [{ translateX: -34 }],
-    backgroundColor: 'rgba(12, 12, 14, 0.78)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
+    bottom: 12,
+    left: 12,
+    alignItems: 'flex-start',
+    gap: 1,
+    zIndex: 6,
   },
-  keepItWatermarkText: {
+  keepItWatermarkTitle: {
     color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    lineHeight: 18,
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 5,
+  },
+  keepItWatermarkTime: {
+    color: 'rgba(255, 255, 255, 0.92)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    lineHeight: 13,
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   captionsGrid: {
     flexDirection: 'row',
