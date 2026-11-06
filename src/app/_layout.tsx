@@ -157,8 +157,9 @@ function NavigationGuard() {
 
     void SplashScreen.hideAsync().catch(() => {});
 
-    const inAuthGroup = segments[0] === '(auth)';
-    const authLeaf = segments[1];
+    const segmentList = segments as readonly string[];
+    const inAuthGroup = segmentList[0] === '(auth)';
+    const authLeaf = segmentList[1];
 
     const incomingCode =
       typeof globalParams.code === 'string' && globalParams.code.trim().length > 0

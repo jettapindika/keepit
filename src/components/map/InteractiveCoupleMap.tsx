@@ -322,10 +322,13 @@ export function InteractiveCoupleMap({
 
   const tiles: { key: string; url: string; left: number; top: number }[] = [];
   if (mapStyle === 'street') {
+    const cartoTheme = isDark ? 'dark_all' : 'rastertiles/voyager';
+    const subdomains = ['a', 'b', 'c', 'd'] as const;
     for (let tx = minTileX; tx <= maxTileX; tx += 1) {
       const wrappedTx = ((tx % numTilesAxis) + numTilesAxis) % numTilesAxis;
       for (let ty = minTileY; ty <= maxTileY; ty += 1) {
-        const tileUrl = `https://tile.openstreetmap.org/${zoom}/${wrappedTx}/${ty}.png`;
+        const sub = subdomains[Math.abs(wrappedTx + ty) % subdomains.length];
+        const tileUrl = `https://${sub}.basemaps.cartocdn.com/${cartoTheme}/${zoom}/${wrappedTx}/${ty}@2x.png`;
         tiles.push({
           key: `${isDark ? 'd' : 'l'}_${zoom}_${tx}_${ty}`,
           url: tileUrl,
@@ -654,18 +657,13 @@ export function InteractiveCoupleMap({
               contentFit="cover"
               cachePolicy="memory-disk"
               transition={140}
-              style={[
-                {
-                  position: 'absolute',
-                  left: tile.left,
-                  top: tile.top,
-                  width: TILE_SIZE + 0.5,
-                  height: TILE_SIZE + 0.5,
-                },
-                Platform.OS === 'web' && isDark
-                  ? ({ filter: 'invert(0.92) hue-rotate(180deg) brightness(0.95) contrast(1.05)' } as never)
-                  : null,
-              ]}
+              style={{
+                position: 'absolute',
+                left: tile.left,
+                top: tile.top,
+                width: TILE_SIZE + 0.5,
+                height: TILE_SIZE + 0.5,
+              }}
             />
           ))}
         </View>
@@ -1115,7 +1113,7 @@ export function InteractiveCoupleMap({
           ]}>
           <View style={[styles.scaleRule, { borderColor: colors.inkMuted }]} />
           <Text style={[styles.scaleLabel, { color: colors.inkMuted }]}>
-            {scaleBarLabel} · z{zoom} · OSM
+            {scaleBarLabel} · z{zoom} · © OSM · CARTO
           </Text>
         </View>
 

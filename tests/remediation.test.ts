@@ -738,5 +738,15 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       false,
       'useAnimatedStyle worklets must not capture non-worklet clamp() helper across UI runtime'
     );
+    assert.equal(
+      mapSrc.includes('tile.openstreetmap.org'),
+      false,
+      'InteractiveCoupleMap must not use tile.openstreetmap.org which blocks web/app Referer/User-Agent with Access Blocked tiles'
+    );
+    assert.equal(
+      mapSrc.includes('basemaps.cartocdn.com'),
+      true,
+      'InteractiveCoupleMap should use CartoDB basemaps for unblocked light/dark street tiles'
+    );
   });
 });
