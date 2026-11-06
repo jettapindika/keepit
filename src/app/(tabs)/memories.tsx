@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { fetchMonthMemories, seedSandboxSampleMemories } from '@/api/extras';
+import { fetchMonthMemories } from '@/api/extras';
 import { DEFAULT_WARM_BLURHASH } from '@/api/moments';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
@@ -49,8 +49,9 @@ export default function MemoriesScreen() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [recapOpen, setRecapOpen] = useState(false);
 
+  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const myName = user?.display_name ?? 'You';
-  const partnerName = partner?.display_name ?? 'Your partner';
+  const partnerName = partner?.display_name ?? 'Partner';
 
   const memoriesQuery = useQuery({
     queryKey: ['month-memories', couple?.id, user?.id, cursorYear, cursorMonth],
@@ -230,7 +231,7 @@ export default function MemoriesScreen() {
                 Memories
               </Text>
               <Text style={[styles.screenSub, { color: colors.inkMuted }]}>
-                {myName} & {partnerName}
+                {isPartnerPaired ? `${myName} & ${partnerName}` : `${myName} · Personal Archive`}
               </Text>
             </View>
 
@@ -569,24 +570,9 @@ export default function MemoriesScreen() {
               <Text style={[styles.stateTitle, { color: colors.ink }]}>
                 No Moments in {monthLabel}
               </Text>
-              <KeepItButton
-                label="Load Sample Month Memories"
-                variant="secondary"
-                onPress={() => {
-                  if (!couple || !user) return;
-                  void seedSandboxSampleMemories({
-                    coupleId: couple.id,
-                    userId: user.id,
-                    partnerId: partner?.id ?? `partner_${couple.id}`,
-                    userName: myName,
-                    partnerName,
-                  }).then(() => {
-                    void queryClient.invalidateQueries({
-                      queryKey: ['month-memories', couple.id],
-                    });
-                  });
-                }}
-              />
+              <Text style={[styles.stateBody, { color: colors.inkMuted }]}>
+                Capture daily Moments from the Home tab to build your monthly calendar archive and story recap.
+              </Text>
             </View>
           </RevealOnAppear>
         ) : selectedRecord ? (

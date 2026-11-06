@@ -8,7 +8,6 @@ import { fetchRecentNudges, sendPartnerNudge } from '@/api/extras';
 import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
-  simulateSandboxPartnerMoment,
   updateMomentCaption,
 } from '@/api/moments';
 import { fetchCoupleStatuses } from '@/api/statuses';
@@ -49,8 +48,6 @@ export default function HomeScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [nudging, setNudging] = useState(false);
   const [nudgeFeedback, setNudgeFeedback] = useState<string | null>(null);
-  const [simulatingPartner, setSimulatingPartner] = useState(false);
-
   const partnerName = partner?.display_name ?? 'Partner';
   const bundleQuery = useQuery({
     queryKey: ['today-moment', couple?.id, user?.id],
@@ -230,34 +227,6 @@ export default function HomeScreen() {
     }
   };
 
-  const handleSimulatePartnerMoment = async () => {
-    if (!couple || !user) return;
-    setSimulatingPartner(true);
-    setActionError(null);
-    try {
-      const todayDate = new Date().toISOString().slice(0, 10);
-      const promptId = bundle?.prompt.id ?? `prompt_${couple.id}_${todayDate}`;
-      const effectivePartnerId =
-        partner?.id ??
-        (couple.user_a_id === user.id
-          ? couple.user_b_id || `partner_${couple.id}`
-          : couple.user_a_id);
-
-      await simulateSandboxPartnerMoment({
-        coupleId: couple.id,
-        promptId,
-        partnerId: effectivePartnerId,
-        partnerName,
-      });
-      await refreshMoments();
-      setSelectedTab('partner');
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Could not load partner Moment.');
-    } finally {
-      setSimulatingPartner(false);
-    }
-  };
-
   const unlockedPartnerAsRecord: MomentRecord | null =
     bothUnlocked && nonSnapPartnerMoment && couple && bundle
       ? {
@@ -416,11 +385,13 @@ export default function HomeScreen() {
             partnerName={partnerName}
             partnerStatus={statusQuery.data?.partner ?? null}
             myStatus={statusQuery.data?.mine ?? null}
+            isPartnerPaired={isPartnerPaired}
             latestNudge={nudgesQuery.data?.[0] ?? null}
             currentUserId={user?.id}
             nudging={nudging}
             nudgeFeedback={nudgeFeedback}
-            onSendNudge={() => void handleSendNudge()}
+            onSendNudge={isPartnerPaired ? () => void handleSendNudge() : undefined}
+            onPressPair={() => router.push('/(auth)/pair')}
             onOpenStatusSheet={() => router.push('/status-sheet')}
           />
         </RevealOnAppear>
@@ -713,26 +684,28 @@ export default function HomeScreen() {
               ]}>
               <DualFrameMark size={48} />
               <Text style={[styles.emptyTitle, { color: colors.ink }]}>
-                Waiting on {partnerName}
+                {isPartnerPaired ? `Waiting on ${partnerName}` : 'No partner paired yet'}
               </Text>
               <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
-                {partnerName} hasn’t shared today’s Moment yet. Send a nudge or load a demo
-                partner post to preview unlocking.
+                {isPartnerPaired
+                  ? `${partnerName} hasn’t shared today’s Moment yet.`
+                  : 'Pair with your partner using a 6-character invite code to share daily Moments together.'}
               </Text>
               <View style={styles.emptyActionsStack}>
-                <KeepItButton
-                  label="Simulate Partner Post"
-                  variant="secondary"
-                  loading={simulatingPartner}
-                  onPress={() => void handleSimulatePartnerMoment()}
-                />
-                {!isPartnerPaired ? (
+                {isPartnerPaired ? (
                   <KeepItButton
-                    label="Pair with Real Partner (Invite Code)"
-                    variant="ghost"
+                    label={`Nudge ${partnerName}`}
+                    variant="secondary"
+                    loading={nudging}
+                    onPress={() => void handleSendNudge()}
+                  />
+                ) : (
+                  <KeepItButton
+                    label="Pair with Partner (Invite Code)"
+                    variant="secondary"
                     onPress={() => router.push('/(auth)/pair')}
                   />
-                ) : null}
+                )}
               </View>
             </View>
           )
@@ -918,8 +891,9 @@ export default function HomeScreen() {
               Together Collage Locked
             </Text>
             <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
-              Once both you and {partnerName} post a Moment today, your side-by-side dual
-              collage unlocks automatically.
+              {isPartnerPaired
+                ? `Once both you and ${partnerName} post a Moment today, your side-by-side dual collage unlocks automatically.`
+                : 'Pair with a partner and both post a Moment today to unlock your side-by-side dual collage.'}
             </Text>
             <View style={styles.emptyActionsStack}>
               {!myMoment ? (
@@ -928,12 +902,11 @@ export default function HomeScreen() {
                   onPress={() => openCameraModal()}
                 />
               ) : null}
-              {!partnerMoment ? (
+              {!isPartnerPaired ? (
                 <KeepItButton
-                  label="Load Demo Partner Moment"
+                  label="Pair with Partner"
                   variant="secondary"
-                  loading={simulatingPartner}
-                  onPress={() => void handleSimulatePartnerMoment()}
+                  onPress={() => router.push('/(auth)/pair')}
                 />
               ) : null}
             </View>

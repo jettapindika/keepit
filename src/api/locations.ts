@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
+import { fetchFriendsCircle } from '@/api/social';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   CoupleEventRecord,
@@ -34,36 +35,26 @@ export const DEFAULT_PARTNER_LIVE_COORDS = {
   placeName: 'Blue Bottle Coffee · 620m away',
 } as const;
 
-function buildDefaultFriendLocations(coupleId: string, nowIso: string): LocationShareRecord[] {
-  const nowMs = new Date(nowIso).getTime();
-  const soraUpdatedIso = new Date(nowMs - 3 * 60 * 1000).toISOString();
-  const leoUpdatedIso = new Date(nowMs - 7 * 60 * 1000).toISOString();
-  return [
-    {
-      user_id: 'friend_sora_k',
-      couple_id: coupleId,
-      display_name: 'Sora Kim',
-      mode: 'live',
-      lat: 37.7695,
-      lng: -122.426,
-      accuracy_m: 19,
-      place_name: 'Dolores Park Overlook',
-      location_updated_at: soraUpdatedIso,
-      mode_changed_at: soraUpdatedIso,
-    },
-    {
-      user_id: 'friend_leo_v',
-      couple_id: coupleId,
-      display_name: 'Leo Vance',
-      mode: 'live',
-      lat: 37.784,
-      lng: -122.409,
-      accuracy_m: 24,
-      place_name: 'Golden Gate Skate Spot',
-      location_updated_at: leoUpdatedIso,
-      mode_changed_at: leoUpdatedIso,
-    },
-  ];
+async function resolveFriendLocations(params: {
+  coupleId: string;
+  userId: string;
+  locationsMap: Record<string, LocationShareRecord>;
+}): Promise<LocationShareRecord[]> {
+  const friendsCircle = await fetchFriendsCircle({ userId: params.userId });
+  if (friendsCircle.length === 0) return [];
+
+  const out: LocationShareRecord[] = [];
+  for (const friendEntry of friendsCircle) {
+    const fId = friendEntry.friend_id;
+    const match = Object.values(params.locationsMap).find((row) => row.user_id === fId);
+    if (match && match.mode !== 'ghost' && match.lat !== null && match.lng !== null) {
+      out.push({
+        ...match,
+        display_name: match.display_name ?? friendEntry.friend_profile.display_name,
+      });
+    }
+  }
+  return out;
 }
 
 interface LocalDbSnapshot {
@@ -275,7 +266,12 @@ export async function fetchCoupleLocations(params: {
   userId: string;
 }): Promise<CoupleLocationBundle> {
   const nowIso = new Date().toISOString();
-  const defaultFriends = buildDefaultFriendLocations(params.coupleId, nowIso);
+  const localLocationsMap = await readLocalLocations();
+  const activeFriendLocations = await resolveFriendLocations({
+    coupleId: params.coupleId,
+    userId: params.userId,
+    locationsMap: localLocationsMap,
+  });
   const sessionState = useSessionStore.getState();
   const myDisplayName =
     sessionState.user?.id === params.userId ? sessionState.user.display_name : undefined;
@@ -310,12 +306,13 @@ export async function fetchCoupleLocations(params: {
               }
             : rawMine;
 
-        const isSolo = params.coupleId.startsWith('solo_') && !sessionState.partner;
-        const fallbackPartnerId = sessionState.partner?.id ?? 'partner_live_default';
-        const rawPartner = isSolo
+        const isPaired = Boolean(
+          !params.coupleId.startsWith('solo_') && sessionState.partner?.id
+        );
+        const rawPartner = !isPaired
           ? null
           : (raw.partner ?? {
-              user_id: fallbackPartnerId,
+              user_id: sessionState.partner!.id,
               couple_id: params.coupleId,
               display_name: sessionPartnerName ?? 'Partner',
               mode: 'ghost' as LocationMode,
@@ -340,8 +337,7 @@ export async function fetchCoupleLocations(params: {
         return {
           mine: redactGhostShare(hydratedMine),
           partner: redactGhostShare(hydratedPartner),
-          friends:
-            Array.isArray(raw.friends) && raw.friends.length > 0 ? raw.friends : defaultFriends,
+          friends: Array.isArray(raw.friends) ? raw.friends : activeFriendLocations,
           events: Array.isArray(raw.events) ? raw.events : [],
         };
       }
@@ -382,14 +378,15 @@ export async function fetchCoupleLocations(params: {
     mutated = true;
   }
 
-  const isSolo = params.coupleId.startsWith('solo_') && !sessionState.partner;
+  const resolvedPartnerId =
+    !params.coupleId.startsWith('solo_')
+      ? ((await resolveSandboxPartnerId(params.coupleId, params.userId, locationsMap)) ??
+          sessionState.partner?.id ??
+          null)
+      : null;
   let partnerRecord: LocationShareRecord | null = null;
 
-  if (!isSolo) {
-    const resolvedPartnerId =
-      (await resolveSandboxPartnerId(params.coupleId, params.userId, locationsMap)) ??
-      sessionState.partner?.id ??
-      'sandbox_partner_default';
+  if (resolvedPartnerId) {
     const partnerKey = `${params.coupleId}:${resolvedPartnerId}`;
     const existingPartner = locationsMap[partnerKey];
     if (!existingPartner) {
@@ -441,7 +438,7 @@ export async function fetchCoupleLocations(params: {
   return {
     mine: redactGhostShare(locationsMap[myKey]),
     partner: redactGhostShare(partnerRecord),
-    friends: defaultFriends,
+    friends: activeFriendLocations,
     events: locationEvents,
   };
 }

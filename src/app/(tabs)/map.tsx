@@ -92,7 +92,8 @@ export default function MapScreen() {
     null
   );
 
-  const partnerName = partner?.display_name ?? 'Your partner';
+  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
+  const partnerName = partner?.display_name ?? 'Partner';
 
   const locationQuery = useQuery({
     queryKey: ['couple-locations', couple?.id, user?.id],
@@ -211,7 +212,9 @@ export default function MapScreen() {
       }
 
       setNotice({
-        text: `${partnerName} was notified that you switched location sharing to ${formatLocationModeLabel(nextMode)}.`,
+        text: isPartnerPaired
+          ? `${partnerName} was notified that you switched location sharing to ${formatLocationModeLabel(nextMode)}.`
+          : `Switched location sharing to ${formatLocationModeLabel(nextMode)}.`,
         tone: 'success',
       });
 
@@ -269,7 +272,9 @@ export default function MapScreen() {
       }
 
       setNotice({
-        text: `Checked in at ${resolvedPlaceName} · ${partnerName} & friends notified.`,
+        text: isPartnerPaired
+          ? `Checked in at ${resolvedPlaceName} · ${partnerName} & friends notified.`
+          : `Checked in at ${resolvedPlaceName}.`,
         tone: 'success',
       });
 
@@ -430,80 +435,89 @@ export default function MapScreen() {
             <View style={styles.sectionHeaderRow}>
               <Text style={[styles.sectionTitle, { color: colors.ink }]}>Live Circle</Text>
               <Text style={[styles.sectionHint, { color: colors.inkMuted }]}>
-                {1 + friends.length} active pins
+                {(isPartnerPaired ? 1 : 0) + friends.length} active{' '}
+                {(isPartnerPaired ? 1 : 0) + friends.length === 1 ? 'pin' : 'pins'}
               </Text>
             </View>
 
             {/* Partner Row */}
-            <View
-              style={[
-                styles.circlePersonCard,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.border,
-                  borderRadius: radii.card,
-                },
-              ]}>
+            {isPartnerPaired ? (
               <View
                 style={[
-                  styles.personAvatar,
+                  styles.circlePersonCard,
                   {
-                    backgroundColor: colors.accent,
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.border,
+                    borderRadius: radii.card,
                   },
                 ]}>
-                <Text style={[styles.personAvatarText, { color: colors.onAccent }]}>
-                  {(partnerName.trim().slice(0, 1) || 'P').toUpperCase()}
-                </Text>
-              </View>
-              <View style={styles.personMetaCol}>
-                <View style={styles.personTitleRow}>
-                  <Text numberOfLines={1} style={[styles.personName, { color: colors.ink }]}>
-                    {partnerName}
+                <View
+                  style={[
+                    styles.personAvatar,
+                    {
+                      backgroundColor: colors.accent,
+                    },
+                  ]}>
+                  <Text style={[styles.personAvatarText, { color: colors.onAccent }]}>
+                    {(partnerName.trim().slice(0, 1) || 'P').toUpperCase()}
                   </Text>
-                  <View
-                    style={[
-                      styles.roleTag,
-                      {
-                        backgroundColor: colors.canvas,
-                        borderColor: colors.border,
-                        borderRadius: radii.pill,
-                      },
-                    ]}>
-                    <Text style={[styles.roleTagText, { color: colors.success }]}>Partner</Text>
-                  </View>
                 </View>
-                <Text numberOfLines={1} style={[styles.personPlace, { color: colors.ink }]}>
-                  {partnerShare?.mode === 'ghost'
-                    ? 'Ghost mode · Location hidden'
-                    : (partnerShare?.place_name ?? 'Sharing live location')}
-                </Text>
-                <Text style={[styles.personDistance, { color: colors.inkMuted }]}>
-                  {distanceMeters !== null
-                    ? `${formatDistanceApart(distanceMeters)} · ${formatRelativeTimeAgo(partnerShare?.location_updated_at)}`
-                    : formatLocationModeLabel(partnerShare?.mode ?? 'live')}
-                </Text>
+                <View style={styles.personMetaCol}>
+                  <View style={styles.personTitleRow}>
+                    <Text numberOfLines={1} style={[styles.personName, { color: colors.ink }]}>
+                      {partnerName}
+                    </Text>
+                    <View
+                      style={[
+                        styles.roleTag,
+                        {
+                          backgroundColor: colors.canvas,
+                          borderColor: colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <Text style={[styles.roleTagText, { color: colors.success }]}>Partner</Text>
+                    </View>
+                  </View>
+                  <Text numberOfLines={1} style={[styles.personPlace, { color: colors.ink }]}>
+                    {partnerShare?.mode === 'ghost'
+                      ? 'Ghost mode · Location hidden'
+                      : (partnerShare?.place_name ?? 'Sharing live location')}
+                  </Text>
+                  <Text style={[styles.personDistance, { color: colors.inkMuted }]}>
+                    {distanceMeters !== null
+                      ? `${formatDistanceApart(distanceMeters)} · ${formatRelativeTimeAgo(partnerShare?.location_updated_at)}`
+                      : formatLocationModeLabel(partnerShare?.mode ?? 'ghost')}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Message ${partnerName}`}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      void Haptics.selectionAsync();
+                    }
+                    router.push('/(tabs)/messages' as never);
+                  }}
+                  style={[
+                    styles.messageBtn,
+                    {
+                      backgroundColor: colors.accent,
+                      borderRadius: radii.pill,
+                    },
+                  ]}>
+                  <Text style={[styles.messageBtnText, { color: colors.onAccent }]}>Message</Text>
+                </Pressable>
               </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Message ${partnerName}`}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    void Haptics.selectionAsync();
-                  }
-                  router.push('/(tabs)/messages' as never);
-                }}
-                style={[
-                  styles.messageBtn,
-                  {
-                    backgroundColor: colors.accent,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.messageBtnText, { color: colors.onAccent }]}>Message</Text>
-              </Pressable>
-            </View>
+            ) : null}
 
-            {/* Friends Rows (Sora Kim, Leo Vance) */}
+            {!isPartnerPaired && friends.length === 0 ? (
+              <Text style={[styles.disclosureText, { color: colors.inkMuted }]}>
+                No partner or friends in your Live Circle yet. Pair with a partner or add friends on your Profile to see their pins here.
+              </Text>
+            ) : null}
+
+            {/* Friends Rows */}
             {friends.map((friend, index) => {
               const friendName = friend.display_name ?? 'Friend';
               const friendDistance =
@@ -602,11 +616,13 @@ export default function MapScreen() {
             <View style={styles.distanceRow}>
               <View style={{ flex: 1, gap: 3 }}>
                 <Text style={[styles.distanceValue, { color: colors.ink }]}>
-                  {distanceMeters !== null
-                    ? formatDistanceApart(distanceMeters)
-                    : `${partnerName} · Ghost mode`}
+                  {!isPartnerPaired
+                    ? 'Solo · No partner paired'
+                    : distanceMeters !== null
+                      ? formatDistanceApart(distanceMeters)
+                      : `${partnerName} · Ghost mode`}
                 </Text>
-                {partnerShare && partnerShare.mode !== 'ghost' ? (
+                {isPartnerPaired && partnerShare && partnerShare.mode !== 'ghost' ? (
                   <Text style={[styles.distanceMeta, { color: colors.inkMuted }]}>
                     {partnerName}: {partnerShare.place_name ?? formatLocationModeLabel(partnerShare.mode)}{' '}
                     · {formatRelativeTimeAgo(partnerShare.location_updated_at)}
@@ -665,7 +681,9 @@ export default function MapScreen() {
                 })}
               </View>
               <Text style={[styles.disclosureText, { color: colors.inkMuted }]}>
-                {partnerName} is notified when your mode changes.
+                {isPartnerPaired
+                  ? `${partnerName} is notified when your mode changes.`
+                  : 'Your location is hidden in Ghost mode by default.'}
               </Text>
             </View>
           </View>

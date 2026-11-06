@@ -33,8 +33,8 @@ import {
 } from '@/api/moments';
 import {
   CURATED_MUSIC_TRACKS,
+  fetchFriendsCircle,
   getFilterPresetMeta,
-  KNOWN_DIRECTORY_PROFILES,
   MOMENT_FILTER_PRESETS,
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
@@ -410,7 +410,7 @@ export function DualMomentCard({
   const [draftOverlayBgStyle, setDraftOverlayBgStyle] = useState<'glass' | 'solid' | 'neon'>('glass');
   const [draftTaggedUsers, setDraftTaggedUsers] = useState<TaggedPerson[]>(localTaggedUsers);
   const [draftSnapOnce, setDraftSnapOnce] = useState(localSnapOnce);
-
+  const [circleTagCandidates, setCircleTagCandidates] = useState<TaggedPerson[]>([]);
   // Comments & Reactions state (Item #13)
   const [commentInput, setCommentInput] = useState('');
   const [postingComment, setPostingComment] = useState(false);
@@ -452,6 +452,17 @@ export function DualMomentCard({
     setConfirmingDelete(false);
     setCrudError(null);
     setEditing(true);
+    void fetchFriendsCircle({ userId: effectiveUserId, partner: sessionPartner }).then(
+      (friends) => {
+        setCircleTagCandidates(
+          friends.map((f) => ({
+            userId: f.friend_id,
+            displayName: f.friend_profile.display_name,
+            username: f.friend_profile.username ?? f.friend_id,
+          }))
+        );
+      }
+    );
   };
 
   const availableTagCandidates: TaggedPerson[] = [
@@ -466,11 +477,7 @@ export function DualMomentCard({
           },
         ]
       : []),
-    ...KNOWN_DIRECTORY_PROFILES.map((p) => ({
-      userId: p.id,
-      displayName: p.display_name,
-      username: p.username ?? p.id,
-    })),
+    ...circleTagCandidates,
   ];
 
   const handleToggleDraftTag = (person: TaggedPerson) => {

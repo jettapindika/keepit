@@ -50,6 +50,7 @@ export default function SettingsScreen() {
   const [confirmAction, setConfirmAction] = useState<'unpair' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'your partner';
 
   const executeUnpair = async () => {
@@ -160,11 +161,19 @@ export default function SettingsScreen() {
             <Text style={[styles.rowLabel, { color: colors.ink }]}>
               You: {user?.display_name ?? 'Unknown'} {email ? `(${email})` : ''}
             </Text>
-            <Text style={[styles.rowLabel, { color: colors.ink }]}>Partner: {partnerName}</Text>
-            {couple?.paired_at ? (
+            <Text style={[styles.rowLabel, { color: colors.ink }]}>
+              Partner: {isPartnerPaired ? partnerName : 'Not paired (Solo)'}
+            </Text>
+            {isPartnerPaired && couple?.paired_at ? (
               <Text style={[styles.muted, { color: colors.inkMuted }]}>
                 Paired {new Date(couple.paired_at).toLocaleDateString()}
               </Text>
+            ) : !isPartnerPaired ? (
+              <KeepItButton
+                label="Pair with Partner"
+                variant="secondary"
+                onPress={() => router.push('/(auth)/pair')}
+              />
             ) : null}
           </View>
         </RevealOnAppear>
@@ -341,13 +350,15 @@ export default function SettingsScreen() {
               </View>
             ) : (
               <>
-                <KeepItButton
-                  label={`Unpair from ${partnerName}`}
-                  variant="danger"
-                  loading={unpairing}
-                  disabled={deleting}
-                  onPress={requestUnpair}
-                />
+                {isPartnerPaired ? (
+                  <KeepItButton
+                    label={`Unpair from ${partnerName}`}
+                    variant="danger"
+                    loading={unpairing}
+                    disabled={deleting}
+                    onPress={requestUnpair}
+                  />
+                ) : null}
                 <KeepItButton
                   label="Delete Account & All Data"
                   variant="danger"

@@ -19,11 +19,13 @@ interface StatusHeaderCardProps {
   partnerName: string;
   partnerStatus: StatusRecord | null;
   myStatus: StatusRecord | null;
+  isPartnerPaired?: boolean;
   latestNudge?: CoupleEventRecord | null;
   currentUserId?: string;
   nudging?: boolean;
   nudgeFeedback?: string | null;
   onSendNudge?: () => void;
+  onPressPair?: () => void;
   onOpenStatusSheet: () => void;
 }
 
@@ -31,11 +33,13 @@ export function StatusHeaderCard({
   partnerName,
   partnerStatus,
   myStatus,
+  isPartnerPaired = true,
   latestNudge,
   currentUserId,
   nudging = false,
   nudgeFeedback = null,
   onSendNudge,
+  onPressPair,
   onOpenStatusSheet,
 }: StatusHeaderCardProps) {
   const { colors, radii, spacing } = useKeepItTheme();
@@ -94,7 +98,16 @@ export function StatusHeaderCard({
           ]}
         />
         <View style={styles.flex}>
-          {partnerActive ? (
+          {!isPartnerPaired ? (
+            <>
+              <Text style={[styles.partnerPrimary, { color: colors.ink }]}>
+                No partner paired yet
+              </Text>
+              <Text style={[styles.partnerMeta, { color: colors.inkMuted }]}>
+                Connect with an invite code to share status & nudges
+              </Text>
+            </>
+          ) : partnerActive ? (
             <>
               <Text style={[styles.partnerPrimary, { color: colors.ink }]}>
                 {partnerName}: {partnerActive.emoji} {partnerActive.text}
@@ -104,15 +117,13 @@ export function StatusHeaderCard({
               </Text>
             </>
           ) : (
-            <>
-              <Text style={[styles.partnerPrimary, { color: colors.ink }]}>
-                {partnerName} has no active status
-              </Text>
-            </>
+            <Text style={[styles.partnerPrimary, { color: colors.ink }]}>
+              {partnerName} has no active status
+            </Text>
           )}
         </View>
 
-        {onSendNudge ? (
+        {isPartnerPaired && onSendNudge ? (
           <AnimatedPressable
             accessibilityRole="button"
             accessibilityLabel={`Nudge ${partnerName}`}
@@ -145,6 +156,21 @@ export function StatusHeaderCard({
               {nudging ? 'Sending...' : 'Nudge'}
             </Text>
           </AnimatedPressable>
+        ) : !isPartnerPaired && onPressPair ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pair Partner"
+            onPress={onPressPair}
+            style={[
+              styles.nudgePill,
+              {
+                backgroundColor: colors.surfaceElevated,
+                borderColor: colors.border,
+                borderRadius: radii.pill,
+              },
+            ]}>
+            <Text style={[styles.nudgeText, { color: colors.ink }]}>Pair</Text>
+          </Pressable>
         ) : null}
       </View>
 

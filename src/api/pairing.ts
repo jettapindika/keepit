@@ -352,7 +352,7 @@ export async function upsertUserProfile(params: {
     bio:
       params.bio !== undefined
         ? params.bio.trim().slice(0, 140)
-        : (existing?.bio ?? 'Keeping daily Moments alive ✨'),
+        : (existing?.bio ?? ''),
     pronouns:
       params.pronouns !== undefined
         ? params.pronouns.trim().slice(0, 24)
@@ -360,7 +360,7 @@ export async function upsertUserProfile(params: {
     mood_song:
       params.moodSong !== undefined
         ? params.moodSong.trim().slice(0, 60)
-        : (existing?.mood_song ?? 'Sunset Lover · Petit Biscuit'),
+        : (existing?.mood_song ?? ''),
     banner_color:
       params.bannerColor !== undefined
         ? params.bannerColor

@@ -18,76 +18,10 @@ import {
 } from '@/types/database';
 
 const LOCAL_FRIENDS_KEY = 'keepit.local_friends.v1';
-const LOCAL_FRIENDS_SEEDED_KEY = 'keepit.local_friends_seeded.v1';
 const LOCAL_MESSAGES_KEY = 'keepit.local_messages.v1';
 const LOCAL_DB_KEY = 'keepit.local_db.v1';
 
-export const KNOWN_DIRECTORY_PROFILES: readonly UserProfile[] = [
-  {
-    id: 'friend_sora_k',
-    display_name: 'Sora Kim',
-    username: 'sora.frames',
-    bio: 'Matcha runs & 35mm street snaps',
-    pronouns: 'she/her',
-    mood_song: 'Shibuya Lo-Fi Rain',
-    banner_color: '#8B5CF6',
-    friend_code: 'SOR-812',
-    is_private: false,
-    dump_mode: false,
-    avatar_path: null,
-    timezone: 'UTC',
-    push_token: null,
-    created_at: '2026-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'friend_leo_v',
-    display_name: 'Leo Vance',
-    username: 'leovance',
-    bio: 'Late night vinyl & skate sessions',
-    pronouns: 'he/him',
-    mood_song: 'Midnight Drive',
-    banner_color: '#0EA5E9',
-    friend_code: 'LEO-409',
-    is_private: false,
-    dump_mode: false,
-    avatar_path: null,
-    timezone: 'UTC',
-    push_token: null,
-    created_at: '2026-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'friend_maya_s',
-    display_name: 'Maya Lin',
-    username: 'maya.snaps',
-    bio: 'Film camera dumps & late night espresso',
-    pronouns: 'she/her',
-    mood_song: 'Coffee Breath',
-    banner_color: '#EC4899',
-    friend_code: 'MAY-305',
-    is_private: false,
-    dump_mode: true,
-    avatar_path: null,
-    timezone: 'UTC',
-    push_token: null,
-    created_at: '2026-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'friend_kai_t',
-    display_name: 'Kai Tanaka',
-    username: 'kaitanaka',
-    bio: 'Golden hour rooftops & synth loops',
-    pronouns: 'they/them',
-    mood_song: 'Sunset Lover',
-    banner_color: '#F59E0B',
-    friend_code: 'KAI-718',
-    is_private: false,
-    dump_mode: false,
-    avatar_path: null,
-    timezone: 'UTC',
-    push_token: null,
-    created_at: '2026-01-01T00:00:00.000Z',
-  },
-] as const;
+export const KNOWN_DIRECTORY_PROFILES: readonly UserProfile[] = [] as const;
 export interface FilterPresetMeta {
   id: MomentFilterPreset;
   label: string;
@@ -286,47 +220,17 @@ async function writeLocalFriends(list: FriendRecord[]): Promise<void> {
   await AsyncStorage.setItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
 }
 
-async function readSeededUsersSet(): Promise<Record<string, boolean>> {
-  const raw = await AsyncStorage.getItem(LOCAL_FRIENDS_SEEDED_KEY);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
-
-async function markUserFriendsSeeded(userId: string): Promise<void> {
-  const map = await readSeededUsersSet();
-  map[userId] = true;
-  await AsyncStorage.setItem(LOCAL_FRIENDS_SEEDED_KEY, JSON.stringify(map));
-}
-
-async function ensureKnownDirectoryInLocalDb(): Promise<Record<string, UserProfile>> {
+async function readLocalDbUsers(): Promise<Record<string, UserProfile>> {
   const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
   const parsed: { users: Record<string, UserProfile>; couples: Record<string, unknown> } = rawDb
     ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
     : { users: {}, couples: {} };
-  if (!parsed.users) parsed.users = {};
-
-  let changed = false;
-  for (const demoUser of KNOWN_DIRECTORY_PROFILES) {
-    if (!parsed.users[demoUser.id]) {
-      parsed.users[demoUser.id] = demoUser;
-      changed = true;
-    }
-  }
-  if (changed) {
-    await AsyncStorage.setItem(LOCAL_DB_KEY, JSON.stringify(parsed));
-  }
-  return parsed.users;
+  return parsed.users ?? {};
 }
-
 export async function fetchFriendsCircle(params: {
   userId: string;
   partner?: UserProfile | null;
 }): Promise<FriendRecord[]> {
-  await ensureKnownDirectoryInLocalDb();
   const stored = await readLocalFriends();
 
   // Hydrate from Supabase `public.friendships` if available
@@ -374,37 +278,7 @@ export async function fetchFriendsCircle(params: {
     }
   }
 
-  const mine = stored.filter((f) => f.user_id === params.userId);
-  const seededMap = await readSeededUsersSet();
-
-  // Seed default besties only ONCE per userId so removing them does not re-seed them!
-  if (mine.length === 0 && !seededMap[params.userId]) {
-    const nowIso = new Date().toISOString();
-    const seeded: FriendRecord[] = [
-      {
-        id: `fr_${params.userId}_sora`,
-        user_id: params.userId,
-        friend_id: KNOWN_DIRECTORY_PROFILES[0].id,
-        relationship: 'bestie',
-        created_at: nowIso,
-        friend_profile: KNOWN_DIRECTORY_PROFILES[0],
-      },
-      {
-        id: `fr_${params.userId}_leo`,
-        user_id: params.userId,
-        friend_id: KNOWN_DIRECTORY_PROFILES[1].id,
-        relationship: 'friend',
-        created_at: nowIso,
-        friend_profile: KNOWN_DIRECTORY_PROFILES[1],
-      },
-    ];
-    const merged = [...stored, ...seeded];
-    await writeLocalFriends(merged);
-    await markUserFriendsSeeded(params.userId);
-    return seeded;
-  }
-
-  return mine;
+  return stored.filter((f) => f.user_id === params.userId);
 }
 
 export async function addFriendByHandleOrCode(params: {
@@ -420,8 +294,7 @@ export async function addFriendByHandleOrCode(params: {
 
   const existing = await readLocalFriends();
   const normalizedLower = cleaned.toLowerCase();
-  const dbUsers = await ensureKnownDirectoryInLocalDb();
-
+  const dbUsers = await readLocalDbUsers();
   // Check existing friends first so searching an already-added friend's code/handle returns existing
   const alreadyByQuery = existing.find(
     (f) =>
@@ -466,7 +339,7 @@ export async function addFriendByHandleOrCode(params: {
 
   if (!matchedUser) {
     throw new Error(
-      `No KeepIt user found matching "${params.query.trim()}". Try @sora.frames, @leovance, @maya.snaps, @kaitanaka, or a registered Friend Code.`
+      `No KeepIt user found matching "${params.query.trim()}". Enter a registered @username, display name, or Friend Code.`
     );
   }
 
@@ -493,7 +366,6 @@ export async function addFriendByHandleOrCode(params: {
 
   existing.push(record);
   await writeLocalFriends(existing);
-  await markUserFriendsSeeded(params.userId);
 
   if (isSupabaseConfigured && supabase) {
     try {
@@ -534,7 +406,6 @@ export async function removeFriend(params: {
       )
   );
   await writeLocalFriends(next);
-  await markUserFriendsSeeded(params.userId);
 
   if (target && isSupabaseConfigured && supabase) {
     try {
@@ -692,28 +563,6 @@ export async function fetchConversationMessages(params: {
       (m.sender_id === params.userId && m.recipient_id === params.peerId) ||
       (m.sender_id === params.peerId && m.recipient_id === params.userId)
   );
-
-  // Only seed a welcome message for the built-in demo friends (Sora & Leo) so real conversations can show empty state
-  const isDemoPeer = params.peerId === 'friend_sora_k' || params.peerId === 'friend_leo_v';
-  if (filtered.length === 0 && isDemoPeer) {
-    const welcomeMsg: DirectMessageRecord = {
-      id: `dm_seed_${convId}`,
-      conversation_id: convId,
-      sender_id: params.peerId,
-      sender_name: params.peerName,
-      recipient_id: params.userId,
-      text: `Hey! Can’t wait to see your #KeepIt Moment today ✨`,
-      snap_once: false,
-      snap_duration_seconds: 15,
-      snap_opened_at_by_user: {},
-      viewed_by_user_ids: [],
-      reactions: {},
-      created_at: new Date(Date.now() - 12 * 60_000).toISOString(),
-    };
-    const next = [...all, welcomeMsg];
-    await writeLocalMessages(next);
-    return [welcomeMsg];
-  }
 
   return filtered
     .map((m) => redactExpiredSnapDm(m, params.userId, nowMs))

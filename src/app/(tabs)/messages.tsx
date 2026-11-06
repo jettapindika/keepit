@@ -37,20 +37,6 @@ const QUICK_NUDGE_CHIPS = [
   'Where are you? 📍',
 ] as const;
 
-const PARTNER_REPLIES = [
-  'Just saw this! Grabbing coffee right now ☕️❤️',
-  'Posting my #KeepIt in 2 mins, wait till you see the view 📸✨',
-  'Miss you more!! Meet up later tonight? 🥹',
-  'Haha stoppp 😂 I was literally about to text you the exact same thing!',
-] as const;
-
-const FRIEND_REPLIES = [
-  'Yo!! Just dropped my #KeepIt moment, check the filter 🔥',
-  'Down to link up at the cafe in 20? 📍✨',
-  'Lmaoo wait that is actually iconic 😂🔥',
-  'Sending good vibes!! Let’s keep the streak alive 📸',
-] as const;
-
 interface PeerOption {
   id: string;
   displayName: string;
@@ -133,17 +119,6 @@ export default function MessagesScreen() {
       });
     }
 
-    if (list.length === 0) {
-      list.push({
-        id: 'friend_sora_k',
-        displayName: 'Sora Kim',
-        username: 'sora.frames',
-        roleLabel: 'Bestie',
-        accentColor: '#8B5CF6',
-        avatarPath: null,
-        isPartner: false,
-      });
-    }
 
     return list;
   }, [isPartnerPaired, partner, couple, userId, friendsQuery.data, params.peerId, params.peerName]);
@@ -151,18 +126,19 @@ export default function MessagesScreen() {
   const [manualPeerId, setManualPeerId] = useState<string | null>(null);
   const effectiveSelectedPeerId = manualPeerId ?? params.peerId ?? '';
 
-  const activePeer = useMemo<PeerOption>(() => {
+  const activePeer = useMemo<PeerOption | null>(() => {
+    if (peers.length === 0) return null;
     return peers.find((p) => p.id === effectiveSelectedPeerId) ?? peers[0];
   }, [peers, effectiveSelectedPeerId]);
 
   const messagesQuery = useQuery({
-    queryKey: ['direct-messages', userId, activePeer.id],
+    queryKey: ['direct-messages', userId, activePeer?.id ?? 'none'],
     enabled: Boolean(user?.id && activePeer?.id),
     queryFn: () =>
       fetchConversationMessages({
         userId,
-        peerId: activePeer.id,
-        peerName: activePeer.displayName,
+        peerId: activePeer!.id,
+        peerName: activePeer!.displayName,
       }),
     refetchInterval: 8_000,
   });
@@ -170,7 +146,6 @@ export default function MessagesScreen() {
   const [draftText, setDraftText] = useState('');
   const [snapOnceMode, setSnapOnceMode] = useState(false);
   const [sending, setSending] = useState(false);
-  const [simulating, setSimulating] = useState(false);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -206,12 +181,12 @@ export default function MessagesScreen() {
           expired: true,
         }).then(() => {
           void queryClient.invalidateQueries({
-            queryKey: ['direct-messages', userId, activePeer.id],
+            queryKey: ['direct-messages', userId, activePeer?.id],
           });
         });
       }
     }
-  }, [messagesQuery.data, userId, couple?.id, activePeer.id, queryClient]);
+  }, [messagesQuery.data, userId, couple?.id, activePeer?.id, queryClient]);
 
   const mergedCountdowns: Record<string, number> = {
     ...persistedCountdowns,
@@ -250,7 +225,7 @@ export default function MessagesScreen() {
             expired: true,
           }).then(() => {
             void queryClient.invalidateQueries({
-              queryKey: ['direct-messages', userId, activePeer.id],
+              queryKey: ['direct-messages', userId, activePeer?.id],
             });
           });
         }
@@ -260,7 +235,7 @@ export default function MessagesScreen() {
     return () => {
       clearInterval(tickIntervalRef.current);
     };
-  }, [hasActiveCountdowns, persistedCountdowns, couple?.id, userId, activePeer.id, queryClient]);
+  }, [hasActiveCountdowns, persistedCountdowns, couple?.id, userId, activePeer?.id, queryClient]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -269,7 +244,7 @@ export default function MessagesScreen() {
     return () => {
       clearTimeout(timer);
     };
-  }, [messagesQuery.data?.length, activePeer.id]);
+  }, [messagesQuery.data?.length, activePeer?.id]);
 
   const triggerHaptic = () => {
     if (Platform.OS !== 'web') {
@@ -305,7 +280,7 @@ export default function MessagesScreen() {
 
   const handleSendText = async (overrideText?: string) => {
     const content = (overrideText ?? draftText).trim();
-    if (!content || sending) return;
+    if (!content || sending || !activePeer) return;
 
     setErrorMsg(null);
     setSending(true);
@@ -333,38 +308,6 @@ export default function MessagesScreen() {
     }
   };
 
-  const handleSimulateReply = async () => {
-    if (simulating) return;
-    setErrorMsg(null);
-    setSimulating(true);
-    triggerHaptic();
-
-    try {
-      const pool = activePeer.isPartner ? PARTNER_REPLIES : FRIEND_REPLIES;
-      const msgCount = messagesQuery.data?.length ?? 0;
-      const useSnap = msgCount % 2 === 1;
-      const sampleText = useSnap
-        ? `Secret 15s Snap from ${activePeer.displayName}: Look how cute today’s moment turned out! 🔥👀`
-        : pool[msgCount % pool.length];
-
-      await sendDirectMessage({
-        coupleId: couple?.id ?? null,
-        senderId: activePeer.id,
-        senderName: activePeer.displayName,
-        recipientId: userId,
-        text: sampleText,
-        snapOnce: useSnap,
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ['direct-messages', userId, activePeer.id],
-      });
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Could not simulate reply.');
-    } finally {
-      setSimulating(false);
-    }
-  };
-
   const handleToggleReaction = async (messageId: string, emoji: string) => {
     triggerHaptic();
     try {
@@ -376,7 +319,7 @@ export default function MessagesScreen() {
       });
       setActiveReactionMsgId(null);
       await queryClient.invalidateQueries({
-        queryKey: ['direct-messages', userId, activePeer.id],
+        queryKey: ['direct-messages', userId, activePeer?.id],
       });
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Could not update reaction.');
@@ -406,30 +349,13 @@ export default function MessagesScreen() {
             <View style={styles.headerTitleCol}>
               <Text style={[styles.screenTitle, { color: colors.ink }]}>Messages</Text>
               <Text style={[styles.screenSub, { color: colors.inkMuted }]}>
-                Chat & 15s Snaps with {activePeer.displayName}
+                {activePeer
+                  ? `Chat & 15s Snaps with ${activePeer.displayName}`
+                  : 'Pair with a partner or add friends to start chatting'}
               </Text>
             </View>
 
             <View style={styles.headerActions}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Simulate reply from ${activePeer.displayName}`}
-                disabled={simulating}
-                onPress={() => void handleSimulateReply()}
-                style={[
-                  styles.simButton,
-                  {
-                    backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                    opacity: simulating ? 0.55 : 1,
-                  },
-                ]}>
-                <Text style={[styles.simButtonText, { color: colors.ink }]}>
-                  {simulating ? 'Typing…' : '✨ Simulate Reply'}
-                </Text>
-              </Pressable>
-
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open Profile & Friends"
@@ -449,81 +375,83 @@ export default function MessagesScreen() {
         </RevealOnAppear>
 
         {/* Top Conversation Switcher Strip */}
-        <View
-          style={[
-            styles.switcherWrap,
-            {
-              borderBottomColor: colors.border,
-              backgroundColor: colors.sheetSurface,
-            },
-          ]}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={[
-              styles.switcherScroll,
-              { paddingHorizontal: spacing.lg, gap: spacing.sm },
+        {peers.length > 0 ? (
+          <View
+            style={[
+              styles.switcherWrap,
+              {
+                borderBottomColor: colors.border,
+                backgroundColor: colors.sheetSurface,
+              },
             ]}>
-            {peers.map((peer) => {
-              const selected = peer.id === activePeer.id;
-              const monogram = peer.displayName.trim().slice(0, 1).toUpperCase() || 'K';
-              return (
-                <Pressable
-                  key={peer.id}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={`${peer.displayName} (${peer.roleLabel})`}
-                  onPress={() => {
-                    triggerHaptic();
-                    setManualPeerId(peer.id);
-                    setActiveReactionMsgId(null);
-                  }}
-                  style={[
-                    styles.peerPill,
-                    {
-                      backgroundColor: selected ? colors.ink : colors.surface,
-                      borderColor: selected ? colors.ink : colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <View
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.switcherScroll,
+                { paddingHorizontal: spacing.lg, gap: spacing.sm },
+              ]}>
+              {peers.map((peer) => {
+                const selected = peer.id === activePeer?.id;
+                const monogram = peer.displayName.trim().slice(0, 1).toUpperCase() || 'K';
+                return (
+                  <Pressable
+                    key={peer.id}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${peer.displayName} (${peer.roleLabel})`}
+                    onPress={() => {
+                      triggerHaptic();
+                      setManualPeerId(peer.id);
+                      setActiveReactionMsgId(null);
+                    }}
                     style={[
-                      styles.peerAvatarCircle,
-                      { backgroundColor: peer.accentColor },
+                      styles.peerPill,
+                      {
+                        backgroundColor: selected ? colors.ink : colors.surface,
+                        borderColor: selected ? colors.ink : colors.border,
+                        borderRadius: radii.pill,
+                      },
                     ]}>
-                    {peer.avatarPath ? (
-                      <Image
-                        source={{ uri: peer.avatarPath }}
-                        contentFit="cover"
-                        style={styles.peerAvatarImg}
-                      />
-                    ) : (
-                      <Text style={styles.peerAvatarLetter}>{monogram}</Text>
-                    )}
-                  </View>
-                  <View style={styles.peerTextCol}>
-                    <Text
-                      numberOfLines={1}
+                    <View
                       style={[
-                        styles.peerNameText,
-                        { color: selected ? colors.canvas : colors.ink },
+                        styles.peerAvatarCircle,
+                        { backgroundColor: peer.accentColor },
                       ]}>
-                      {peer.displayName}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.peerRoleText,
-                        { color: selected ? colors.canvas : colors.inkMuted, opacity: selected ? 0.78 : 1 },
-                      ]}>
-                      {peer.isPartner ? '❤️ Partner' : peer.roleLabel}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
+                      {peer.avatarPath ? (
+                        <Image
+                          source={{ uri: peer.avatarPath }}
+                          contentFit="cover"
+                          style={styles.peerAvatarImg}
+                        />
+                      ) : (
+                        <Text style={styles.peerAvatarLetter}>{monogram}</Text>
+                      )}
+                    </View>
+                    <View style={styles.peerTextCol}>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.peerNameText,
+                          { color: selected ? colors.canvas : colors.ink },
+                        ]}>
+                        {peer.displayName}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.peerRoleText,
+                          { color: selected ? colors.canvas : colors.inkMuted, opacity: selected ? 0.78 : 1 },
+                        ]}>
+                        {peer.isPartner ? '❤️ Partner' : peer.roleLabel}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
 
         {errorMsg ? (
           <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm }}>
@@ -543,7 +471,25 @@ export default function MessagesScreen() {
               gap: spacing.md,
             },
           ]}>
-          {messages.length === 0 ? (
+          {!activePeer ? (
+            <View
+              style={[
+                styles.emptyCard,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  borderRadius: radii.card,
+                  padding: spacing.xl,
+                },
+              ]}>
+              <Text style={[styles.emptyTitle, { color: colors.ink }]}>
+                No conversations yet
+              </Text>
+              <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
+                Pair with your partner or add friends to your Friends Circle on your Profile to send messages and 15s disappearing Snaps.
+              </Text>
+            </View>
+          ) : messages.length === 0 ? (
             <View
               style={[
                 styles.emptyCard,
@@ -812,116 +758,118 @@ export default function MessagesScreen() {
         </ScrollView>
 
         {/* Composer Bar */}
-        <View
-          style={[
-            styles.composerContainer,
-            {
-              backgroundColor: colors.sheetSurface,
-              borderTopColor: colors.border,
-              paddingHorizontal: spacing.md,
-              paddingTop: spacing.sm,
-              paddingBottom: 96,
-            },
-          ]}>
-          {/* Quick Emoji / Nudge Chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.nudgeChipsScroll}>
-            {QUICK_NUDGE_CHIPS.map((chip) => (
+        {activePeer ? (
+          <View
+            style={[
+              styles.composerContainer,
+              {
+                backgroundColor: colors.sheetSurface,
+                borderTopColor: colors.border,
+                paddingHorizontal: spacing.md,
+                paddingTop: spacing.sm,
+                paddingBottom: 96,
+              },
+            ]}>
+            {/* Quick Emoji / Nudge Chips */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.nudgeChipsScroll}>
+              {QUICK_NUDGE_CHIPS.map((chip) => (
+                <Pressable
+                  key={chip}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Send quick message: ${chip}`}
+                  disabled={sending}
+                  onPress={() => void handleSendText(chip)}
+                  style={[
+                    styles.nudgeChip,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      borderRadius: radii.pill,
+                    },
+                  ]}>
+                  <Text style={[styles.nudgeChipText, { color: colors.ink }]}>{chip}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            <View style={styles.inputRow}>
+              {/* Snap Once 15s Toggle */}
               <Pressable
-                key={chip}
-                accessibilityRole="button"
-                accessibilityLabel={`Send quick message: ${chip}`}
-                disabled={sending}
-                onPress={() => void handleSendText(chip)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: snapOnceMode }}
+                accessibilityLabel="Toggle 15 second Snap Once disappearing message"
+                onPress={() => {
+                  triggerHaptic();
+                  setSnapOnceMode((prev) => !prev);
+                }}
                 style={[
-                  styles.nudgeChip,
+                  styles.snapToggleBtn,
                   {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    backgroundColor: snapOnceMode ? '#D95D39' : colors.surface,
+                    borderColor: snapOnceMode ? '#F97316' : colors.border,
                     borderRadius: radii.pill,
                   },
                 ]}>
-                <Text style={[styles.nudgeChipText, { color: colors.ink }]}>{chip}</Text>
+                <Text
+                  style={[
+                    styles.snapToggleLabel,
+                    { color: snapOnceMode ? '#FFFFFF' : colors.inkMuted },
+                  ]}>
+                  🔥 15s
+                </Text>
               </Pressable>
-            ))}
-          </ScrollView>
 
-          <View style={styles.inputRow}>
-            {/* Snap Once 15s Toggle */}
-            <Pressable
-              accessibilityRole="switch"
-              accessibilityState={{ checked: snapOnceMode }}
-              accessibilityLabel="Toggle 15 second Snap Once disappearing message"
-              onPress={() => {
-                triggerHaptic();
-                setSnapOnceMode((prev) => !prev);
-              }}
-              style={[
-                styles.snapToggleBtn,
-                {
-                  backgroundColor: snapOnceMode ? '#D95D39' : colors.surface,
-                  borderColor: snapOnceMode ? '#F97316' : colors.border,
-                  borderRadius: radii.pill,
-                },
-              ]}>
-              <Text
+              <TextInput
+                accessibilityLabel={`Message ${activePeer.displayName}`}
+                value={draftText}
+                onChangeText={setDraftText}
+                placeholder={
+                  snapOnceMode
+                    ? `Send 15s disappearing Snap to ${activePeer.displayName}…`
+                    : `Message ${activePeer.displayName}…`
+                }
+                placeholderTextColor={colors.placeholder}
+                maxLength={400}
+                returnKeyType="send"
+                onSubmitEditing={() => void handleSendText()}
                 style={[
-                  styles.snapToggleLabel,
-                  { color: snapOnceMode ? '#FFFFFF' : colors.inkMuted },
-                ]}>
-                🔥 15s
-              </Text>
-            </Pressable>
+                  styles.textInput,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: snapOnceMode ? '#F97316' : colors.border,
+                    color: colors.ink,
+                    borderRadius: radii.pill,
+                  },
+                ]}
+              />
 
-            <TextInput
-              accessibilityLabel={`Message ${activePeer.displayName}`}
-              value={draftText}
-              onChangeText={setDraftText}
-              placeholder={
-                snapOnceMode
-                  ? `Send 15s disappearing Snap to ${activePeer.displayName}…`
-                  : `Message ${activePeer.displayName}…`
-              }
-              placeholderTextColor={colors.placeholder}
-              maxLength={400}
-              returnKeyType="send"
-              onSubmitEditing={() => void handleSendText()}
-              style={[
-                styles.textInput,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: snapOnceMode ? '#F97316' : colors.border,
-                  color: colors.ink,
-                  borderRadius: radii.pill,
-                },
-              ]}
-            />
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Send message"
-              disabled={!draftText.trim() || sending}
-              onPress={() => void handleSendText()}
-              style={[
-                styles.sendBtn,
-                {
-                  backgroundColor: draftText.trim() ? colors.ink : colors.surfaceElevated,
-                  borderRadius: radii.pill,
-                  opacity: !draftText.trim() || sending ? 0.5 : 1,
-                },
-              ]}>
-              <Text
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                disabled={!draftText.trim() || sending}
+                onPress={() => void handleSendText()}
                 style={[
-                  styles.sendBtnText,
-                  { color: draftText.trim() ? colors.canvas : colors.inkMuted },
+                  styles.sendBtn,
+                  {
+                    backgroundColor: draftText.trim() ? colors.ink : colors.surfaceElevated,
+                    borderRadius: radii.pill,
+                    opacity: !draftText.trim() || sending ? 0.5 : 1,
+                  },
                 ]}>
-                Send
-              </Text>
-            </Pressable>
+                <Text
+                  style={[
+                    styles.sendBtnText,
+                    { color: draftText.trim() ? colors.canvas : colors.inkMuted },
+                  ]}>
+                  Send
+                </Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
+        ) : null}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

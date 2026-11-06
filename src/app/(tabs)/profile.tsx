@@ -179,7 +179,7 @@ export default function ProfileScreen() {
     user?.friend_code || buildFriendCode(userId, displayName) || 'KPT-204';
   const bannerColor = user?.banner_color ?? '#D95D39';
   const pronouns = user?.pronouns ?? '';
-  const bio = user?.bio ?? 'Capturing unfiltered dual-camera moments every day ✨';
+  const bio = user?.bio ?? '';
   const moodSong = user?.mood_song ?? '';
   const website = user?.website ?? '';
   const avatarPath = user?.avatar_path ?? null;
@@ -833,7 +833,7 @@ export default function ProfileScreen() {
                     Add to Friends Circle
                   </Text>
                   <Text style={[styles.sectionSub, { color: colors.inkMuted }]}>
-                    Enter a friend’s @username, display name, or Friend Code (e.g. SOR-812)
+                    Enter a friend’s @username, display name, or Friend Code
                   </Text>
                 </View>
 
@@ -876,7 +876,7 @@ export default function ProfileScreen() {
                     accessibilityLabel="Friend @username, name, or Friend Code"
                     value={friendInput}
                     onChangeText={setFriendInput}
-                    placeholder="@username, name, or code (e.g. maya.snaps)"
+                    placeholder="@username, name, or Friend Code"
                     placeholderTextColor={colors.placeholder}
                     autoCapitalize="none"
                     returnKeyType="done"
@@ -1005,6 +1005,25 @@ export default function ProfileScreen() {
               </View>
               ) : null}
               {/* Friends Circle List */}
+              {!isPartnerPaired && friendsList.length === 0 ? (
+                <View
+                  style={[
+                    styles.emptyFeedCard,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      borderRadius: radii.group,
+                      padding: spacing.xl,
+                    },
+                  ]}>
+                  <Text style={[styles.emptyFeedTitle, { color: colors.ink }]}>
+                    Your Friends Circle is empty
+                  </Text>
+                  <Text style={[styles.emptyFeedBody, { color: colors.inkMuted }]}>
+                    Share your Friend Code ({friendCode}) or enter a friend’s @username or code above to add them.
+                  </Text>
+                </View>
+              ) : null}
               {friendsList.map((fr) => {
                 const fp = fr.friend_profile;
                 const fName = fp.display_name;

@@ -97,6 +97,35 @@ async function clearAccountSpecificCacheKeys(): Promise<void> {
   await Promise.all(cacheKeys.map((k) => AsyncStorage.removeItem(k).catch(() => {})));
 }
 
+async function resetLocalDbForFreshUser(userId: string): Promise<void> {
+  try {
+    const rawDb = await AsyncStorage.getItem('keepit.local_db.v1');
+    if (!rawDb) return;
+    const parsed = JSON.parse(rawDb) as {
+      users?: Record<string, UserProfile>;
+      couples?: Record<string, CoupleRecord>;
+    };
+    let mutated = false;
+    if (parsed.users && parsed.users[userId]) {
+      delete parsed.users[userId];
+      mutated = true;
+    }
+    if (parsed.couples) {
+      for (const [cId, rec] of Object.entries(parsed.couples)) {
+        if (rec.user_a_id === userId || rec.user_b_id === userId) {
+          delete parsed.couples[cId];
+          mutated = true;
+        }
+      }
+    }
+    if (mutated) {
+      await AsyncStorage.setItem('keepit.local_db.v1', JSON.stringify(parsed));
+    }
+  } catch {
+    // Ignore malformed local db
+  }
+}
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   hydrated: false,
   user: null,
@@ -194,7 +223,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     let userId = '';
-    const prevUserId = get().user?.id;
 
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase.auth.signUp({
@@ -249,12 +277,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } else {
       userId = buildDeterministicEmailUserId(cleanedEmail);
     }
-
-    if (prevUserId && prevUserId !== userId) {
-      await clearAccountSpecificCacheKeys();
-    } else {
-      await AsyncStorage.removeItem(LEGACY_LOCAL_ACCOUNTS_KEY).catch(() => {});
-    }
+    await clearAccountSpecificCacheKeys();
+    await resetLocalDbForFreshUser(userId);
 
     const profile = await upsertUserProfile({
       userId,

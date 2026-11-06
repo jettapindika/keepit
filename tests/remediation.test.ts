@@ -369,17 +369,10 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
     await resetAllState();
   });
 
-  it('rejects nonexistent usernames, finds directory/registered users by handle or code, and does not re-seed removed friends', async () => {
+  it('starts fresh accounts with 0 friends, rejects nonexistent usernames, and finds registered users by handle or code', async () => {
     const userId = 'user_circle_owner';
     const initial = await fetchFriendsCircle({ userId });
-    assert.equal(initial.length, 2); // Sora & Leo seeded once
-
-    // Removing both seeded friends must leave 0 friends (not re-seed them!)
-    for (const f of initial) {
-      await removeFriend({ userId, friendRecordId: f.id });
-    }
-    const afterRemoveAll = await fetchFriendsCircle({ userId });
-    assert.equal(afterRemoveAll.length, 0, 'Removed seeded friends must not resurrect');
+    assert.equal(initial.length, 0, 'Fresh account must start with 0 dummy friends');
 
     // Adding a nonexistent handle must throw instead of fabricating a fake profile
     await assert.rejects(
@@ -391,10 +384,16 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
       /No KeepIt user found/
     );
 
-    // Adding a known directory user by Friend Code (`MAY-305`) succeeds and prevents duplicates
+    // Register a real user and add them by Friend Code or @username
+    const registeredMaya = await upsertUserProfile({
+      userId: 'user_maya_real',
+      displayName: 'Maya Lin',
+      username: 'maya.snaps',
+    });
+
     const maya = await addFriendByHandleOrCode({
       userId,
-      query: 'MAY-305',
+      query: registeredMaya.friend_code!,
       relationship: 'bestie',
     });
     assert.equal(maya.friend_profile.username, 'maya.snaps');
@@ -407,15 +406,47 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
     assert.equal(mayaDup.id, maya.id);
     const listAfterDup = await fetchFriendsCircle({ userId });
     assert.equal(listAfterDup.length, 1);
+
+    await removeFriend({ userId, friendRecordId: maya.id });
+    const afterRemoveAll = await fetchFriendsCircle({ userId });
+    assert.equal(afterRemoveAll.length, 0, 'Removed friends must stay removed');
   });
 
-  it('persists comments and reactions on Friends feed posts across bundle refreshes', async () => {
+  it('starts fresh accounts with 0 friend moments and persists comments/reactions on real added friend posts', async () => {
     const userId = 'user_friend_reactor';
     const coupleId = 'solo_user_friend_reactor';
 
+    const freshBundle = await fetchTodayMomentBundle({ coupleId, userId });
+    assert.equal(freshBundle.friendMomentsToday?.length ?? 0, 0, 'Fresh account must have 0 dummy friend moments');
+    assert.equal(freshBundle.mine, null);
+    assert.equal(freshBundle.partner, null);
+
+    // Register a real friend, add them, and have them post a Moment today
+    const realFriend = await upsertUserProfile({
+      userId: 'user_real_friend_1',
+      displayName: 'Sora Real',
+      username: 'sora.real',
+    });
+    await addFriendByHandleOrCode({
+      userId,
+      query: '@sora.real',
+      relationship: 'bestie',
+    });
+    const friendPost = await submitDailyMoment({
+      coupleId: 'solo_user_real_friend_1',
+      promptId: `prompt_solo_friend_${todayLocalDateString()}`,
+      userId: realFriend.id,
+      authorName: realFriend.display_name,
+      authorUsername: realFriend.username,
+      backUri: 'data:image/jpeg;base64,FRIEND_BACK',
+      frontUri: 'data:image/jpeg;base64,FRIEND_FRONT',
+      visibility: 'friends',
+    });
+
     const bundle1 = await fetchTodayMomentBundle({ coupleId, userId });
-    assert.ok(bundle1.friendMomentsToday && bundle1.friendMomentsToday.length >= 2);
+    assert.equal(bundle1.friendMomentsToday?.length, 1);
     const soraPost = bundle1.friendMomentsToday![0];
+    assert.equal(soraPost.id, friendPost.id);
 
     await toggleMomentReaction({
       momentId: soraPost.id,
@@ -428,7 +459,7 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
       coupleId,
       authorId: userId,
       authorName: 'Reactor',
-      text: 'Love the matcha shot!',
+      text: 'Love the shot!',
     });
 
     const bundle2 = await fetchTodayMomentBundle({ coupleId, userId });
@@ -632,7 +663,7 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.equal(list[0].reactions?.bob, undefined);
   });
 
-  it('defaults couple locations to Ghost mode (null coords) and omits fake Partner for Solo accounts', async () => {
+  it('defaults couple locations to Ghost mode (null coords) and omits fake Partner & dummy Friends for fresh Solo accounts', async () => {
     const locBundle = await fetchCoupleLocations({
       coupleId: 'solo_loc_user',
       userId: 'loc_user',
@@ -640,6 +671,44 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.equal(locBundle.mine?.mode, 'ghost');
     assert.equal(locBundle.mine?.lat, null);
     assert.equal(locBundle.partner, null);
+    assert.equal(locBundle.friends?.length ?? 0, 0);
+  });
+
+  it('ensures newly created account via signUpWithPassword is completely fresh with no dummy bio, song, partner, friends, or posts', async () => {
+    await useSessionStore.getState().signUpWithPassword({
+      displayName: 'Fresh User',
+      email: `fresh.${Date.now()}@gmail.com`,
+      password: 'password123',
+      confirmPassword: 'password123',
+    });
+
+    const state = useSessionStore.getState();
+    assert.ok(state.user);
+    assert.equal(state.user.display_name, 'Fresh User');
+    assert.equal(state.user.bio, '');
+    assert.equal(state.user.mood_song, '');
+    assert.equal(state.partner, null);
+    assert.ok(state.couple?.id.startsWith('solo_'));
+
+    const friends = await fetchFriendsCircle({ userId: state.user.id });
+    assert.equal(friends.length, 0);
+
+    const momentBundle = await fetchTodayMomentBundle({
+      coupleId: state.couple!.id,
+      userId: state.user.id,
+    });
+    assert.equal(momentBundle.mine, null);
+    assert.equal(momentBundle.partner, null);
+    assert.equal(momentBundle.myMomentsToday?.length ?? 0, 0);
+    assert.equal(momentBundle.partnerMomentsToday?.length ?? 0, 0);
+    assert.equal(momentBundle.friendMomentsToday?.length ?? 0, 0);
+
+    const locations = await fetchCoupleLocations({
+      coupleId: state.couple!.id,
+      userId: state.user.id,
+    });
+    assert.equal(locations.partner, null);
+    assert.equal(locations.friends?.length ?? 0, 0);
   });
 
   it('returns truthful widget pin status on Web/iOS, bakes #keepit + timestamp into 3:4 & 9:16 composites, and saves photos across URI formats', async () => {
