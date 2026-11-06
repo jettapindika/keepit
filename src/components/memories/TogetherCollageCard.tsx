@@ -245,6 +245,9 @@ export function TogetherCollageCard({
           />
           <View style={[styles.centerSeam, { backgroundColor: colors.canvas }]} />
           <CollageHalfPane moment={myMoment} authorName={myName} side="right" />
+          <View pointerEvents="none" style={styles.keepItWatermarkBadge}>
+            <Text style={styles.keepItWatermarkText}>#KeepIt</Text>
+          </View>
         </View>
 
         {/* Dual Captions Underneath */}
@@ -423,6 +426,23 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
+  },
+  keepItWatermarkBadge: {
+    position: 'absolute',
+    bottom: 10,
+    left: '50%',
+    transform: [{ translateX: -34 }],
+    backgroundColor: 'rgba(12, 12, 14, 0.78)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+  },
+  keepItWatermarkText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   captionsGrid: {
     flexDirection: 'row',

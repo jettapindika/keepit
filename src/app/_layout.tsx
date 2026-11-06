@@ -47,7 +47,6 @@ function NavigationGuard() {
 
     const inAuthGroup = segments[0] === '(auth)';
     const authLeaf = segments[1];
-    const isPaired = Boolean(user && couple?.state === 'active');
 
     const incomingCode =
       typeof globalParams.code === 'string' && globalParams.code.trim().length > 0
@@ -65,16 +64,15 @@ function NavigationGuard() {
       return;
     }
 
-    if (!isPaired) {
-      if (!inAuthGroup || authLeaf !== 'pair') {
-        router.replace(
-          incomingCode ? { pathname: '/(auth)/pair', params: { code: incomingCode } } : '/(auth)/pair'
-        );
-      }
+    // Users do NOT need to pair with a partner to use KeepIt!
+    // Only open /(auth)/pair automatically if they explicitly tapped an incoming invite code link,
+    // or if they manually navigated to /(auth)/pair to link a partner.
+    if (incomingCode && (!inAuthGroup || authLeaf !== 'pair')) {
+      router.replace({ pathname: '/(auth)/pair', params: { code: incomingCode } });
       return;
     }
 
-    if (inAuthGroup) {
+    if (inAuthGroup && authLeaf === 'welcome') {
       router.replace('/(tabs)');
     }
   }, [

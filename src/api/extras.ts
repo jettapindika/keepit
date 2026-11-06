@@ -239,11 +239,19 @@ export async function fetchMonthMemories(params: {
   const days: MemoryDayRecord[] = [];
 
   for (const prompt of promptsInMonth) {
-    const promptMoments = Object.values(state.moments).filter((m) => m.prompt_id === prompt.id);
+    const promptMoments = Object.values(state.moments).filter((m) => {
+      const mDate = (m.posted_at || m.captured_at || '').slice(0, 10);
+      return (
+        m.prompt_id === prompt.id ||
+        (m.couple_id === params.coupleId && mDate === prompt.prompt_date)
+      );
+    });
     if (promptMoments.length === 0) continue;
 
     const rawMine = promptMoments.find((m) => m.user_id === params.userId) ?? null;
-    const rawPartner = promptMoments.find((m) => m.user_id !== params.userId) ?? null;
+    const rawPartner =
+      promptMoments.find((m) => m.user_id !== params.userId && !m.user_id.startsWith('friend_')) ??
+      null;
 
     const canRevealPartner = prompt.prompt_date < todayUtc || Boolean(rawMine);
 

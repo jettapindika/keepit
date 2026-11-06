@@ -100,12 +100,21 @@ export function useRealtimePairing() {
           return;
         }
 
+        if (packet.kind === 'profile_upsert' && packet.profile.id !== user.id) {
+          if (couple) {
+            setPairing(couple, packet.profile);
+          }
+        }
+
         void applyIncomingCouplePacket(packet).then(() => {
           void queryClient.invalidateQueries({ queryKey: ['today-moment', coupleId] });
           void queryClient.invalidateQueries({ queryKey: ['month-memories', coupleId] });
           void queryClient.invalidateQueries({ queryKey: ['couple-statuses', coupleId] });
           void queryClient.invalidateQueries({ queryKey: ['couple-locations', coupleId] });
           void queryClient.invalidateQueries({ queryKey: ['couple-nudges', coupleId] });
+          void queryClient.invalidateQueries({ queryKey: ['direct-messages'] });
+          void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
+          void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
         });
       })
       .subscribe((status) => {

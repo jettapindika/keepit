@@ -1,13 +1,11 @@
 // src/components/ui/MochyTabBar.tsx
-// Exact React Native Reanimated 4 port of Mochy-Music's floating stadium navigation bar:
-// - AppNavigation.kt:261-388 (64dp stadium pill, 8dp inset, 4dp gap, stretching lead/trail highlight)
-// - FrostedGlass.kt:30-42 (#131313 @ 78-84% frosted chrome, subtle hairline outline, ChromeHighlightColor)
-// - TouchFeedback.kt:115 (pressBounce squish 0.88 -> bouncy rebound)
+// React Native Reanimated 4 floating stadium navigation dock with central Dual Camera shutter:
+// Left: Home (`index`), Map (`map`) | Center: Raised Camera Shutter (`/camera`) | Right: Chat (`messages`), Profile (`profile`)
 
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -20,9 +18,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSessionStore } from '@/store/sessionStore';
 import { MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
+
 const NAV_BAR_HEIGHT = 64;
 const HIGHLIGHT_INSET = 6;
 const HIGHLIGHT_GAP = 4;
+const DOCK_TAB_ORDER = ['index', 'map', 'messages', 'profile'] as const;
+const TOTAL_DOCK_SLOTS = 5;
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 export interface MochyTabBarProps {
   state: {
     index: number;
@@ -46,6 +50,7 @@ export interface MochyTabBarProps {
     navigate: (name: string, params?: object) => void;
   };
 }
+
 type IconMap = {
   ios: string;
   android: string;
@@ -53,10 +58,18 @@ type IconMap = {
 };
 
 const TAB_ICONS: Record<string, IconMap> = {
-  index: { ios: 'camera.on.rectangle.fill', android: 'photo_camera', web: 'photo_camera' },
+  index: { ios: 'house.fill', android: 'home', web: 'home' },
   map: { ios: 'location.fill', android: 'location_on', web: 'location_on' },
+  messages: { ios: 'bubble.left.and.bubble.right.fill', android: 'chat_bubble', web: 'chat_bubble' },
+  profile: { ios: 'person.crop.circle.fill', android: 'person', web: 'person' },
   memories: { ios: 'calendar', android: 'calendar_month', web: 'calendar_month' },
   settings: { ios: 'gearshape.fill', android: 'settings', web: 'settings' },
+};
+
+const CAMERA_SHUTTER_ICON: IconMap = {
+  ios: 'camera.fill',
+  android: 'photo_camera',
+  web: 'photo_camera',
 };
 
 function MochyNavItem({
@@ -123,7 +136,7 @@ function MochyNavItem({
         <SymbolView
           name={iconSpec as never}
           tintColor={isFocused ? colors.ink : colors.inkMuted}
-          size={21}
+          size={20}
         />
         <Text
           numberOfLines={1}
@@ -141,6 +154,75 @@ function MochyNavItem({
   );
 }
 
+function CenterCameraShutter({ onPress }: { onPress: () => void }) {
+  const { colors } = useKeepItTheme();
+  const motionEnabled = useSessionStore((s) => s.motionEnabled);
+  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.get() }],
+  }));
+
+  return (
+    <View style={styles.centerSlot}>
+      <AnimatedPressable
+        accessibilityRole="button"
+        accessibilityLabel="Open Dual Camera"
+        onPressIn={() => {
+          if (!motionEnabled) return;
+          scale.set(withSpring(0.9, MOCHY_SPRINGS.pressIn(motionSpeed)));
+        }}
+        onPressOut={() => {
+          if (!motionEnabled) {
+            scale.set(1);
+            return;
+          }
+          scale.set(withSpring(1, MOCHY_SPRINGS.pressRelease(motionSpeed)));
+        }}
+        onPress={() => {
+          if (Platform.OS !== 'web') {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          }
+          onPress();
+        }}
+        style={[
+          styles.cameraOuterRing,
+          {
+            borderColor: colors.accent,
+            backgroundColor: colors.surfaceElevated,
+          },
+          animatedStyle,
+        ]}>
+        <View
+          style={[
+            styles.cameraInnerCore,
+            {
+              backgroundColor: colors.accent,
+            },
+          ]}>
+          <SymbolView
+            name={CAMERA_SHUTTER_ICON as never}
+            tintColor={colors.onAccent}
+            size={20}
+          />
+        </View>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.cameraPlusBadge,
+            {
+              backgroundColor: colors.canvas,
+              borderColor: colors.accent,
+            },
+          ]}>
+          <Text style={[styles.cameraPlusText, { color: colors.ink }]}>+</Text>
+        </View>
+      </AnimatedPressable>
+    </View>
+  );
+}
+
 export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -149,45 +231,69 @@ export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps
   const motionSpeed = useSessionStore((s) => s.motionSpeed);
 
   const [barWidth, setBarWidth] = useState(0);
-  const tabCount = state.routes.length;
-  const activeIndex = state.index;
 
-  // Stretching lead/trail values matching AppNavigation.kt:350-387
-  const startIdx = useSharedValue(activeIndex);
-  const endIdx = useSharedValue(activeIndex);
+  const visibleRoutes = useMemo(() => {
+    const byName = new Map(state.routes.map((r) => [r.name, r]));
+    return DOCK_TAB_ORDER.map((name) => byName.get(name)).filter(
+      (r): r is (typeof state.routes)[number] => Boolean(r)
+    );
+  }, [state.routes]);
+
+  const activeRouteName = state.routes[state.index]?.name ?? 'index';
+
+  // Map focused route to its physical 0..4 slot index (slot 2 is the Center Camera Shutter).
+  // Hidden sub-screens (`memories`, `settings`) return -1 so the sliding pill hides cleanly.
+  const activeVisualSlot = useMemo(() => {
+    const orderIdx = DOCK_TAB_ORDER.indexOf(
+      activeRouteName as (typeof DOCK_TAB_ORDER)[number]
+    );
+    if (orderIdx === -1) return -1;
+    return orderIdx >= 2 ? orderIdx + 1 : orderIdx;
+  }, [activeRouteName]);
+
+  const startSlot = useSharedValue(activeVisualSlot >= 0 ? activeVisualSlot : 0);
+  const endSlot = useSharedValue(activeVisualSlot >= 0 ? activeVisualSlot : 0);
+  const pillVisible = useSharedValue(activeVisualSlot >= 0 ? 1 : 0);
 
   useEffect(() => {
-    const target = activeIndex;
-    if (!motionEnabled) {
-      startIdx.set(target);
-      endIdx.set(target);
+    if (activeVisualSlot < 0) {
+      pillVisible.set(withTiming(0, mochyTiming(150, undefined, motionEnabled, motionSpeed)));
       return;
     }
-    const mid = (startIdx.get() + endIdx.get()) / 2;
-    const movingRight = target >= mid;
-    startIdx.set(
+
+    pillVisible.set(withTiming(1, mochyTiming(180, undefined, motionEnabled, motionSpeed)));
+
+    if (!motionEnabled) {
+      startSlot.set(activeVisualSlot);
+      endSlot.set(activeVisualSlot);
+      return;
+    }
+
+    const mid = (startSlot.get() + endSlot.get()) / 2;
+    const movingRight = activeVisualSlot >= mid;
+    startSlot.set(
       withSpring(
-        target,
+        activeVisualSlot,
         movingRight ? MOCHY_SPRINGS.navTrail(motionSpeed) : MOCHY_SPRINGS.navLead(motionSpeed)
       )
     );
-    endIdx.set(
+    endSlot.set(
       withSpring(
-        target,
+        activeVisualSlot,
         movingRight ? MOCHY_SPRINGS.navLead(motionSpeed) : MOCHY_SPRINGS.navTrail(motionSpeed)
       )
     );
-  }, [activeIndex, motionEnabled, motionSpeed, startIdx, endIdx]);
+  }, [activeVisualSlot, motionEnabled, motionSpeed, startSlot, endSlot, pillVisible]);
 
   const highlightStyle = useAnimatedStyle(() => {
-    if (barWidth <= 0 || tabCount === 0) {
+    if (barWidth <= 0) {
       return { opacity: 0 };
     }
-    const slot = barWidth / tabCount;
-    const left = startIdx.get() * slot + HIGHLIGHT_INSET + HIGHLIGHT_GAP / 2;
-    const right = (endIdx.get() + 1) * slot - HIGHLIGHT_INSET - HIGHLIGHT_GAP / 2;
+    const slotWidth = barWidth / TOTAL_DOCK_SLOTS;
+    const left = startSlot.get() * slotWidth + HIGHLIGHT_INSET + HIGHLIGHT_GAP / 2;
+    const right = (endSlot.get() + 1) * slotWidth - HIGHLIGHT_INSET - HIGHLIGHT_GAP / 2;
     return {
-      opacity: 1,
+      opacity: pillVisible.get(),
       left,
       width: Math.max(24, right - left),
     };
@@ -196,6 +302,40 @@ export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps
   const handleLayout = (e: LayoutChangeEvent) => {
     setBarWidth(e.nativeEvent.layout.width);
   };
+
+  const renderTabRoute = (route: (typeof state.routes)[number]) => {
+    const options = descriptors[route.key]?.options ?? {};
+    const label =
+      typeof options.tabBarLabel === 'string'
+        ? options.tabBarLabel
+        : options.title ?? route.name;
+    const isFocused = activeRouteName === route.name;
+
+    const onPress = () => {
+      const event = navigation.emit({
+        type: 'tabPress',
+        target: route.key,
+        canPreventDefault: true,
+      });
+      if (event.defaultPrevented || isFocused) return;
+      const href = route.name === 'index' ? '/(tabs)' : (`/(tabs)/${route.name}` as never);
+      router.replace(href);
+    };
+
+    return (
+      <MochyNavItem
+        key={route.key}
+        routeKey={route.key}
+        routeName={route.name}
+        label={label}
+        isFocused={isFocused}
+        onPress={onPress}
+      />
+    );
+  };
+
+  const leftTabs = visibleRoutes.filter((r) => r.name === 'index' || r.name === 'map');
+  const rightTabs = visibleRoutes.filter((r) => r.name === 'messages' || r.name === 'profile');
 
   return (
     <View
@@ -218,7 +358,6 @@ export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps
             ? ({ backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)' } as never)
             : null,
         ]}>
-        {/* Sliding & Stretching Lit Pill Highlight */}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -228,31 +367,11 @@ export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps
           ]}
         />
 
-        {state.routes.map((route, idx) => {
-          const { options } = descriptors[route.key];
-          const label =
-            typeof options.tabBarLabel === 'string'
-              ? options.tabBarLabel
-              : options.title ?? route.name;
-          const isFocused = state.index === idx;
+        {leftTabs.map(renderTabRoute)}
 
-          const onPress = () => {
-            if (isFocused) return;
-            const href = route.name === 'index' ? '/(tabs)' : (`/(tabs)/${route.name}` as never);
-            router.replace(href);
-          };
+        <CenterCameraShutter onPress={() => router.push('/camera')} />
 
-          return (
-            <MochyNavItem
-              key={route.key}
-              routeKey={route.key}
-              routeName={route.name}
-              label={label}
-              isFocused={isFocused}
-              onPress={onPress}
-            />
-          );
-        })}
+        {rightTabs.map(renderTabRoute)}
       </View>
     </View>
   );
@@ -269,14 +388,14 @@ const styles = StyleSheet.create({
   },
   pillChrome: {
     width: '100%',
-    maxWidth: 440,
+    maxWidth: 460,
     height: NAV_BAR_HEIGHT,
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     position: 'relative',
-    overflow: 'hidden',
+    overflow: 'visible',
     borderCurve: 'continuous',
     boxShadow: '0px 8px 24px rgba(0, 0, 0, 0.28)',
   },
@@ -301,6 +420,49 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 11,
-    letterSpacing: -0.25,
+    letterSpacing: -0.2,
+  },
+  centerSlot: {
+    flex: 1,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+  },
+  cameraOuterRing: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
+    padding: 3,
+    marginTop: -12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderCurve: 'continuous',
+    boxShadow: '0px 6px 18px rgba(0, 0, 0, 0.36)',
+  },
+  cameraInnerCore: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderCurve: 'continuous',
+  },
+  cameraPlusBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 19,
+    height: 19,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraPlusText: {
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 14,
   },
 });

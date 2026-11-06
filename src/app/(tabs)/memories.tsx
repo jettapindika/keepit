@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { fetchMonthMemories } from '@/api/extras';
+import { fetchMonthMemories, seedSandboxSampleMemories } from '@/api/extras';
 import { DEFAULT_WARM_BLURHASH } from '@/api/moments';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
@@ -574,6 +574,24 @@ export default function MemoriesScreen() {
               <Text style={[styles.stateTitle, { color: colors.ink }]}>
                 No Moments in {monthLabel}
               </Text>
+              <KeepItButton
+                label="Load Sample Month Memories"
+                variant="secondary"
+                onPress={() => {
+                  if (!couple || !user) return;
+                  void seedSandboxSampleMemories({
+                    coupleId: couple.id,
+                    userId: user.id,
+                    partnerId: partner?.id ?? `partner_${couple.id}`,
+                    userName: myName,
+                    partnerName,
+                  }).then(() => {
+                    void queryClient.invalidateQueries({
+                      queryKey: ['month-memories', couple.id],
+                    });
+                  });
+                }}
+              />
             </View>
           </RevealOnAppear>
         ) : selectedRecord ? (

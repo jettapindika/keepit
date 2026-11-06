@@ -370,6 +370,11 @@ export default function PairScreen() {
           </View>
           </RevealOnAppear>
           <KeepItButton
+            label="Continue Solo / Without Partner"
+            variant="secondary"
+            onPress={() => router.replace('/(tabs)')}
+          />
+          <KeepItButton
             label="Sign Out"
             variant="ghost"
             onPress={() => {

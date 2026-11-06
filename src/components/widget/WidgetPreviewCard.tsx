@@ -14,6 +14,11 @@ import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 import { WidgetSnapshotPayload } from '@/types/database';
 
+import {
+  isKeepItWidgetPinned,
+  requestPinKeepItWidget,
+} from '../../../modules/keepit-widget-bridge';
+
 export type WidgetSizePreset = 'small' | 'medium';
 
 export interface WidgetPreviewCardProps {
@@ -85,6 +90,8 @@ export function WidgetPreviewCard({
   const [sizePreset, setSizePreset] = useState<WidgetSizePreset>(initialSize);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [syncing, setSyncing] = useState(false);
+  const [pinning, setPinning] = useState(false);
+  const [widgetPinned, setWidgetPinned] = useState(false);
 
   const widgetPopScale = useSharedValue(1);
   const tapPressScale = useSharedValue(1);
@@ -95,6 +102,18 @@ export function WidgetPreviewCard({
       setNowMs(Date.now());
     }, 30_000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void isKeepItWidgetPinned().then((pinned) => {
+      if (active && pinned) {
+        setWidgetPinned(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleSelectSize = (nextSize: WidgetSizePreset) => {
@@ -139,6 +158,29 @@ export function WidgetPreviewCard({
       }
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handlePinWidget = async () => {
+    if (pinning) return;
+    if (Platform.OS !== 'web') {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    setPinning(true);
+    try {
+      if (onPressSyncNow) {
+        await onPressSyncNow();
+      }
+      const ok = await requestPinKeepItWidget();
+      if (ok) {
+        setWidgetPinned(true);
+      }
+      if (motionEnabled) {
+        widgetPopScale.set(0.95);
+        widgetPopScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+      }
+    } finally {
+      setPinning(false);
     }
   };
 
@@ -334,9 +376,12 @@ export function WidgetPreviewCard({
                   <View
                     style={[
                       StyleSheet.absoluteFill,
-                      { backgroundColor: colors.surfaceElevated },
-                    ]}
-                  />
+                      {
+                        backgroundColor: isLocked ? colors.surfaceElevated : '#5B3427',
+                      },
+                    ]}>
+                    {!isLocked ? <View style={styles.stylizedSunGlow} /> : null}
+                  </View>
                 )}
 
                 {/* Top row: partner name + relative time */}
@@ -433,6 +478,11 @@ export function WidgetPreviewCard({
                       {photoUri ? 'Tap to view Moment' : 'No Moment posted yet'}
                     </Text>
                   )}
+                  <View style={styles.smallWatermarkRow}>
+                    <View style={styles.watermarkPill}>
+                      <Text style={styles.watermarkText}>#KeepIt</Text>
+                    </View>
+                  </View>
                 </View>
               </View>
             ) : (
@@ -484,18 +534,17 @@ export function WidgetPreviewCard({
                           />
                         </View>
                       ) : null}
+                      <View style={styles.photoCornerWatermark}>
+                        <Text style={styles.watermarkText}>#KeepIt</Text>
+                      </View>
                     </>
                   ) : (
-                    <View style={styles.lockedTileContent}>
-                      <View
-                        style={[
-                          styles.emptyFrameOutline,
-                          { borderColor: colors.border },
-                        ]}
-                      />
-                      <Text style={[styles.emptyTileLabel, { color: colors.inkMuted }]}>
-                        Waiting
-                      </Text>
+                    <View style={styles.stylizedFallbackTile}>
+                      <View style={styles.stylizedSunGlow} />
+                      <Text style={styles.stylizedCupEmoji}>☕✨</Text>
+                      <View style={styles.photoCornerWatermark}>
+                        <Text style={styles.watermarkText}>#KeepIt</Text>
+                      </View>
                     </View>
                   )}
                 </View>
@@ -595,12 +644,54 @@ export function WidgetPreviewCard({
           </AnimatedPressable>
         </View>
 
-        {/* Bottom Instruction & Optional Sync Trigger */}
+        {/* Confirmation Badge when Pinned */}
+        {widgetPinned ? (
+          <View
+            style={[
+              styles.pinnedConfirmationBadge,
+              {
+                backgroundColor: colors.surfaceElevated,
+                borderColor: colors.success,
+                borderRadius: radii.pill,
+              },
+            ]}>
+            <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
+            <Text style={[styles.pinnedConfirmationText, { color: colors.ink }]}>
+              Widget pinned & active on Home Screen
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Bottom Actions: Pin Widget to Home Screen + Sync Widget Now */}
         <View style={styles.footerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pin Widget to Home Screen"
+            disabled={pinning}
+            onPress={() => {
+              void handlePinWidget();
+            }}
+            style={[
+              styles.pinWidgetButton,
+              {
+                backgroundColor: colors.badgeBg,
+                borderRadius: radii.pill,
+                opacity: pinning ? 0.65 : 1,
+              },
+            ]}>
+            <Text style={[styles.pinWidgetButtonText, { color: colors.badgeFg }]}>
+              {pinning
+                ? 'Pinning…'
+                : widgetPinned
+                  ? '📌 Pinned to Home Screen'
+                  : '📌 Pin Widget to Home Screen'}
+            </Text>
+          </Pressable>
+
           {onPressSyncNow ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Refresh widget snapshot now"
+              accessibilityLabel="Sync Widget Now"
               disabled={syncing}
               onPress={() => {
                 void handleManualSync();
@@ -615,7 +706,7 @@ export function WidgetPreviewCard({
                 },
               ]}>
               <Text style={[styles.syncChipText, { color: colors.ink }]}>
-                {syncing ? 'Syncing' : 'Sync'}
+                {syncing ? 'Syncing…' : 'Sync Widget Now'}
               </Text>
             </Pressable>
           ) : null}
@@ -871,21 +962,88 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+  smallWatermarkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  watermarkPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(18, 16, 20, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
+  },
+  photoCornerWatermark: {
+    position: 'absolute',
+    left: 7,
+    bottom: 7,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(18, 16, 20, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
+  },
+  watermarkText: {
+    color: '#FFF8EC',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.25,
+  },
+  stylizedFallbackTile: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#5B3427',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  stylizedSunGlow: {
+    position: 'absolute',
+    top: -18,
+    right: -18,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(246, 178, 107, 0.42)',
+  },
+  stylizedCupEmoji: {
+    fontSize: 22,
+    marginBottom: 10,
+  },
+  pinnedConfirmationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderWidth: 1,
+  },
+  pinnedConfirmationText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    flexWrap: 'wrap',
+    gap: 10,
   },
-  footerHint: {
-    flex: 1,
+  pinWidgetButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  pinWidgetButtonText: {
     fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   syncChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
     borderWidth: 1,
   },
   syncChipText: {

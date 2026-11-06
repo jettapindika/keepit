@@ -46,22 +46,40 @@ export function buildWidgetSnapshotPayload(params: {
 }): WidgetSnapshotPayload {
   const now = params.now ?? new Date();
   const partnerMoment = params.momentBundle?.partner ?? null;
+  const myMoment = params.momentBundle?.mine ?? null;
   const momentLocked = Boolean(partnerMoment?.locked);
 
-  const activePartnerStatus = getActiveStatus(params.statusBundle?.partner, now.getTime());
+  const activePartnerStatus =
+    getActiveStatus(params.statusBundle?.partner, now.getTime()) ??
+    (partnerMoment === null ? getActiveStatus(params.statusBundle?.mine, now.getTime()) : null);
 
-  const momentPhotoUri =
-    !momentLocked && partnerMoment
+  const fallbackMoment = !momentLocked && !partnerMoment ? myMoment : null;
+
+  const momentPhotoUri = !momentLocked
+    ? partnerMoment
       ? (partnerMoment.back_photo_url ?? partnerMoment.back_photo_path ?? null)
-      : null;
+      : (fallbackMoment?.back_photo_url ?? fallbackMoment?.back_photo_path ?? null)
+    : null;
 
-  const momentFrontPhotoUri =
-    !momentLocked && partnerMoment
+  const momentFrontPhotoUri = !momentLocked
+    ? partnerMoment
       ? (partnerMoment.front_photo_url ?? partnerMoment.front_photo_path ?? null)
-      : null;
+      : (fallbackMoment?.front_photo_url ?? fallbackMoment?.front_photo_path ?? null)
+    : null;
 
-  const momentCaption =
-    !momentLocked && partnerMoment ? (partnerMoment.caption ?? null) : null;
+  const momentCaption = !momentLocked
+    ? partnerMoment
+      ? (partnerMoment.caption ?? null)
+      : (fallbackMoment?.caption ?? null)
+    : null;
+
+  const momentPostedAt = partnerMoment?.posted_at ?? fallbackMoment?.posted_at ?? null;
+  const locationLabel = !momentLocked
+    ? (partnerMoment?.location_label ?? fallbackMoment?.location_label ?? null)
+    : null;
+  const musicTitle = !momentLocked
+    ? (partnerMoment?.music_track?.title ?? fallbackMoment?.music_track?.title ?? null)
+    : null;
 
   const streakCount = params.momentBundle?.streak?.current_count ?? 0;
   const deepLinkUrl = momentLocked ? 'keepit://camera' : 'keepit://';
@@ -75,11 +93,13 @@ export function buildWidgetSnapshotPayload(params: {
     momentPhotoUri,
     momentFrontPhotoUri,
     momentCaption,
-    momentPostedAt: partnerMoment?.posted_at ?? null,
+    momentPostedAt,
     momentLocked,
     streakCount,
     deepLinkUrl,
     updatedAt: now.toISOString(),
+    locationLabel,
+    musicTitle,
   };
 }
 
@@ -102,6 +122,8 @@ function computeSnapshotSignature(payload: WidgetSnapshotPayload): string {
     momentLocked: payload.momentLocked,
     streakCount: payload.streakCount,
     deepLinkUrl: payload.deepLinkUrl,
+    locationLabel: payload.locationLabel ?? null,
+    musicTitle: payload.musicTitle ?? null,
   });
 }
 

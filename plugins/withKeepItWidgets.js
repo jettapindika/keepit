@@ -157,6 +157,26 @@ function withAndroidWidgetResources(config) {
       const projectRoot = modConfig.modRequest.projectRoot;
       const platformProjectRoot = modConfig.modRequest.platformProjectRoot;
 
+      const layoutDir = path.join(platformProjectRoot, 'app', 'src', 'main', 'res', 'layout');
+      fs.mkdirSync(layoutDir, { recursive: true });
+
+      const layoutXml = [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"',
+        '  android:layout_width="match_parent"',
+        '  android:layout_height="match_parent">',
+        '  <ImageView',
+        '    android:id="@+id/widget_canvas_image"',
+        '    android:layout_width="match_parent"',
+        '    android:layout_height="match_parent"',
+        '    android:scaleType="fitXY"',
+        '    android:contentDescription="@string/keepit_widget_label" />',
+        '</FrameLayout>',
+        '',
+      ].join('\n');
+
+      fs.writeFileSync(path.join(layoutDir, 'keepit_appwidget.xml'), layoutXml, 'utf8');
+
       const xmlDir = path.join(platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
       fs.mkdirSync(xmlDir, { recursive: true });
 
@@ -164,6 +184,8 @@ function withAndroidWidgetResources(config) {
         '<?xml version="1.0" encoding="utf-8"?>',
         '<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"',
         '  android:description="@string/keepit_widget_description"',
+        '  android:initialLayout="@layout/keepit_appwidget"',
+        '  android:previewLayout="@layout/keepit_appwidget"',
         '  android:minWidth="110dp"',
         '  android:minHeight="110dp"',
         '  android:targetCellWidth="2"',
@@ -179,7 +201,6 @@ function withAndroidWidgetResources(config) {
       ].join('\n');
 
       fs.writeFileSync(path.join(xmlDir, 'keepit_widget_info.xml'), providerXml, 'utf8');
-
       const sourceKotlin = path.join(
         projectRoot,
         'targets',

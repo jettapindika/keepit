@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { broadcastCoupleSync } from '@/api/realtimeSync';
+import { buildDefaultUsername, buildFriendCode } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   CoupleRecord,
@@ -284,41 +286,74 @@ async function tryRedeemViaRealtimeRoom(params: {
 export async function upsertUserProfile(params: {
   userId: string;
   displayName: string;
+  username?: string;
+  bio?: string;
+  pronouns?: string;
+  moodSong?: string;
+  bannerColor?: string;
+  website?: string;
+  avatarPath?: string | null;
+  isPrivate?: boolean;
+  dumpMode?: boolean;
   timezone?: string;
+  coupleId?: string | null;
 }): Promise<UserProfile> {
   const trimmedName = params.displayName.trim();
   const tz = params.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
 
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('users')
-      .upsert(
-        {
-          id: params.userId,
-          display_name: trimmedName,
-          timezone: tz,
-        },
-        { onConflict: 'id' }
-      )
-      .select('*')
-      .single();
-
-    if (!error) return data as UserProfile;
-    if (!isSchemaNotMigratedError(error)) throw mapRpcError(error);
-  }
-
   const db = await readLocalDb();
   const existing = db.users[params.userId];
+  const cleanedUsername =
+    params.username !== undefined
+      ? params.username.trim().toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 24)
+      : existing?.username || buildDefaultUsername(trimmedName, params.userId);
+
   const profile: UserProfile = {
     id: params.userId,
     display_name: trimmedName,
-    avatar_path: existing?.avatar_path ?? null,
+    username: cleanedUsername || buildDefaultUsername(trimmedName, params.userId),
+    bio: params.bio !== undefined ? params.bio.trim().slice(0, 140) : (existing?.bio ?? 'Keeping daily Moments alive ✨'),
+    pronouns: params.pronouns !== undefined ? params.pronouns.trim().slice(0, 24) : (existing?.pronouns ?? ''),
+    mood_song: params.moodSong !== undefined ? params.moodSong.trim().slice(0, 60) : (existing?.mood_song ?? 'Sunset Lover · Petit Biscuit'),
+    banner_color: params.bannerColor !== undefined ? params.bannerColor : (existing?.banner_color ?? '#D95D39'),
+    website: params.website !== undefined ? params.website.trim().slice(0, 60) : (existing?.website ?? ''),
+    friend_code: existing?.friend_code ?? buildFriendCode(params.userId, trimmedName),
+    is_private:
+      params.isPrivate !== undefined ? params.isPrivate : (existing?.is_private ?? false),
+    dump_mode:
+      params.dumpMode !== undefined ? params.dumpMode : (existing?.dump_mode ?? false),
+    avatar_path:
+      params.avatarPath !== undefined ? params.avatarPath : (existing?.avatar_path ?? null),
     timezone: tz,
     push_token: existing?.push_token ?? null,
     created_at: existing?.created_at ?? new Date().toISOString(),
   };
   db.users[params.userId] = profile;
   await writeLocalDb(db);
+
+  if (params.coupleId) {
+    void broadcastCoupleSync(params.coupleId, { kind: 'profile_upsert', profile });
+  }
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase
+        .from('users')
+        .upsert(
+          {
+            id: params.userId,
+            display_name: trimmedName,
+            timezone: tz,
+          },
+          { onConflict: 'id' }
+        )
+        .select('*')
+        .single();
+    } catch {
+      // Keep local profile when Postgres table is not migrated
+    }
+  }
+
   return profile;
 }
 

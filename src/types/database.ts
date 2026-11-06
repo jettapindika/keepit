@@ -1,13 +1,103 @@
 export type CoupleState = 'pending' | 'active';
 export type LocationMode = 'live' | 'on_moment' | 'ghost';
 export type StatusDurationPreset = '1h' | '3h' | 'tonight';
+export type PostVisibility = 'partner' | 'friends' | 'everyone';
+export type MomentFilterPreset =
+  | 'normal'
+  | 'warm_film'
+  | 'polaroid'
+  | 'noir'
+  | 'cyber_neon'
+  | 'golden_hour'
+  | 'vhs_retro'
+  | 'dreamy';
+export type MomentMediaType = 'photo' | 'video';
 
 export interface UserProfile {
   id: string;
   display_name: string;
+  username?: string;
+  bio?: string;
+  pronouns?: string;
+  mood_song?: string;
+  banner_color?: string;
+  website?: string;
+  friend_code?: string;
+  is_private?: boolean;
+  dump_mode?: boolean;
   avatar_path: string | null;
   timezone: string;
   push_token: string | null;
+  created_at: string;
+}
+
+export interface FriendRecord {
+  id: string;
+  user_id: string;
+  friend_id: string;
+  friend_profile: UserProfile;
+  relationship: 'partner' | 'bestie' | 'friend';
+  created_at: string;
+}
+
+export interface MusicTrackAttachment {
+  id: string;
+  title: string;
+  artist: string;
+  coverColor: string;
+  previewNote?: string;
+  bpm?: number;
+}
+
+export interface TaggedPerson {
+  userId: string;
+  displayName: string;
+  username: string;
+}
+
+export interface PhotoOverlayItem {
+  id: string;
+  kind: 'emoji' | 'text';
+  content: string;
+  color?: string;
+  bgStyle?: 'glass' | 'solid' | 'neon' | 'none';
+  size?: 'sm' | 'md' | 'lg';
+  xPct: number; // 0..100 horizontal position on photo
+  yPct: number; // 0..100 vertical position on photo
+}
+
+export interface MomentCommentRecord {
+  id: string;
+  moment_id: string;
+  author_id: string;
+  author_name: string;
+  author_username?: string;
+  author_avatar?: string | null;
+  text: string;
+  emoji_reaction?: string | null;
+  created_at: string;
+}
+
+export interface MomentReactionSummary {
+  emoji: string;
+  userIds: string[];
+  userNames: string[];
+}
+
+export interface DirectMessageRecord {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  sender_name: string;
+  recipient_id: string;
+  text: string;
+  media_uri?: string | null;
+  reply_moment_id?: string | null;
+  reply_moment_preview?: string | null;
+  snap_once?: boolean;
+  viewed_by_user_ids?: string[];
+  viewed_at?: string | null;
+  reactions?: Record<string, string>; // userId -> emoji
   created_at: string;
 }
 
@@ -55,12 +145,21 @@ export interface DailyPromptRecord {
   notified_at: string | null;
 }
 
+export const MAX_DAILY_MOMENTS_PER_DAY = 5;
+
 export interface MomentRecord {
   id: string;
   couple_id: string;
   prompt_id: string;
   user_id: string;
+  author_name?: string;
+  author_username?: string;
+  author_avatar?: string | null;
   back_photo_path: string;
+  media_type?: MomentMediaType;
+  video_uri?: string | null;
+  video_duration_seconds?: number | null;
+  filter_preset?: MomentFilterPreset;
   front_photo_path: string;
   back_blurhash: string;
   collage_photo_path: string | null;
@@ -70,8 +169,21 @@ export interface MomentRecord {
   late_by_seconds: number;
   is_late: boolean;
   retake_count: number;
+  daily_index?: number; // 1..5
   lat: number | null;
   lng: number | null;
+  location_label?: string | null;
+  music_track?: MusicTrackAttachment | null;
+  tagged_users?: TaggedPerson[];
+  overlays?: PhotoOverlayItem[];
+  visibility?: PostVisibility;
+  snap_once?: boolean;
+  snap_duration_seconds?: number; // default 15
+  viewed_by_user_ids?: string[];
+  snap_opened_at_by_user?: Record<string, string>; // userId -> ISO timestamp when 15s countdown started
+  comments?: MomentCommentRecord[];
+  reactions?: Record<string, string>; // userId -> emoji
+  watermark_tag?: string; // default '#KeepIt'
   back_photo_url?: string | null;
   front_photo_url?: string | null;
 }
@@ -79,16 +191,38 @@ export interface MomentRecord {
 export interface PartnerMomentView {
   id: string;
   user_id: string;
+  author_name?: string;
+  author_username?: string;
+  author_avatar?: string | null;
   locked: boolean;
   back_photo_path: string | null;
   front_photo_path: string | null;
   back_blurhash: string;
+  media_type?: MomentMediaType;
+  video_uri?: string | null;
+  video_duration_seconds?: number | null;
+  filter_preset?: MomentFilterPreset;
   caption: string | null;
   captured_at: string;
   posted_at: string;
   late_by_seconds: number;
   is_late: boolean;
   retake_count: number;
+  daily_index?: number;
+  lat?: number | null;
+  lng?: number | null;
+  location_label?: string | null;
+  music_track?: MusicTrackAttachment | null;
+  tagged_users?: TaggedPerson[];
+  overlays?: PhotoOverlayItem[];
+  visibility?: PostVisibility;
+  snap_once?: boolean;
+  snap_duration_seconds?: number;
+  viewed_by_user_ids?: string[];
+  snap_opened_at_by_user?: Record<string, string>;
+  comments?: MomentCommentRecord[];
+  reactions?: Record<string, string>;
+  watermark_tag?: string;
   back_photo_url?: string | null;
   front_photo_url?: string | null;
 }
@@ -106,6 +240,11 @@ export interface TodayMomentBundle {
   streak: StreakRecord;
   mine: MomentRecord | null;
   partner: PartnerMomentView | null;
+  myMomentsToday?: MomentRecord[];
+  partnerMomentsToday?: PartnerMomentView[];
+  friendMomentsToday?: MomentRecord[];
+  dailyPostCount?: number;
+  maxDailyPosts?: number;
 }
 
 export interface StatusRecord {
@@ -126,10 +265,12 @@ export interface CoupleStatusBundle {
 export interface LocationShareRecord {
   user_id: string;
   couple_id: string;
+  display_name?: string;
   mode: LocationMode;
   lat: number | null;
   lng: number | null;
   accuracy_m: number | null;
+  place_name?: string | null;
   location_updated_at: string | null;
   mode_changed_at: string;
 }
@@ -153,6 +294,7 @@ export interface CoupleEventRecord {
 export interface CoupleLocationBundle {
   mine: LocationShareRecord | null;
   partner: LocationShareRecord | null;
+  friends?: LocationShareRecord[];
   events: CoupleEventRecord[];
 }
 
@@ -161,6 +303,7 @@ export interface MemoryDayRecord {
   prompt_date: string;
   mine: MomentRecord | null;
   partner: MomentRecord | null;
+  allMoments?: MomentRecord[];
 }
 
 export interface MonthMemoriesBundle {
@@ -182,4 +325,7 @@ export interface WidgetSnapshotPayload {
   streakCount: number;
   deepLinkUrl: string;
   updatedAt: string;
+  locationLabel?: string | null;
+  musicTitle?: string | null;
+  pinnedToHomeScreen?: boolean;
 }

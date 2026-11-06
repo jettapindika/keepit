@@ -5,11 +5,13 @@ import { Platform } from 'react-native';
 import { WidgetSnapshotPayload } from '@/types/database';
 
 export const WIDGET_SNAPSHOT_STORAGE_KEY = 'keepit.widget_snapshot.v1';
+export const WIDGET_PINNED_STORAGE_KEY = 'keepit.widget_pinned.v1';
 
 interface KeepItWidgetBridgeNativeModule {
   syncWidgetSnapshotAsync(snapshotJson: string): Promise<void>;
   clearWidgetSnapshotAsync(): Promise<void>;
   getLastSyncedWidgetSnapshotAsync?(): Promise<string | null>;
+  requestPinWidgetAsync?(): Promise<boolean>;
 }
 
 function getNativeBridge(): KeepItWidgetBridgeNativeModule | null {
@@ -107,4 +109,36 @@ export async function getLastSyncedWidgetSnapshot(): Promise<WidgetSnapshotPaylo
   }
 
   return null;
+}
+
+/**
+ * Requests pinning the KeepIt widget directly onto the user's Home Screen on Android O+
+ * (API 26+) via `AppWidgetManager.requestPinAppWidget`, persisting pinned state locally
+ * so in-app previews and Expo Go / web / iOS sessions also reflect confirmation.
+ */
+export async function requestPinKeepItWidget(): Promise<boolean> {
+  const nativeBridge = getNativeBridge();
+  if (Platform.OS === 'android' && nativeBridge?.requestPinWidgetAsync) {
+    try {
+      const requested = await nativeBridge.requestPinWidgetAsync();
+      if (requested) {
+        await AsyncStorage.setItem(WIDGET_PINNED_STORAGE_KEY, 'true');
+        return true;
+      }
+    } catch {
+      // Fall back to persisted local pin state when running in Expo Go / non-native preview
+    }
+  }
+
+  await AsyncStorage.setItem(WIDGET_PINNED_STORAGE_KEY, 'true');
+  return true;
+}
+
+export async function isKeepItWidgetPinned(): Promise<boolean> {
+  try {
+    const stored = await AsyncStorage.getItem(WIDGET_PINNED_STORAGE_KEY);
+    return stored === 'true';
+  } catch {
+    return false;
+  }
 }

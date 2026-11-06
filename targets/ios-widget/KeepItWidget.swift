@@ -120,9 +120,20 @@ struct KeepItTimelineProvider: TimelineProvider {
     guard
       let snapshot = snapshot,
       !snapshot.momentLocked,
-      let uriString = snapshot.momentPhotoUri,
-      let url = URL(string: uriString)
+      let uriString = snapshot.momentPhotoUri
     else {
+      return nil
+    }
+
+    if uriString.hasPrefix("data:image/"),
+       let commaIndex = uriString.firstIndex(of: ",") {
+      let base64Part = String(uriString[uriString.index(after: commaIndex)...])
+      if let decoded = Data(base64Encoded: base64Part, options: .ignoreUnknownCharacters) {
+        return UIImage(data: decoded)
+      }
+    }
+
+    guard let url = URL(string: uriString) else {
       return nil
     }
 

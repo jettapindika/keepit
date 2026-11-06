@@ -47,6 +47,18 @@ interface SessionState {
     password: string;
   }) => Promise<void>;
   setPairing: (couple: CoupleRecord | null, partner: UserProfile | null) => void;
+  updateProfile: (params: {
+    displayName: string;
+    username?: string;
+    bio?: string;
+    pronouns?: string;
+    moodSong?: string;
+    bannerColor?: string;
+    website?: string;
+    avatarPath?: string | null;
+    isPrivate?: boolean;
+    dumpMode?: boolean;
+  }) => Promise<UserProfile>;
   refreshPairing: () => Promise<void>;
   setThemePreference: (mode: ThemeMode) => Promise<void>;
   setMotionEnabled: (enabled: boolean) => Promise<void>;
@@ -117,10 +129,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
           if (effectiveProfile) {
             const pairing = await fetchPairingSnapshot(effectiveProfile.id);
+            const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
+              id: `solo_${effectiveProfile.id}`,
+              user_a_id: effectiveProfile.id,
+              user_b_id: null,
+              invite_code: '',
+              invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+              state: 'active',
+              paired_at: null,
+              created_at: effectiveProfile.created_at,
+            };
             set({
               user: effectiveProfile,
               email: session.user.email ?? saved?.email ?? null,
-              couple: pairing.couple,
+              couple: soloFallbackCouple,
               partner: pairing.partner,
               hydrated: true,
             });
@@ -131,10 +153,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       if (saved?.user) {
         const pairing = await fetchPairingSnapshot(saved.user.id);
+        const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
+          id: `solo_${saved.user.id}`,
+          user_a_id: saved.user.id,
+          user_b_id: null,
+          invite_code: '',
+          invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+          state: 'active',
+          paired_at: null,
+          created_at: saved.user.created_at,
+        };
         set({
           user: saved.user,
           email: saved.email ?? null,
-          couple: pairing.couple,
+          couple: soloFallbackCouple,
           partner: pairing.partner,
           hydrated: true,
         });
@@ -203,6 +235,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       displayName: cleanedName,
     });
     const pairing = await fetchPairingSnapshot(userId);
+    const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
+      id: `solo_${userId}`,
+      user_a_id: userId,
+      user_b_id: null,
+      invite_code: '',
+      invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      state: 'active',
+      paired_at: null,
+      created_at: profile.created_at,
+    };
 
     await persistSessionSlice({
       user: profile,
@@ -215,7 +257,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       user: profile,
       email: cleanedEmail,
-      couple: pairing.couple,
+      couple: soloFallbackCouple,
       partner: pairing.partner,
     });
   },
@@ -266,6 +308,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       displayName,
     });
     const pairing = await fetchPairingSnapshot(userId);
+    const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
+      id: `solo_${userId}`,
+      user_a_id: userId,
+      user_b_id: null,
+      invite_code: '',
+      invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      state: 'active',
+      paired_at: null,
+      created_at: profile.created_at,
+    };
 
     await persistSessionSlice({
       user: profile,
@@ -278,13 +330,46 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       user: profile,
       email: cleanedEmail,
-      couple: pairing.couple,
+      couple: soloFallbackCouple,
       partner: pairing.partner,
     });
   },
 
   setPairing: (couple, partner) => {
     set({ couple, partner });
+  },
+  updateProfile: async (params) => {
+    const currentUser = get().user;
+    if (!currentUser) {
+      throw new Error('Sign in first to edit your profile.');
+    }
+    const cleanedName = params.displayName.trim();
+    if (cleanedName.length < 1 || cleanedName.length > 40) {
+      throw new Error('Display name must be between 1 and 40 characters.');
+    }
+    const updated = await upsertUserProfile({
+      userId: currentUser.id,
+      displayName: cleanedName,
+      username: params.username,
+      bio: params.bio,
+      pronouns: params.pronouns,
+      moodSong: params.moodSong,
+      bannerColor: params.bannerColor,
+      website: params.website,
+      avatarPath: params.avatarPath,
+      isPrivate: params.isPrivate,
+      dumpMode: params.dumpMode,
+      coupleId: get().couple?.id ?? null,
+    });
+    await persistSessionSlice({
+      user: updated,
+      email: get().email,
+      themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
+    });
+    set({ user: updated });
+    return updated;
   },
 
   refreshPairing: async () => {

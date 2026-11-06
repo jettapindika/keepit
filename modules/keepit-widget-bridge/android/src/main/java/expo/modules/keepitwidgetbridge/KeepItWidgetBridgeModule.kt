@@ -4,6 +4,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -35,6 +36,24 @@ class KeepItWidgetBridgeModule : Module() {
     AsyncFunction("getLastSyncedWidgetSnapshotAsync") {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       prefs.getString(SNAPSHOT_KEY, null)
+    }
+
+    AsyncFunction("requestPinWidgetAsync") Coroutine { ->
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        return@Coroutine false
+      }
+      val receiverClass = runCatching {
+        Class.forName("com.keepit.app.widget.KeepItGlanceWidgetReceiver")
+      }.getOrNull() ?: return@Coroutine false
+
+      val appWidgetManager = AppWidgetManager.getInstance(context)
+      if (!appWidgetManager.isRequestPinAppWidgetSupported) {
+        return@Coroutine false
+      }
+
+      val componentName = ComponentName(context, receiverClass)
+      notifyWidgetUpdate()
+      appWidgetManager.requestPinAppWidget(componentName, null, null)
     }
   }
   private fun notifyWidgetUpdate() {

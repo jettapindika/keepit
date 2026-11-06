@@ -1,5 +1,5 @@
 // src/api/realtimeSync.ts
-// Cross-device Supabase Realtime Broadcast + Presence sync bus for paired couples.
+// Cross-device Supabase Realtime Broadcast + Presence sync bus for paired couples & friends.
 // Reuses the active subscribed couple channel so broadcastCoupleSync never unsubscribes the listener!
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,22 +8,38 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   CoupleEventRecord,
+  DirectMessageRecord,
+  FriendRecord,
   LocationShareRecord,
+  MomentCommentRecord,
   MomentRecord,
   StatusRecord,
+  UserProfile,
 } from '@/types/database';
 
 const LOCAL_MOMENTS_KEY = 'keepit.local_moments.v1';
 const LOCAL_STATUS_KEY = 'keepit.local_statuses.v1';
 const LOCAL_LOCATIONS_KEY = 'keepit.local_locations.v1';
 const LOCAL_EVENTS_KEY = 'keepit.local_events.v1';
+const LOCAL_MESSAGES_KEY = 'keepit.local_messages.v1';
+const LOCAL_FRIENDS_KEY = 'keepit.local_friends.v1';
+const LOCAL_DB_KEY = 'keepit.local_db.v1';
 
 export type CoupleSyncPacket =
   | { kind: 'moment_upsert'; moment: MomentRecord }
+  | { kind: 'moment_delete'; momentId: string; userId: string }
+  | { kind: 'moment_comment'; momentId: string; comment: MomentCommentRecord }
+  | { kind: 'moment_reaction'; momentId: string; userId: string; emoji: string | null }
+  | { kind: 'moment_snap_viewed'; momentId: string; viewerId: string; openedAtIso: string; expired?: boolean }
   | { kind: 'status_upsert'; status: StatusRecord }
   | { kind: 'status_clear'; userId: string }
   | { kind: 'location_upsert'; location: LocationShareRecord; event?: CoupleEventRecord }
   | { kind: 'nudge_sent'; event: CoupleEventRecord }
+  | { kind: 'dm_upsert'; message: DirectMessageRecord }
+  | { kind: 'dm_reaction'; messageId: string; userId: string; emoji: string }
+  | { kind: 'dm_snap_viewed'; messageId: string; viewerId: string; viewedAtIso: string }
+  | { kind: 'profile_upsert'; profile: UserProfile }
+  | { kind: 'friend_added'; friend: FriendRecord }
   | { kind: 'unpair'; actorId: string };
 
 let activeCoupleChannel: RealtimeChannel | null = null;
@@ -100,6 +116,8 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
       : { prompts: {}, moments: {}, streaks: {} };
 
     const m = packet.moment;
+    state.moments[m.id] = m;
+    // Also maintain legacy key if needed so both lookups succeed
     state.moments[`${m.prompt_id}:${m.user_id}`] = m;
 
     const distinctUsers = new Set(
@@ -122,6 +140,101 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
           current_count: nextCount,
           longest_count: Math.max(prev.longest_count, nextCount),
           last_completed_date: today,
+        };
+      }
+    }
+    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    return;
+  }
+
+  if (packet.kind === 'moment_delete') {
+    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw) as {
+      prompts: Record<string, unknown>;
+      moments: Record<string, MomentRecord>;
+      streaks: Record<string, unknown>;
+    };
+    for (const [k, rec] of Object.entries(state.moments)) {
+      if (rec.id === packet.momentId) {
+        delete state.moments[k];
+      }
+    }
+    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    return;
+  }
+
+  if (packet.kind === 'moment_comment') {
+    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw) as {
+      prompts: Record<string, unknown>;
+      moments: Record<string, MomentRecord>;
+      streaks: Record<string, unknown>;
+    };
+    for (const [k, rec] of Object.entries(state.moments)) {
+      if (rec.id === packet.momentId) {
+        const existingComments = rec.comments ?? [];
+        if (!existingComments.some((c) => c.id === packet.comment.id)) {
+          state.moments[k] = {
+            ...rec,
+            comments: [...existingComments, packet.comment],
+          };
+        }
+      }
+    }
+    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    return;
+  }
+
+  if (packet.kind === 'moment_reaction') {
+    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw) as {
+      prompts: Record<string, unknown>;
+      moments: Record<string, MomentRecord>;
+      streaks: Record<string, unknown>;
+    };
+    for (const [k, rec] of Object.entries(state.moments)) {
+      if (rec.id === packet.momentId) {
+        const nextReactions = { ...(rec.reactions ?? {}) };
+        if (packet.emoji) {
+          nextReactions[packet.userId] = packet.emoji;
+        } else {
+          delete nextReactions[packet.userId];
+        }
+        state.moments[k] = {
+          ...rec,
+          reactions: nextReactions,
+        };
+      }
+    }
+    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    return;
+  }
+
+  if (packet.kind === 'moment_snap_viewed') {
+    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw) as {
+      prompts: Record<string, unknown>;
+      moments: Record<string, MomentRecord>;
+      streaks: Record<string, unknown>;
+    };
+    for (const [k, rec] of Object.entries(state.moments)) {
+      if (rec.id === packet.momentId) {
+        const openedMap = { ...(rec.snap_opened_at_by_user ?? {}) };
+        if (!openedMap[packet.viewerId]) {
+          openedMap[packet.viewerId] = packet.openedAtIso;
+        }
+        const viewedSet = new Set(rec.viewed_by_user_ids ?? []);
+        if (packet.expired) {
+          viewedSet.add(packet.viewerId);
+        }
+        state.moments[k] = {
+          ...rec,
+          snap_opened_at_by_user: openedMap,
+          viewed_by_user_ids: Array.from(viewedSet),
         };
       }
     }
@@ -170,5 +283,71 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
       LOCAL_EVENTS_KEY,
       JSON.stringify([packet.event, ...events].slice(0, 60))
     );
+    return;
+  }
+
+  if (packet.kind === 'dm_upsert') {
+    const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+    const list = raw ? (JSON.parse(raw) as DirectMessageRecord[]) : [];
+    const idx = list.findIndex((m) => m.id === packet.message.id);
+    if (idx >= 0) {
+      list[idx] = packet.message;
+    } else {
+      list.push(packet.message);
+    }
+    await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(list.slice(-300)));
+    return;
+  }
+
+  if (packet.kind === 'dm_reaction') {
+    const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw) as DirectMessageRecord[];
+    const next = list.map((m) => {
+      if (m.id !== packet.messageId) return m;
+      return {
+        ...m,
+        reactions: { ...(m.reactions ?? {}), [packet.userId]: packet.emoji },
+      };
+    });
+    await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
+    return;
+  }
+
+  if (packet.kind === 'dm_snap_viewed') {
+    const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw) as DirectMessageRecord[];
+    const next = list.map((m) => {
+      if (m.id !== packet.messageId) return m;
+      const viewed = new Set(m.viewed_by_user_ids ?? []);
+      viewed.add(packet.viewerId);
+      return {
+        ...m,
+        viewed_by_user_ids: Array.from(viewed),
+        viewed_at: packet.viewedAtIso,
+      };
+    });
+    await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
+    return;
+  }
+
+  if (packet.kind === 'profile_upsert') {
+    const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
+    const db = rawDb
+      ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
+      : { users: {}, couples: {} };
+    db.users[packet.profile.id] = packet.profile;
+    await AsyncStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
+    return;
+  }
+
+  if (packet.kind === 'friend_added') {
+    const raw = await AsyncStorage.getItem(LOCAL_FRIENDS_KEY);
+    const list = raw ? (JSON.parse(raw) as FriendRecord[]) : [];
+    if (!list.some((f) => f.id === packet.friend.id)) {
+      list.push(packet.friend);
+      await AsyncStorage.setItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
+    }
   }
 }
