@@ -3,8 +3,9 @@ import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import { broadcastCoupleSync } from '@/api/realtimeSync';
-import { getFilterPresetMeta } from '@/api/social';
+import { fetchFriendsCircle, getFilterPresetMeta } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
+import { useSessionStore } from '@/store/sessionStore';
 import {
   DailyPromptRecord,
   MAX_DAILY_MOMENTS_PER_DAY,
@@ -141,7 +142,8 @@ export async function ensureCrossDeviceShareableUri(uri: string): Promise<string
     try {
       const file = new FileSystem.File(uri);
       const base64 = await file.base64();
-      if (base64 && base64.length > 0) {
+      // Keep base64 payload bounded (< 240 KB) so Android SQLite CursorWindow (2 MB) and Realtime Broadcast never overflow
+      if (base64 && base64.length > 0 && base64.length <= 240_000) {
         return `data:image/jpeg;base64,${base64}`;
       }
     } catch {
@@ -152,21 +154,124 @@ export async function ensureCrossDeviceShareableUri(uri: string): Promise<string
 }
 
 async function readLocalMoments(): Promise<LocalMomentsState> {
-  const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-  if (!raw) return { prompts: {}, moments: {}, streaks: {} };
   try {
-    return JSON.parse(raw) as LocalMomentsState;
+    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    if (!raw) return { prompts: {}, moments: {}, streaks: {} };
+    const parsed = JSON.parse(raw) as LocalMomentsState;
+    return {
+      prompts: parsed?.prompts ?? {},
+      moments: parsed?.moments ?? {},
+      streaks: parsed?.streaks ?? {},
+    };
   } catch {
+    await AsyncStorage.removeItem(LOCAL_MOMENTS_KEY).catch(() => {});
     return { prompts: {}, moments: {}, streaks: {} };
   }
 }
 
 async function writeLocalMoments(state: LocalMomentsState): Promise<void> {
+  const serialized = JSON.stringify(state);
+  // Guard against Android SQLite 2MB CursorWindow limit (~1.4MB safe ceiling)
+  if (serialized.length > 1_400_000) {
+    const sorted = Object.entries(state.moments).sort(([, a], [, b]) =>
+      a.posted_at < b.posted_at ? 1 : -1
+    );
+    const trimmedMoments: Record<string, MomentRecord> = {};
+    for (const [k, v] of sorted.slice(0, 12)) {
+      trimmedMoments[k] = v;
+    }
+    state.moments = trimmedMoments;
+  }
   await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
 }
 
-function todayUtcDateString(): string {
-  return new Date().toISOString().slice(0, 10);
+export function todayLocalDateString(date = new Date()): string {
+  const yr = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, '0');
+  const dy = String(date.getDate()).padStart(2, '0');
+  return `${yr}-${mo}-${dy}`;
+}
+
+function momentLocalDateString(m: MomentRecord): string {
+  const rawIso = m.captured_at || m.posted_at;
+  if (!rawIso) return todayLocalDateString();
+  const parsed = new Date(rawIso);
+  if (Number.isNaN(parsed.getTime())) {
+    return rawIso.slice(0, 10);
+  }
+  return todayLocalDateString(parsed);
+}
+
+export function isSnapOnceExpiredForViewer(
+  moment: Pick<
+    MomentRecord,
+    'snap_once' | 'user_id' | 'viewed_by_user_ids' | 'snap_opened_at_by_user' | 'snap_duration_seconds'
+  >,
+  viewerId: string,
+  nowMs = Date.now()
+): boolean {
+  if (!moment.snap_once || !viewerId || moment.user_id === viewerId) {
+    return false;
+  }
+  if (moment.viewed_by_user_ids?.includes(viewerId)) {
+    return true;
+  }
+  const openedIso = moment.snap_opened_at_by_user?.[viewerId];
+  if (openedIso) {
+    const openedMs = new Date(openedIso).getTime();
+    const durationMs = (moment.snap_duration_seconds ?? 15) * 1000;
+    if (Number.isFinite(openedMs) && nowMs >= openedMs + durationMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function getSnapOnceRemainingSeconds(
+  moment: Pick<
+    MomentRecord,
+    'snap_once' | 'user_id' | 'viewed_by_user_ids' | 'snap_opened_at_by_user' | 'snap_duration_seconds'
+  >,
+  viewerId: string,
+  nowMs = Date.now()
+): number | null {
+  if (!moment.snap_once || !viewerId || moment.user_id === viewerId) {
+    return null;
+  }
+  if (isSnapOnceExpiredForViewer(moment, viewerId, nowMs)) {
+    return 0;
+  }
+  const openedIso = moment.snap_opened_at_by_user?.[viewerId];
+  if (!openedIso) {
+    return null;
+  }
+  const openedMs = new Date(openedIso).getTime();
+  if (!Number.isFinite(openedMs)) return null;
+  const durationSec = moment.snap_duration_seconds ?? 15;
+  const elapsedSec = Math.floor((nowMs - openedMs) / 1000);
+  return Math.max(0, durationSec - elapsedSec);
+}
+
+export function redactExpiredSnapMomentForViewer(
+  moment: MomentRecord,
+  viewerId: string,
+  nowMs = Date.now()
+): MomentRecord {
+  if (!isSnapOnceExpiredForViewer(moment, viewerId, nowMs)) {
+    return moment;
+  }
+  const viewedSet = new Set(moment.viewed_by_user_ids ?? []);
+  viewedSet.add(viewerId);
+  return {
+    ...moment,
+    viewed_by_user_ids: Array.from(viewedSet),
+    back_photo_path: '',
+    front_photo_path: '',
+    back_photo_url: null,
+    front_photo_url: null,
+    video_uri: null,
+    caption: null,
+  };
 }
 
 function deduplicateMoments(records: MomentRecord[]): MomentRecord[] {
@@ -181,31 +286,62 @@ function deduplicateMoments(records: MomentRecord[]): MomentRecord[] {
   return Array.from(byId.values()).sort((a, b) => (a.posted_at < b.posted_at ? 1 : -1));
 }
 
-async function uploadPhotoToSupabaseStorage(params: {
+async function uploadMediaToSupabaseStorage(params: {
   coupleId: string;
   promptDate: string;
   userId: string;
-  lens: 'back' | 'front';
+  slot: 'back' | 'front' | 'video';
   localUri: string;
-}): Promise<string> {
+}): Promise<{ storagePath: string; signedUrl: string | null }> {
   if (!supabase) throw new Error('Supabase is not configured.');
   if (params.localUri.startsWith('data:image/svg+xml')) {
-    return params.localUri;
+    return { storagePath: params.localUri, signedUrl: params.localUri };
   }
-  const storagePath = `${params.coupleId}/${params.promptDate}/${params.userId}_${params.lens}_${Date.now()}.jpg`;
+  const isVideo = params.slot === 'video' || params.localUri.endsWith('.mp4') || params.localUri.endsWith('.mov');
+  const ext = isVideo ? 'mp4' : 'jpg';
+  const defaultMime = isVideo ? 'video/mp4' : 'image/jpeg';
+  const storagePath = `${params.coupleId}/${params.promptDate}/${params.userId}_${params.slot}_${Date.now()}.${ext}`;
 
   const response = await fetch(params.localUri);
   const blob = await response.blob();
 
   const { error } = await supabase.storage.from('moments').upload(storagePath, blob, {
-    contentType: blob.type || 'image/jpeg',
+    contentType: blob.type || defaultMime,
     upsert: true,
   });
 
   if (error) throw new Error(error.message);
-  return storagePath;
+
+  const { data: signedData } = await supabase.storage
+    .from('moments')
+    .createSignedUrl(storagePath, 3600);
+
+  return {
+    storagePath,
+    signedUrl: signedData?.signedUrl ?? null,
+  };
 }
 
+async function resolveStorageSignedUrlIfNeeded(pathOrUri: string | null | undefined): Promise<string | null> {
+  if (!pathOrUri) return null;
+  if (
+    pathOrUri.startsWith('data:') ||
+    pathOrUri.startsWith('http://') ||
+    pathOrUri.startsWith('https://') ||
+    pathOrUri.startsWith('file://')
+  ) {
+    return pathOrUri;
+  }
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data } = await supabase.storage.from('moments').createSignedUrl(pathOrUri, 3600);
+      if (data?.signedUrl) return data.signedUrl;
+    } catch {
+      // Ignore signed URL resolution failure offline
+    }
+  }
+  return pathOrUri;
+}
 export function formatLateDuration(lateBySeconds: number): string {
   if (lateBySeconds <= 120) return 'On time';
   const overdueSec = lateBySeconds - 120;
@@ -216,10 +352,23 @@ export function formatLateDuration(lateBySeconds: number): string {
   return remMins > 0 ? `${hrs}h ${remMins}m late` : `${hrs}h late`;
 }
 
-function toPartnerMomentView(rawPartner: MomentRecord, unlocked: boolean): PartnerMomentView {
-  const resolvedBack = rawPartner.back_photo_url || rawPartner.back_photo_path;
-  const resolvedFront = rawPartner.front_photo_url || rawPartner.front_photo_path;
-
+function toPartnerMomentView(
+  rawPartner: MomentRecord,
+  unlocked: boolean,
+  viewerId?: string
+): PartnerMomentView {
+  const effectivePartner = viewerId
+    ? redactExpiredSnapMomentForViewer(rawPartner, viewerId)
+    : rawPartner;
+  const expiredSnap = viewerId
+    ? isSnapOnceExpiredForViewer(effectivePartner, viewerId)
+    : false;
+  const resolvedBack = expiredSnap
+    ? null
+    : (effectivePartner.back_photo_url || effectivePartner.back_photo_path || null);
+  const resolvedFront = expiredSnap
+    ? null
+    : (effectivePartner.front_photo_url || effectivePartner.front_photo_path || null);
   if (!unlocked) {
     return {
       id: rawPartner.id,
@@ -260,40 +409,40 @@ function toPartnerMomentView(rawPartner: MomentRecord, unlocked: boolean): Partn
   }
 
   return {
-    id: rawPartner.id,
-    user_id: rawPartner.user_id,
-    author_name: rawPartner.author_name,
-    author_username: rawPartner.author_username,
-    author_avatar: rawPartner.author_avatar,
+    id: effectivePartner.id,
+    user_id: effectivePartner.user_id,
+    author_name: effectivePartner.author_name,
+    author_username: effectivePartner.author_username,
+    author_avatar: effectivePartner.author_avatar,
     locked: false,
     back_photo_path: resolvedBack,
     front_photo_path: resolvedFront,
-    back_blurhash: rawPartner.back_blurhash || DEFAULT_WARM_BLURHASH,
-    caption: rawPartner.caption,
-    captured_at: rawPartner.captured_at,
-    posted_at: rawPartner.posted_at,
-    late_by_seconds: rawPartner.late_by_seconds,
-    is_late: rawPartner.is_late,
-    retake_count: rawPartner.retake_count,
-    daily_index: rawPartner.daily_index ?? 1,
-    lat: rawPartner.lat,
-    lng: rawPartner.lng,
-    location_label: rawPartner.location_label ?? null,
-    music_track: rawPartner.music_track ?? null,
-    tagged_users: rawPartner.tagged_users ?? [],
-    overlays: rawPartner.overlays ?? [],
-    visibility: rawPartner.visibility ?? 'everyone',
-    snap_once: Boolean(rawPartner.snap_once),
-    snap_duration_seconds: rawPartner.snap_duration_seconds ?? 15,
-    viewed_by_user_ids: rawPartner.viewed_by_user_ids ?? [],
-    snap_opened_at_by_user: rawPartner.snap_opened_at_by_user ?? {},
-    comments: rawPartner.comments ?? [],
-    reactions: rawPartner.reactions ?? {},
-    watermark_tag: rawPartner.watermark_tag ?? '#KeepIt',
-    media_type: rawPartner.media_type ?? 'photo',
-    video_uri: rawPartner.video_uri ?? null,
-    video_duration_seconds: rawPartner.video_duration_seconds ?? null,
-    filter_preset: rawPartner.filter_preset ?? 'normal',
+    back_blurhash: effectivePartner.back_blurhash || DEFAULT_WARM_BLURHASH,
+    caption: expiredSnap ? null : effectivePartner.caption,
+    captured_at: effectivePartner.captured_at,
+    posted_at: effectivePartner.posted_at,
+    late_by_seconds: effectivePartner.late_by_seconds,
+    is_late: effectivePartner.is_late,
+    retake_count: effectivePartner.retake_count,
+    daily_index: effectivePartner.daily_index ?? 1,
+    lat: effectivePartner.lat,
+    lng: effectivePartner.lng,
+    location_label: effectivePartner.location_label ?? null,
+    music_track: effectivePartner.music_track ?? null,
+    tagged_users: effectivePartner.tagged_users ?? [],
+    overlays: effectivePartner.overlays ?? [],
+    visibility: effectivePartner.visibility ?? 'everyone',
+    snap_once: Boolean(effectivePartner.snap_once),
+    snap_duration_seconds: effectivePartner.snap_duration_seconds ?? 15,
+    viewed_by_user_ids: effectivePartner.viewed_by_user_ids ?? [],
+    snap_opened_at_by_user: effectivePartner.snap_opened_at_by_user ?? {},
+    comments: effectivePartner.comments ?? [],
+    reactions: effectivePartner.reactions ?? {},
+    watermark_tag: effectivePartner.watermark_tag ?? '#KeepIt',
+    media_type: effectivePartner.media_type ?? 'photo',
+    video_uri: expiredSnap ? null : (effectivePartner.video_uri ?? null),
+    video_duration_seconds: effectivePartner.video_duration_seconds ?? null,
+    filter_preset: effectivePartner.filter_preset ?? 'normal',
     back_photo_url: resolvedBack,
     front_photo_url: resolvedFront,
   };
@@ -424,11 +573,10 @@ export async function fetchTodayMomentBundle(params: {
   coupleId: string;
   userId: string;
 }): Promise<TodayMomentBundle> {
-  // Local + Realtime synced state is primary when Postgres schema is not migrated,
-  // and also merges any cross-device Realtime moments.
   const state = await readLocalMoments();
-  const today = todayUtcDateString();
+  const today = todayLocalDateString();
   const promptKey = `${params.coupleId}:${today}`;
+  let stateMutated = false;
 
   let prompt = state.prompts[promptKey];
   if (!prompt) {
@@ -441,16 +589,98 @@ export async function fetchTodayMomentBundle(params: {
       notified_at: triggerAt,
     };
     state.prompts[promptKey] = prompt;
+    stateMutated = true;
+  }
+
+  // Fetch active Friends Circle so friend moments respect actual friendships & privacy
+  const friendsCircle = await fetchFriendsCircle({ userId: params.userId });
+  const friendIdsSet = new Set(friendsCircle.map((f) => f.friend_id));
+  const bestieIdsSet = new Set(
+    friendsCircle.filter((f) => f.relationship === 'bestie').map((f) => f.friend_id)
+  );
+
+  // Ensure seeded friend moments for active demo friends are persisted in state.moments once
+  // so comments, reactions, and Snap Once states on friend moments persist across refreshes!
+  const seededFriendDefaults = buildSeededFriendMoments(params.coupleId, prompt.id, today);
+  for (const seededItem of seededFriendDefaults) {
+    if (friendIdsSet.has(seededItem.user_id) && !state.moments[seededItem.id]) {
+      state.moments[seededItem.id] = seededItem;
+      stateMutated = true;
+    }
+  }
+
+  // Hydrate from Supabase `public.moments` when available so offline recipients get missed moments
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data: remoteRows, error: remoteErr } = await supabase
+        .from('moments')
+        .select('*')
+        .or(`couple_id.eq.${params.coupleId},user_id.eq.${params.userId}`)
+        .order('posted_at', { ascending: false })
+        .limit(40);
+
+      if (!remoteErr && Array.isArray(remoteRows)) {
+        for (const rawRow of remoteRows) {
+          const rec = rawRow as MomentRecord;
+          if (!rec?.id) continue;
+          const [signedBack, signedFront, signedVideo] = await Promise.all([
+            resolveStorageSignedUrlIfNeeded(rec.back_photo_url ?? rec.back_photo_path),
+            resolveStorageSignedUrlIfNeeded(rec.front_photo_url ?? rec.front_photo_path),
+            resolveStorageSignedUrlIfNeeded(rec.video_uri),
+          ]);
+          const hydratedRec: MomentRecord = {
+            ...rec,
+            back_photo_url: signedBack ?? rec.back_photo_path,
+            front_photo_url: signedFront ?? rec.front_photo_path,
+            video_uri: signedVideo ?? rec.video_uri ?? null,
+          };
+          const existingLocal = state.moments[rec.id];
+          if (!existingLocal || hydratedRec.posted_at >= existingLocal.posted_at) {
+            state.moments[rec.id] = {
+              ...existingLocal,
+              ...hydratedRec,
+            };
+            stateMutated = true;
+          }
+        }
+      }
+    } catch {
+      // Use local cache when offline or table unmigrated
+    }
+  }
+
+  // Enforce permanent Snap Once expiration & local cache scrubbing for any expired moments
+  const nowMs = Date.now();
+  for (const [k, rec] of Object.entries(state.moments)) {
+    if (isSnapOnceExpiredForViewer(rec, params.userId, nowMs)) {
+      const alreadyScrubbed =
+        rec.viewed_by_user_ids?.includes(params.userId) &&
+        !rec.back_photo_path &&
+        !rec.front_photo_path &&
+        !rec.back_photo_url &&
+        !rec.front_photo_url &&
+        !rec.video_uri &&
+        rec.caption === null;
+      if (!alreadyScrubbed) {
+        state.moments[k] = redactExpiredSnapMomentForViewer(rec, params.userId, nowMs);
+        stateMutated = true;
+      }
+    }
+  }
+
+  if (stateMutated) {
     await writeLocalMoments(state);
   }
 
-  // Match moments by prompt_id OR by couple_id + today's date so cross-device prompts never mismatch!
+  // Match moments by prompt_id OR by couple_id + today's local date
   const allUnique = deduplicateMoments(Object.values(state.moments));
   const allForToday = allUnique.filter((m) => {
-    const mDate = (m.posted_at || m.captured_at || '').slice(0, 10);
+    const mLocalDate = momentLocalDateString(m);
+    const mUtcDate = (m.posted_at || m.captured_at || '').slice(0, 10);
     return (
       m.prompt_id === prompt.id ||
-      (m.couple_id === params.coupleId && mDate === today)
+      (m.couple_id === params.coupleId && (mLocalDate === today || mUtcDate === today)) ||
+      (friendIdsSet.has(m.user_id) && (mLocalDate === today || mUtcDate === today))
     );
   });
 
@@ -466,21 +696,34 @@ export async function fetchTodayMomentBundle(params: {
     }));
 
   const rawPartnerMoments = allForToday.filter(
-    (m) => m.user_id !== params.userId && !m.user_id.startsWith('friend_')
+    (m) =>
+      m.user_id !== params.userId &&
+      !m.user_id.startsWith('friend_') &&
+      !friendIdsSet.has(m.user_id) &&
+      m.visibility !== 'friends'
   );
 
-  // Unlock partner moments as soon as BOTH partners have posted at least 1 Moment today
-  // OR if the partner moment was explicitly shared across devices
   const unlocked = Boolean(myMomentsToday.length > 0 && rawPartnerMoments.length > 0);
 
-  const partnerMomentsToday = rawPartnerMoments.map((pm) => toPartnerMomentView(pm, unlocked));
+  const partnerMomentsToday = rawPartnerMoments.map((pm) =>
+    toPartnerMomentView(pm, unlocked, params.userId)
+  );
   const mine = myMomentsToday[0] ?? null;
   const partner = partnerMomentsToday[0] ?? null;
 
-  const friendMomentsToday = [
-    ...allForToday.filter((m) => m.user_id.startsWith('friend_')),
-    ...buildSeededFriendMoments(params.coupleId, prompt.id, today),
-  ];
+  // Filter Friends feed strictly to active Friends Circle members + respect visibility & private profiles
+  const friendMomentsToday = allForToday
+    .filter((m) => {
+      if (m.user_id === params.userId) return false;
+      if (!friendIdsSet.has(m.user_id)) return false;
+      if (m.visibility === 'partner') return false;
+      const friendEntry = friendsCircle.find((f) => f.friend_id === m.user_id);
+      if (friendEntry?.friend_profile.is_private && !bestieIdsSet.has(m.user_id)) {
+        return false;
+      }
+      return true;
+    })
+    .map((m) => redactExpiredSnapMomentForViewer(m, params.userId, nowMs));
 
   const streak = state.streaks[params.coupleId] ?? {
     couple_id: params.coupleId,
@@ -535,39 +778,55 @@ export async function submitDailyMoment(params: {
     throw new Error('Caption must be 160 characters or fewer.');
   }
 
-  // Convert local file:// URIs to portable base64 data URIs so Partner's phone can render them immediately
   const [portableBackUri, portableFrontUri] = await Promise.all([
     ensureCrossDeviceShareableUri(params.backUri),
     ensureCrossDeviceShareableUri(params.frontUri),
   ]);
 
-  let finalBackUri = portableBackUri;
-  let finalFrontUri = portableFrontUri;
+  let finalBackPath = portableBackUri;
+  let finalFrontPath = portableFrontUri;
+  let finalBackUrl = portableBackUri;
+  let finalFrontUrl = portableFrontUri;
+  let finalVideoUri = params.videoUri ?? null;
+
+  const today = todayLocalDateString(new Date(capturedAt));
 
   if (isSupabaseConfigured && supabase) {
     try {
-      const today = todayUtcDateString();
-      const [backPath, frontPath] = await Promise.all([
-        uploadPhotoToSupabaseStorage({
+      const [backUp, frontUp] = await Promise.all([
+        uploadMediaToSupabaseStorage({
           coupleId: params.coupleId,
           promptDate: today,
           userId: params.userId,
-          lens: 'back',
+          slot: 'back',
           localUri: portableBackUri,
         }),
-        uploadPhotoToSupabaseStorage({
+        uploadMediaToSupabaseStorage({
           coupleId: params.coupleId,
           promptDate: today,
           userId: params.userId,
-          lens: 'front',
+          slot: 'front',
           localUri: portableFrontUri,
         }),
       ]);
-      if (backPath.startsWith('http') || backPath.startsWith('data:')) {
-        finalBackUri = backPath;
-      }
-      if (frontPath.startsWith('http') || frontPath.startsWith('data:')) {
-        finalFrontUri = frontPath;
+      finalBackPath = backUp.storagePath;
+      finalFrontPath = frontUp.storagePath;
+      finalBackUrl = backUp.signedUrl ?? portableBackUri;
+      finalFrontUrl = frontUp.signedUrl ?? portableFrontUri;
+
+      if (
+        params.mediaType === 'video' &&
+        params.videoUri &&
+        !params.videoUri.startsWith('data:image/svg+xml')
+      ) {
+        const vidUp = await uploadMediaToSupabaseStorage({
+          coupleId: params.coupleId,
+          promptDate: today,
+          userId: params.userId,
+          slot: 'video',
+          localUri: params.videoUri,
+        });
+        finalVideoUri = vidUp.signedUrl ?? vidUp.storagePath;
       }
     } catch {
       // Keep portable data URI / local URI when storage bucket is not migrated
@@ -575,7 +834,6 @@ export async function submitDailyMoment(params: {
   }
 
   const state = await readLocalMoments();
-  const today = todayUtcDateString();
   const promptKey = `${params.coupleId}:${today}`;
 
   let prompt =
@@ -601,13 +859,9 @@ export async function submitDailyMoment(params: {
 
   const allUnique = deduplicateMoments(Object.values(state.moments));
   const myTodayList = allUnique.filter((m) => {
-    const mDate = (m.posted_at || m.captured_at || '').slice(0, 10);
-    return (
-      m.user_id === params.userId &&
-      (m.prompt_id === prompt.id || (m.couple_id === params.coupleId && mDate === today))
-    );
+    const mLocalDate = momentLocalDateString(m);
+    return m.user_id === params.userId && mLocalDate === today;
   });
-
   const existingToReplace = params.replaceMomentId
     ? myTodayList.find((m) => m.id === params.replaceMomentId)
     : undefined;
@@ -627,6 +881,11 @@ export async function submitDailyMoment(params: {
     existingToReplace?.id ??
     `moment_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
+  const sessionUser = useSessionStore.getState().user;
+  const defaultVisibility: PostVisibility =
+    params.visibility ??
+    (sessionUser?.id === params.userId && sessionUser?.is_private ? 'partner' : 'everyone');
+
   const record: MomentRecord = {
     id: momentId,
     couple_id: params.coupleId,
@@ -635,8 +894,8 @@ export async function submitDailyMoment(params: {
     author_name: params.authorName,
     author_username: params.authorUsername,
     author_avatar: params.authorAvatar ?? null,
-    back_photo_path: finalBackUri,
-    front_photo_path: finalFrontUri,
+    back_photo_path: finalBackPath,
+    front_photo_path: finalFrontPath,
     back_blurhash: DEFAULT_WARM_BLURHASH,
     collage_photo_path: null,
     caption: trimmedCaption,
@@ -652,7 +911,7 @@ export async function submitDailyMoment(params: {
     music_track: params.musicTrack ?? null,
     tagged_users: params.taggedUsers ?? [],
     overlays: params.overlays ?? [],
-    visibility: params.visibility ?? 'everyone',
+    visibility: defaultVisibility,
     snap_once: Boolean(params.snapOnce),
     snap_duration_seconds: params.snapDurationSeconds ?? 15,
     viewed_by_user_ids: existingToReplace?.viewed_by_user_ids ?? [],
@@ -661,21 +920,91 @@ export async function submitDailyMoment(params: {
     reactions: existingToReplace?.reactions ?? {},
     watermark_tag: '#KeepIt',
     media_type: params.mediaType ?? 'photo',
-    video_uri: params.videoUri ?? null,
+    video_uri: finalVideoUri,
     video_duration_seconds: params.videoDurationSeconds ?? null,
     filter_preset: params.filterPreset ?? 'normal',
-    back_photo_url: finalBackUri,
-    front_photo_url: finalFrontUri,
+    back_photo_url: finalBackUrl,
+    front_photo_url: finalFrontUrl,
   };
 
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { error: dbErr } = await supabase.from('moments').upsert(
+        {
+          id: record.id,
+          couple_id: record.couple_id.startsWith('solo_') ? null : record.couple_id,
+          prompt_id: record.prompt_id.startsWith('prompt_') ? null : record.prompt_id,
+          user_id: record.user_id,
+          author_name: record.author_name,
+          author_username: record.author_username,
+          author_avatar: record.author_avatar,
+          back_photo_path: record.back_photo_path,
+          front_photo_path: record.front_photo_path,
+          back_blurhash: record.back_blurhash,
+          caption: record.caption,
+          captured_at: record.captured_at,
+          posted_at: record.posted_at,
+          late_by_seconds: record.late_by_seconds,
+          retake_count: record.retake_count,
+          daily_index: record.daily_index,
+          local_date: today,
+          lat: record.lat,
+          lng: record.lng,
+          location_label: record.location_label,
+          music_track: record.music_track,
+          tagged_users: record.tagged_users,
+          overlays: record.overlays,
+          visibility: record.visibility,
+          snap_once: record.snap_once,
+          snap_duration_seconds: record.snap_duration_seconds,
+          viewed_by_user_ids: record.viewed_by_user_ids,
+          snap_opened_at_by_user: record.snap_opened_at_by_user,
+          comments: record.comments,
+          reactions: record.reactions,
+          watermark_tag: record.watermark_tag,
+          media_type: record.media_type,
+          video_uri: record.video_uri,
+          video_duration_seconds: record.video_duration_seconds,
+          filter_preset: record.filter_preset,
+        },
+        { onConflict: 'id' }
+      );
+      if (dbErr && dbErr.message.includes('DAILY_MOMENT_LIMIT_REACHED')) {
+        throw new Error(
+          `Daily limit reached (${MAX_DAILY_MOMENTS_PER_DAY}/${MAX_DAILY_MOMENTS_PER_DAY} Moments today). You can edit or delete an earlier post.`
+        );
+      }
+      if (dbErr && isSchemaNotMigratedError(dbErr)) {
+        await supabase.rpc('submit_daily_moment', {
+          p_prompt_id: record.prompt_id,
+          p_back_photo_path: record.back_photo_path,
+          p_front_photo_path: record.front_photo_path,
+          p_back_blurhash: record.back_blurhash,
+          p_caption: record.caption,
+          p_captured_at: record.captured_at,
+          p_lat: record.lat,
+          p_lng: record.lng,
+        });
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Daily limit reached')) {
+        throw err;
+      }
+    }
+  }
+
   state.moments[record.id] = record;
-  // Also keep latest pointer on `${prompt.id}:${params.userId}` for backwards compatibility
   state.moments[`${prompt.id}:${params.userId}`] = record;
 
   // Advance streak if both partners have posted today
   const distinctPosters = new Set(
     Object.values(state.moments)
-      .filter((m) => m.couple_id === params.coupleId && !m.user_id.startsWith('friend_'))
+      .filter(
+        (m) =>
+          m.couple_id === params.coupleId &&
+          !m.user_id.startsWith('friend_') &&
+          momentLocalDateString(m) === today
+      )
       .map((m) => m.user_id)
   );
   if (distinctPosters.size >= 2) {
@@ -685,21 +1014,34 @@ export async function submitDailyMoment(params: {
       longest_count: 0,
       last_completed_date: null,
     };
-    if (prev.last_completed_date !== prompt.prompt_date) {
-      const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    if (prev.last_completed_date !== today) {
+      const yesterdayDate = new Date(nowMs - 86_400_000);
+      const yesterday = todayLocalDateString(yesterdayDate);
       const nextCount = prev.last_completed_date === yesterday ? prev.current_count + 1 : 1;
       state.streaks[params.coupleId] = {
         couple_id: params.coupleId,
         current_count: nextCount,
         longest_count: Math.max(prev.longest_count, nextCount),
-        last_completed_date: prompt.prompt_date,
+        last_completed_date: today,
         updated_at: new Date().toISOString(),
       };
     }
   }
 
   await writeLocalMoments(state);
-  void broadcastCoupleSync(params.coupleId, { kind: 'moment_upsert', moment: record });
+
+  // Prefer lightweight URLs in Realtime broadcast packet when signed URLs exist
+  const broadcastMoment: MomentRecord = {
+    ...record,
+    back_photo_path:
+      finalBackUrl.startsWith('http') ? finalBackUrl : record.back_photo_path,
+    front_photo_path:
+      finalFrontUrl.startsWith('http') ? finalFrontUrl : record.front_photo_path,
+  };
+  void broadcastCoupleSync(params.coupleId, {
+    kind: 'moment_upsert',
+    moment: broadcastMoment,
+  });
   return record;
 }
 
@@ -708,6 +1050,8 @@ export async function updateMomentDetails(params: {
   userId: string;
   caption?: string | null;
   locationLabel?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   musicTrack?: MusicTrackAttachment | null;
   taggedUsers?: TaggedPerson[];
   overlays?: PhotoOverlayItem[];
@@ -735,11 +1079,29 @@ export async function updateMomentDetails(params: {
     throw new Error('Caption must be 160 characters or fewer.');
   }
 
+  const nextLocationLabel =
+    params.locationLabel !== undefined ? params.locationLabel : base.location_label;
+
+  // If location was cleared, clear stale coordinates as well
+  const nextLat =
+    params.lat !== undefined
+      ? params.lat
+      : nextLocationLabel === null
+        ? null
+        : base.lat;
+  const nextLng =
+    params.lng !== undefined
+      ? params.lng
+      : nextLocationLabel === null
+        ? null
+        : base.lng;
+
   const updated: MomentRecord = {
     ...base,
     caption: nextCaption,
-    location_label:
-      params.locationLabel !== undefined ? params.locationLabel : base.location_label,
+    location_label: nextLocationLabel,
+    lat: nextLat,
+    lng: nextLng,
     music_track: params.musicTrack !== undefined ? params.musicTrack : base.music_track,
     tagged_users: params.taggedUsers !== undefined ? params.taggedUsers : base.tagged_users,
     overlays: params.overlays !== undefined ? params.overlays : base.overlays,
@@ -753,6 +1115,30 @@ export async function updateMomentDetails(params: {
     state.moments[k] = updated;
   }
   await writeLocalMoments(state);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase
+        .from('moments')
+        .update({
+          caption: updated.caption,
+          location_label: updated.location_label,
+          lat: updated.lat,
+          lng: updated.lng,
+          music_track: updated.music_track,
+          tagged_users: updated.tagged_users,
+          overlays: updated.overlays,
+          visibility: updated.visibility,
+          snap_once: updated.snap_once,
+          filter_preset: updated.filter_preset,
+        })
+        .eq('id', updated.id)
+        .eq('user_id', params.userId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
   void broadcastCoupleSync(updated.couple_id, { kind: 'moment_upsert', moment: updated });
   return updated;
 }
@@ -776,8 +1162,15 @@ export async function deleteMomentPost(params: {
 }): Promise<void> {
   const state = await readLocalMoments();
   let deleted = false;
+  const storagePathsToRemove: string[] = [];
   for (const [k, rec] of Object.entries(state.moments)) {
     if (rec.id === params.momentId && rec.user_id === params.userId) {
+      if (rec.back_photo_path && !rec.back_photo_path.startsWith('data:') && !rec.back_photo_path.startsWith('http')) {
+        storagePathsToRemove.push(rec.back_photo_path);
+      }
+      if (rec.front_photo_path && !rec.front_photo_path.startsWith('data:') && !rec.front_photo_path.startsWith('http')) {
+        storagePathsToRemove.push(rec.front_photo_path);
+      }
       delete state.moments[k];
       deleted = true;
     }
@@ -785,7 +1178,33 @@ export async function deleteMomentPost(params: {
   if (!deleted) {
     throw new Error('Could not find that Moment to delete.');
   }
+
+  // Reassign legacy pointer `${promptId}:${userId}` if the user still has other moments today
+  const remainingMineToday = deduplicateMoments(Object.values(state.moments)).filter(
+    (m) => m.couple_id === params.coupleId && m.user_id === params.userId
+  );
+  if (remainingMineToday.length > 0) {
+    const latest = remainingMineToday[0];
+    state.moments[`${latest.prompt_id}:${params.userId}`] = latest;
+  }
+
   await writeLocalMoments(state);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      if (storagePathsToRemove.length > 0) {
+        await supabase.storage.from('moments').remove(storagePathsToRemove).catch(() => {});
+      }
+      await supabase
+        .from('moments')
+        .delete()
+        .eq('id', params.momentId)
+        .eq('user_id', params.userId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
   void broadcastCoupleSync(params.coupleId, {
     kind: 'moment_delete',
     momentId: params.momentId,
@@ -817,21 +1236,79 @@ export async function addMomentComment(params: {
   };
 
   const state = await readLocalMoments();
+  let updatedComments: MomentCommentRecord[] | null = null;
   for (const [k, rec] of Object.entries(state.moments)) {
     if (rec.id === params.momentId) {
+      const nextList = [...(rec.comments ?? []), comment];
+      updatedComments = nextList;
       state.moments[k] = {
         ...rec,
-        comments: [...(rec.comments ?? []), comment],
+        comments: nextList,
       };
     }
   }
   await writeLocalMoments(state);
+
+  if (isSupabaseConfigured && supabase && updatedComments) {
+    try {
+      await supabase
+        .from('moments')
+        .update({ comments: updatedComments })
+        .eq('id', params.momentId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
   void broadcastCoupleSync(params.coupleId, {
     kind: 'moment_comment',
     momentId: params.momentId,
     comment,
   });
   return comment;
+}
+
+export async function deleteMomentComment(params: {
+  momentId: string;
+  commentId: string;
+  coupleId: string;
+  requesterId: string;
+}): Promise<void> {
+  const state = await readLocalMoments();
+  let updatedComments: MomentCommentRecord[] | null = null;
+  for (const [k, rec] of Object.entries(state.moments)) {
+    if (rec.id === params.momentId) {
+      const targetComment = (rec.comments ?? []).find((c) => c.id === params.commentId);
+      if (!targetComment) continue;
+      if (targetComment.author_id !== params.requesterId && rec.user_id !== params.requesterId) {
+        throw new Error('You can only delete your own comments.');
+      }
+      const nextList = (rec.comments ?? []).filter((c) => c.id !== params.commentId);
+      updatedComments = nextList;
+      state.moments[k] = {
+        ...rec,
+        comments: nextList,
+      };
+    }
+  }
+  await writeLocalMoments(state);
+
+  if (isSupabaseConfigured && supabase && updatedComments) {
+    try {
+      await supabase
+        .from('moments')
+        .update({ comments: updatedComments })
+        .eq('id', params.momentId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
+  void broadcastCoupleSync(params.coupleId, {
+    kind: 'moment_comment_delete',
+    momentId: params.momentId,
+    commentId: params.commentId,
+  });
 }
 
 export async function toggleMomentReaction(params: {
@@ -842,6 +1319,7 @@ export async function toggleMomentReaction(params: {
 }): Promise<void> {
   const state = await readLocalMoments();
   let nextEmoji: string | null = params.emoji;
+  let updatedReactions: Record<string, string> | null = null;
   for (const [k, rec] of Object.entries(state.moments)) {
     if (rec.id === params.momentId) {
       const reactions = { ...(rec.reactions ?? {}) };
@@ -852,6 +1330,7 @@ export async function toggleMomentReaction(params: {
         reactions[params.userId] = params.emoji;
         nextEmoji = params.emoji;
       }
+      updatedReactions = reactions;
       state.moments[k] = {
         ...rec,
         reactions,
@@ -859,6 +1338,18 @@ export async function toggleMomentReaction(params: {
     }
   }
   await writeLocalMoments(state);
+
+  if (isSupabaseConfigured && supabase && updatedReactions) {
+    try {
+      await supabase
+        .from('moments')
+        .update({ reactions: updatedReactions })
+        .eq('id', params.momentId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
   void broadcastCoupleSync(params.coupleId, {
     kind: 'moment_reaction',
     momentId: params.momentId,
@@ -875,29 +1366,60 @@ export async function markSnapOnceMomentState(params: {
 }): Promise<void> {
   const state = await readLocalMoments();
   const nowIso = new Date().toISOString();
+  let openedIsoToSend = nowIso;
+  let updatedOpenedMap: Record<string, string> | null = null;
+  let updatedViewedList: string[] | null = null;
+
   for (const [k, rec] of Object.entries(state.moments)) {
     if (rec.id === params.momentId) {
+      // Prevent the post author's own preview from expiring the recipient's view
+      if (rec.user_id === params.viewerId) {
+        return;
+      }
       const openedMap = { ...(rec.snap_opened_at_by_user ?? {}) };
       if (!openedMap[params.viewerId]) {
         openedMap[params.viewerId] = nowIso;
+      } else {
+        openedIsoToSend = openedMap[params.viewerId];
       }
       const viewedSet = new Set(rec.viewed_by_user_ids ?? []);
       if (params.expired) {
         viewedSet.add(params.viewerId);
       }
-      state.moments[k] = {
+      updatedOpenedMap = openedMap;
+      updatedViewedList = Array.from(viewedSet);
+
+      const nextRecord: MomentRecord = {
         ...rec,
         snap_opened_at_by_user: openedMap,
-        viewed_by_user_ids: Array.from(viewedSet),
+        viewed_by_user_ids: updatedViewedList,
       };
+      state.moments[k] = params.expired
+        ? redactExpiredSnapMomentForViewer(nextRecord, params.viewerId)
+        : nextRecord;
     }
   }
   await writeLocalMoments(state);
+
+  if (isSupabaseConfigured && supabase && updatedOpenedMap && updatedViewedList) {
+    try {
+      await supabase
+        .from('moments')
+        .update({
+          snap_opened_at_by_user: updatedOpenedMap,
+          viewed_by_user_ids: updatedViewedList,
+        })
+        .eq('id', params.momentId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
   void broadcastCoupleSync(params.coupleId, {
     kind: 'moment_snap_viewed',
     momentId: params.momentId,
     viewerId: params.viewerId,
-    openedAtIso: nowIso,
+    openedAtIso: openedIsoToSend,
     expired: params.expired,
   });
 }
@@ -917,7 +1439,7 @@ export async function simulateSandboxPromptState(params: {
   mode: 'live_window' | 'late_window' | 'upcoming';
 }): Promise<void> {
   const state = await readLocalMoments();
-  const today = todayUtcDateString();
+  const today = todayLocalDateString();
   const promptKey = `${params.coupleId}:${today}`;
 
   const offsetMs =

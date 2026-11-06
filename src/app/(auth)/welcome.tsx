@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -22,7 +21,6 @@ import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 
 export default function WelcomeScreen() {
-  const router = useRouter();
   const { colors, radii, spacing } = useKeepItTheme();
 
   const signUpWithPassword = useSessionStore((s) => s.signUpWithPassword);
@@ -54,12 +52,7 @@ export default function WelcomeScreen() {
         });
       }
 
-      const nextCouple = useSessionStore.getState().couple;
-      if (nextCouple?.state === 'active') {
-        router.replace('/(tabs)');
-      } else {
-        router.replace('/(auth)/pair');
-      }
+      // NavigationGuard in RootLayout automatically routes authenticated users to /(tabs)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed.');
     } finally {

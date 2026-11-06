@@ -8,6 +8,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { broadcastCoupleSync } from '@/api/realtimeSync';
+import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   DirectMessageRecord,
   FriendRecord,
@@ -17,9 +18,76 @@ import {
 } from '@/types/database';
 
 const LOCAL_FRIENDS_KEY = 'keepit.local_friends.v1';
+const LOCAL_FRIENDS_SEEDED_KEY = 'keepit.local_friends_seeded.v1';
 const LOCAL_MESSAGES_KEY = 'keepit.local_messages.v1';
 const LOCAL_DB_KEY = 'keepit.local_db.v1';
 
+export const KNOWN_DIRECTORY_PROFILES: readonly UserProfile[] = [
+  {
+    id: 'friend_sora_k',
+    display_name: 'Sora Kim',
+    username: 'sora.frames',
+    bio: 'Matcha runs & 35mm street snaps',
+    pronouns: 'she/her',
+    mood_song: 'Shibuya Lo-Fi Rain',
+    banner_color: '#8B5CF6',
+    friend_code: 'SOR-812',
+    is_private: false,
+    dump_mode: false,
+    avatar_path: null,
+    timezone: 'UTC',
+    push_token: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'friend_leo_v',
+    display_name: 'Leo Vance',
+    username: 'leovance',
+    bio: 'Late night vinyl & skate sessions',
+    pronouns: 'he/him',
+    mood_song: 'Midnight Drive',
+    banner_color: '#0EA5E9',
+    friend_code: 'LEO-409',
+    is_private: false,
+    dump_mode: false,
+    avatar_path: null,
+    timezone: 'UTC',
+    push_token: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'friend_maya_s',
+    display_name: 'Maya Lin',
+    username: 'maya.snaps',
+    bio: 'Film camera dumps & late night espresso',
+    pronouns: 'she/her',
+    mood_song: 'Coffee Breath',
+    banner_color: '#EC4899',
+    friend_code: 'MAY-305',
+    is_private: false,
+    dump_mode: true,
+    avatar_path: null,
+    timezone: 'UTC',
+    push_token: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'friend_kai_t',
+    display_name: 'Kai Tanaka',
+    username: 'kaitanaka',
+    bio: 'Golden hour rooftops & synth loops',
+    pronouns: 'they/them',
+    mood_song: 'Sunset Lover',
+    banner_color: '#F59E0B',
+    friend_code: 'KAI-718',
+    is_private: false,
+    dump_mode: false,
+    avatar_path: null,
+    timezone: 'UTC',
+    push_token: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+  },
+] as const;
 export interface FilterPresetMeta {
   id: MomentFilterPreset;
   label: string;
@@ -218,62 +286,121 @@ async function writeLocalFriends(list: FriendRecord[]): Promise<void> {
   await AsyncStorage.setItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
 }
 
+async function readSeededUsersSet(): Promise<Record<string, boolean>> {
+  const raw = await AsyncStorage.getItem(LOCAL_FRIENDS_SEEDED_KEY);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
+async function markUserFriendsSeeded(userId: string): Promise<void> {
+  const map = await readSeededUsersSet();
+  map[userId] = true;
+  await AsyncStorage.setItem(LOCAL_FRIENDS_SEEDED_KEY, JSON.stringify(map));
+}
+
+async function ensureKnownDirectoryInLocalDb(): Promise<Record<string, UserProfile>> {
+  const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
+  const parsed: { users: Record<string, UserProfile>; couples: Record<string, unknown> } = rawDb
+    ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
+    : { users: {}, couples: {} };
+  if (!parsed.users) parsed.users = {};
+
+  let changed = false;
+  for (const demoUser of KNOWN_DIRECTORY_PROFILES) {
+    if (!parsed.users[demoUser.id]) {
+      parsed.users[demoUser.id] = demoUser;
+      changed = true;
+    }
+  }
+  if (changed) {
+    await AsyncStorage.setItem(LOCAL_DB_KEY, JSON.stringify(parsed));
+  }
+  return parsed.users;
+}
+
 export async function fetchFriendsCircle(params: {
   userId: string;
   partner?: UserProfile | null;
 }): Promise<FriendRecord[]> {
+  await ensureKnownDirectoryInLocalDb();
   const stored = await readLocalFriends();
-  const mine = stored.filter((f) => f.user_id === params.userId);
 
-  // Seed default besties so the user immediately has friends they can tag, message, and view on the Friends feed/map
-  if (mine.length === 0) {
+  // Hydrate from Supabase `public.friendships` if available
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data: remoteRows, error: remoteErr } = await supabase
+        .from('friendships')
+        .select('id, user_id, friend_id, relationship, created_at')
+        .eq('user_id', params.userId);
+
+      if (!remoteErr && Array.isArray(remoteRows) && remoteRows.length > 0) {
+        const friendIds = remoteRows.map((r) => String(r.friend_id));
+        const { data: profiles } = await supabase
+          .from('users')
+          .select('*')
+          .in('id', friendIds);
+        const profileMap = new Map<string, UserProfile>(
+          (profiles ?? []).map((p) => [String((p as UserProfile).id), p as UserProfile])
+        );
+        let changed = false;
+        for (const r of remoteRows) {
+          const fProfile = profileMap.get(String(r.friend_id));
+          if (!fProfile) continue;
+          const exists = stored.some(
+            (loc) => loc.user_id === params.userId && loc.friend_id === fProfile.id
+          );
+          if (!exists) {
+            stored.push({
+              id: String(r.id),
+              user_id: params.userId,
+              friend_id: fProfile.id,
+              friend_profile: fProfile,
+              relationship: (r.relationship as 'bestie' | 'friend') ?? 'friend',
+              created_at: String(r.created_at),
+            });
+            changed = true;
+          }
+        }
+        if (changed) {
+          await writeLocalFriends(stored);
+        }
+      }
+    } catch {
+      // Use local friends cache when offline
+    }
+  }
+
+  const mine = stored.filter((f) => f.user_id === params.userId);
+  const seededMap = await readSeededUsersSet();
+
+  // Seed default besties only ONCE per userId so removing them does not re-seed them!
+  if (mine.length === 0 && !seededMap[params.userId]) {
     const nowIso = new Date().toISOString();
     const seeded: FriendRecord[] = [
       {
         id: `fr_${params.userId}_sora`,
         user_id: params.userId,
-        friend_id: 'friend_sora_k',
+        friend_id: KNOWN_DIRECTORY_PROFILES[0].id,
         relationship: 'bestie',
         created_at: nowIso,
-        friend_profile: {
-          id: 'friend_sora_k',
-          display_name: 'Sora Kim',
-          username: 'sora.frames',
-          bio: 'Matcha runs & 35mm street snaps',
-          pronouns: 'she/her',
-          mood_song: 'Shibuya Lo-Fi Rain',
-          banner_color: '#8B5CF6',
-          friend_code: 'SOR-812',
-          avatar_path: null,
-          timezone: 'UTC',
-          push_token: null,
-          created_at: nowIso,
-        },
+        friend_profile: KNOWN_DIRECTORY_PROFILES[0],
       },
       {
         id: `fr_${params.userId}_leo`,
         user_id: params.userId,
-        friend_id: 'friend_leo_v',
+        friend_id: KNOWN_DIRECTORY_PROFILES[1].id,
         relationship: 'friend',
         created_at: nowIso,
-        friend_profile: {
-          id: 'friend_leo_v',
-          display_name: 'Leo Vance',
-          username: 'leovance',
-          bio: 'Late night vinyl & skate sessions',
-          pronouns: 'he/him',
-          mood_song: 'Midnight Drive',
-          banner_color: '#0EA5E9',
-          friend_code: 'LEO-409',
-          avatar_path: null,
-          timezone: 'UTC',
-          push_token: null,
-          created_at: nowIso,
-        },
+        friend_profile: KNOWN_DIRECTORY_PROFILES[1],
       },
     ];
     const merged = [...stored, ...seeded];
     await writeLocalFriends(merged);
+    await markUserFriendsSeeded(params.userId);
     return seeded;
   }
 
@@ -288,19 +415,30 @@ export async function addFriendByHandleOrCode(params: {
 }): Promise<FriendRecord> {
   const cleaned = params.query.trim().replace(/^@/, '');
   if (cleaned.length < 2) {
-    throw new Error('Enter a friend’s @username, name, or friend code.');
+    throw new Error('Enter a friend’s @username, display name, or Friend Code.');
   }
 
   const existing = await readLocalFriends();
   const normalizedLower = cleaned.toLowerCase();
+  const dbUsers = await ensureKnownDirectoryInLocalDb();
 
-  // Check if a known user in local_db matches
-  const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
-  const dbUsers: Record<string, UserProfile> = rawDb
-    ? ((JSON.parse(rawDb) as { users?: Record<string, UserProfile> }).users ?? {})
-    : {};
+  // Check existing friends first so searching an already-added friend's code/handle returns existing
+  const alreadyByQuery = existing.find(
+    (f) =>
+      f.user_id === params.userId &&
+      (f.friend_profile.username?.toLowerCase() === normalizedLower ||
+        f.friend_profile.display_name.toLowerCase() === normalizedLower ||
+        f.friend_profile.friend_code?.toLowerCase() === normalizedLower)
+  );
+  if (alreadyByQuery) {
+    if (params.relationship && alreadyByQuery.relationship !== params.relationship) {
+      alreadyByQuery.relationship = params.relationship;
+      await writeLocalFriends(existing);
+    }
+    return alreadyByQuery;
+  }
 
-  let matchedUser = Object.values(dbUsers).find(
+  let matchedUser: UserProfile | undefined = Object.values(dbUsers).find(
     (u) =>
       u.id !== params.userId &&
       (u.username?.toLowerCase() === normalizedLower ||
@@ -308,25 +446,32 @@ export async function addFriendByHandleOrCode(params: {
         u.friend_code?.toLowerCase() === normalizedLower)
   );
 
-  const nowIso = new Date().toISOString();
+  if (!matchedUser && isSupabaseConfigured && supabase) {
+    try {
+      const { data: remoteMatches } = await supabase
+        .from('users')
+        .select('*')
+        .or(
+          `username.ilike.${cleaned},friend_code.ilike.${cleaned},display_name.ilike.${cleaned}`
+        )
+        .neq('id', params.userId)
+        .limit(1);
+      if (Array.isArray(remoteMatches) && remoteMatches.length > 0) {
+        matchedUser = remoteMatches[0] as UserProfile;
+      }
+    } catch {
+      // Ignore remote lookup failure when offline
+    }
+  }
+
   if (!matchedUser) {
-    const prettyName = cleaned
-      .replace(/[_.-]+/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase());
-    const friendId = `friend_${cleaned.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
-    matchedUser = {
-      id: friendId,
-      display_name: prettyName,
-      username: cleaned.toLowerCase().replace(/[^a-z0-9._]/g, ''),
-      bio: 'On KeepIt · Sharing daily moments',
-      pronouns: 'they/them',
-      banner_color: '#EC4899',
-      friend_code: buildFriendCode(friendId, prettyName),
-      avatar_path: null,
-      timezone: 'UTC',
-      push_token: null,
-      created_at: nowIso,
-    };
+    throw new Error(
+      `No KeepIt user found matching "${params.query.trim()}". Try @sora.frames, @leovance, @maya.snaps, @kaitanaka, or a registered Friend Code.`
+    );
+  }
+
+  if (matchedUser.id === params.userId) {
+    throw new Error('You cannot add yourself to your Friends Circle.');
   }
 
   const already = existing.find(
@@ -336,6 +481,7 @@ export async function addFriendByHandleOrCode(params: {
     return already;
   }
 
+  const nowIso = new Date().toISOString();
   const record: FriendRecord = {
     id: `fr_${params.userId}_${matchedUser.id}_${Date.now().toString(36)}`,
     user_id: params.userId,
@@ -347,6 +493,22 @@ export async function addFriendByHandleOrCode(params: {
 
   existing.push(record);
   await writeLocalFriends(existing);
+  await markUserFriendsSeeded(params.userId);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('friendships').upsert(
+        {
+          user_id: params.userId,
+          friend_id: matchedUser.id,
+          relationship: record.relationship,
+        },
+        { onConflict: 'user_id,friend_id' }
+      );
+    } catch {
+      // Ignore when offline or table unmigrated
+    }
+  }
 
   if (params.coupleId) {
     void broadcastCoupleSync(params.coupleId, { kind: 'friend_added', friend: record });
@@ -359,10 +521,32 @@ export async function removeFriend(params: {
   friendRecordId: string;
 }): Promise<void> {
   const existing = await readLocalFriends();
+  const target = existing.find(
+    (f) =>
+      f.user_id === params.userId &&
+      (f.id === params.friendRecordId || f.friend_id === params.friendRecordId)
+  );
   const next = existing.filter(
-    (f) => !(f.user_id === params.userId && (f.id === params.friendRecordId || f.friend_id === params.friendRecordId))
+    (f) =>
+      !(
+        f.user_id === params.userId &&
+        (f.id === params.friendRecordId || f.friend_id === params.friendRecordId)
+      )
   );
   await writeLocalFriends(next);
+  await markUserFriendsSeeded(params.userId);
+
+  if (target && isSupabaseConfigured && supabase) {
+    try {
+      await supabase
+        .from('friendships')
+        .delete()
+        .eq('user_id', params.userId)
+        .eq('friend_id', target.friend_id);
+    } catch {
+      // Ignore when offline
+    }
+  }
 }
 
 // Direct Messages (DMs)
@@ -385,13 +569,123 @@ export function buildConversationId(userA: string, userB: string): string {
   return [userA, userB].sort().join('::');
 }
 
+export function isSnapDmExpiredForViewer(
+  msg: DirectMessageRecord,
+  viewerId: string,
+  nowMs = Date.now()
+): boolean {
+  if (!msg.snap_once) return false;
+  // If any recipient (anyone other than sender) has completed viewing, it is expired
+  const recipientViewed = (msg.viewed_by_user_ids ?? []).some((id) => id !== msg.sender_id);
+  if (recipientViewed) return true;
+
+  const openedMap = msg.snap_opened_at_by_user ?? {};
+  for (const [openerId, openedIso] of Object.entries(openedMap)) {
+    if (openerId === msg.sender_id) continue;
+    const openedMs = new Date(openedIso).getTime();
+    const durationMs = (msg.snap_duration_seconds ?? 15) * 1000;
+    if (Number.isFinite(openedMs) && nowMs >= openedMs + durationMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function getSnapDmRemainingSeconds(
+  msg: DirectMessageRecord,
+  viewerId: string,
+  nowMs = Date.now()
+): number | null {
+  if (!msg.snap_once || viewerId === msg.sender_id) return null;
+  if (isSnapDmExpiredForViewer(msg, viewerId, nowMs)) return 0;
+  const openedIso = msg.snap_opened_at_by_user?.[viewerId];
+  if (!openedIso) return null;
+  const openedMs = new Date(openedIso).getTime();
+  if (!Number.isFinite(openedMs)) return null;
+  const durationSec = msg.snap_duration_seconds ?? 15;
+  const elapsedSec = Math.floor((nowMs - openedMs) / 1000);
+  return Math.max(0, durationSec - elapsedSec);
+}
+
+export function redactExpiredSnapDm(
+  msg: DirectMessageRecord,
+  viewerId: string,
+  nowMs = Date.now()
+): DirectMessageRecord {
+  if (!isSnapDmExpiredForViewer(msg, viewerId, nowMs)) {
+    return msg;
+  }
+  const viewedSet = new Set(msg.viewed_by_user_ids ?? []);
+  if (viewerId !== msg.sender_id) {
+    viewedSet.add(viewerId);
+  } else if (msg.recipient_id) {
+    viewedSet.add(msg.recipient_id);
+  }
+  return {
+    ...msg,
+    viewed_by_user_ids: Array.from(viewedSet),
+    viewed_at: msg.viewed_at ?? new Date(nowMs).toISOString(),
+    text: '',
+    media_uri: null,
+  };
+}
+
 export async function fetchConversationMessages(params: {
   userId: string;
   peerId: string;
   peerName: string;
 }): Promise<DirectMessageRecord[]> {
+  if (!params.userId || !params.peerId) {
+    throw new Error('Select a conversation participant first.');
+  }
   const all = await readLocalMessages();
   const convId = buildConversationId(params.userId, params.peerId);
+  let mutated = false;
+
+  // Hydrate from Supabase `public.direct_messages` when available
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data: remoteMsgs, error: remoteErr } = await supabase
+        .from('direct_messages')
+        .select('*')
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (!remoteErr && Array.isArray(remoteMsgs)) {
+        for (const rawMsg of remoteMsgs) {
+          const remoteRec = rawMsg as DirectMessageRecord;
+          if (!remoteRec?.id) continue;
+          const existingIdx = all.findIndex((m) => m.id === remoteRec.id);
+          if (existingIdx >= 0) {
+            all[existingIdx] = { ...all[existingIdx], ...remoteRec };
+          } else {
+            all.push(remoteRec);
+          }
+          mutated = true;
+        }
+      }
+    } catch {
+      // Use local messages cache when offline
+    }
+  }
+
+  // Scrub any expired Snap Once DMs in local storage
+  const nowMs = Date.now();
+  for (let i = 0; i < all.length; i += 1) {
+    const msg = all[i];
+    if (isSnapDmExpiredForViewer(msg, params.userId, nowMs)) {
+      if (msg.text !== '' || msg.media_uri !== null) {
+        all[i] = redactExpiredSnapDm(msg, params.userId, nowMs);
+        mutated = true;
+      }
+    }
+  }
+
+  if (mutated) {
+    await writeLocalMessages(all);
+  }
+
   const filtered = all.filter(
     (m) =>
       m.conversation_id === convId ||
@@ -399,7 +693,9 @@ export async function fetchConversationMessages(params: {
       (m.sender_id === params.peerId && m.recipient_id === params.userId)
   );
 
-  if (filtered.length === 0) {
+  // Only seed a welcome message for the built-in demo friends (Sora & Leo) so real conversations can show empty state
+  const isDemoPeer = params.peerId === 'friend_sora_k' || params.peerId === 'friend_leo_v';
+  if (filtered.length === 0 && isDemoPeer) {
     const welcomeMsg: DirectMessageRecord = {
       id: `dm_seed_${convId}`,
       conversation_id: convId,
@@ -408,6 +704,8 @@ export async function fetchConversationMessages(params: {
       recipient_id: params.userId,
       text: `Hey! Can’t wait to see your #KeepIt Moment today ✨`,
       snap_once: false,
+      snap_duration_seconds: 15,
+      snap_opened_at_by_user: {},
       viewed_by_user_ids: [],
       reactions: {},
       created_at: new Date(Date.now() - 12 * 60_000).toISOString(),
@@ -417,7 +715,9 @@ export async function fetchConversationMessages(params: {
     return [welcomeMsg];
   }
 
-  return filtered.sort((a, b) => (a.created_at > b.created_at ? 1 : -1));
+  return filtered
+    .map((m) => redactExpiredSnapDm(m, params.userId, nowMs))
+    .sort((a, b) => (a.created_at > b.created_at ? 1 : -1));
 }
 
 export async function sendDirectMessage(params: {
@@ -448,6 +748,8 @@ export async function sendDirectMessage(params: {
     reply_moment_id: params.replyMomentId ?? null,
     reply_moment_preview: params.replyMomentPreview ?? null,
     snap_once: Boolean(params.snapOnce),
+    snap_duration_seconds: 15,
+    snap_opened_at_by_user: {},
     viewed_by_user_ids: [],
     reactions: {},
     created_at: new Date().toISOString(),
@@ -457,9 +759,33 @@ export async function sendDirectMessage(params: {
   const next = [...all, record].slice(-300);
   await writeLocalMessages(next);
 
-  if (params.coupleId) {
-    void broadcastCoupleSync(params.coupleId, { kind: 'dm_upsert', message: record });
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('direct_messages').upsert(
+        {
+          id: record.id,
+          conversation_id: record.conversation_id,
+          sender_id: record.sender_id,
+          sender_name: record.sender_name,
+          recipient_id: record.recipient_id,
+          text: record.text,
+          media_uri: record.media_uri,
+          reply_moment_id: record.reply_moment_id,
+          reply_moment_preview: record.reply_moment_preview,
+          snap_once: record.snap_once,
+          viewed_by_user_ids: record.viewed_by_user_ids,
+          reactions: record.reactions,
+          created_at: record.created_at,
+        },
+        { onConflict: 'id' }
+      );
+    } catch {
+      // Ignore when offline
+    }
   }
+
+  const syncChannelKey = params.coupleId || `conv_${convId}`;
+  void broadcastCoupleSync(syncChannelKey, { kind: 'dm_upsert', message: record });
   return record;
 }
 
@@ -470,23 +796,44 @@ export async function toggleDirectMessageReaction(params: {
   emoji: string;
 }): Promise<void> {
   const all = await readLocalMessages();
+  let nextEmoji: string | null = params.emoji;
+  let updatedReactions: Record<string, string> | null = null;
+  let convId = '';
+
   const next = all.map((m) => {
     if (m.id !== params.messageId) return m;
+    convId = m.conversation_id;
     const reactions = { ...(m.reactions ?? {}) };
     if (reactions[params.userId] === params.emoji) {
       delete reactions[params.userId];
+      nextEmoji = null;
     } else {
       reactions[params.userId] = params.emoji;
+      nextEmoji = params.emoji;
     }
+    updatedReactions = reactions;
     return { ...m, reactions };
   });
   await writeLocalMessages(next);
-  if (params.coupleId) {
-    void broadcastCoupleSync(params.coupleId, {
+
+  if (isSupabaseConfigured && supabase && updatedReactions) {
+    try {
+      await supabase
+        .from('direct_messages')
+        .update({ reactions: updatedReactions })
+        .eq('id', params.messageId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
+  const syncChannelKey = params.coupleId || (convId ? `conv_${convId}` : null);
+  if (syncChannelKey) {
+    void broadcastCoupleSync(syncChannelKey, {
       kind: 'dm_reaction',
       messageId: params.messageId,
       userId: params.userId,
-      emoji: params.emoji,
+      emoji: nextEmoji,
     });
   }
 }
@@ -495,26 +842,72 @@ export async function markSnapDirectMessageViewed(params: {
   coupleId?: string | null;
   messageId: string;
   viewerId: string;
+  expired?: boolean;
 }): Promise<void> {
   const all = await readLocalMessages();
   const nowIso = new Date().toISOString();
+  let openedAtIso = nowIso;
+  const isExpired = params.expired !== false;
+  let convId = '';
+  let updatedViewedIds: string[] | null = null;
+  let senderGuardTriggered = false;
+
   const next = all.map((m) => {
     if (m.id !== params.messageId) return m;
+    // Never allow the sender's own tap/preview to consume or expire the recipient's Snap Once DM
+    if (m.sender_id === params.viewerId) {
+      senderGuardTriggered = true;
+      return m;
+    }
+    convId = m.conversation_id;
+    const openedMap = { ...(m.snap_opened_at_by_user ?? {}) };
+    if (!openedMap[params.viewerId]) {
+      openedMap[params.viewerId] = nowIso;
+    } else {
+      openedAtIso = openedMap[params.viewerId];
+    }
     const viewed = new Set(m.viewed_by_user_ids ?? []);
-    viewed.add(params.viewerId);
+    if (isExpired) {
+      viewed.add(params.viewerId);
+    }
+    updatedViewedIds = Array.from(viewed);
     return {
       ...m,
-      viewed_by_user_ids: Array.from(viewed),
-      viewed_at: nowIso,
+      snap_opened_at_by_user: openedMap,
+      viewed_by_user_ids: updatedViewedIds,
+      viewed_at: isExpired ? nowIso : (m.viewed_at ?? null),
+      text: isExpired ? '' : m.text,
+      media_uri: isExpired ? null : m.media_uri,
     };
   });
+
+  if (senderGuardTriggered) return;
   await writeLocalMessages(next);
-  if (params.coupleId) {
-    void broadcastCoupleSync(params.coupleId, {
+
+  if (isSupabaseConfigured && supabase && updatedViewedIds) {
+    try {
+      await supabase
+        .from('direct_messages')
+        .update({
+          snap_opened_at: openedAtIso,
+          viewed_by_user_ids: updatedViewedIds,
+          ...(isExpired ? { viewed_at: nowIso, text: '', media_uri: null } : {}),
+        })
+        .eq('id', params.messageId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
+  const syncChannelKey = params.coupleId || (convId ? `conv_${convId}` : null);
+  if (syncChannelKey) {
+    void broadcastCoupleSync(syncChannelKey, {
       kind: 'dm_snap_viewed',
       messageId: params.messageId,
       viewerId: params.viewerId,
+      openedAtIso,
       viewedAtIso: nowIso,
+      expired: isExpired,
     });
   }
 }

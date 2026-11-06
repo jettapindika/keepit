@@ -8,13 +8,19 @@ import { ThemeMode } from '@/theme/tokens';
 import { CoupleRecord, UserProfile } from '@/types/database';
 
 const SESSION_STORAGE_KEY = 'keepit.session.v1';
-const LOCAL_ACCOUNTS_KEY = 'keepit.local_accounts.v1';
+const LEGACY_LOCAL_ACCOUNTS_KEY = 'keepit.local_accounts.v1';
 
-interface LocalAccountEntry {
-  userId: string;
-  email: string;
-  password: string;
-  displayName: string;
+function buildSoloFallbackCouple(userId: string, createdAt?: string): CoupleRecord {
+  return {
+    id: `solo_${userId}`,
+    user_a_id: userId,
+    user_b_id: null,
+    invite_code: '',
+    invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    state: 'active',
+    paired_at: null,
+    created_at: createdAt ?? new Date().toISOString(),
+  };
 }
 
 interface PersistedSessionSlice {
@@ -72,18 +78,20 @@ async function persistSessionSlice(slice: PersistedSessionSlice): Promise<void> 
   await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(slice));
 }
 
-async function readLocalAccounts(): Promise<Record<string, LocalAccountEntry>> {
-  const raw = await AsyncStorage.getItem(LOCAL_ACCOUNTS_KEY);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, LocalAccountEntry>;
-  } catch {
-    return {};
-  }
-}
-
-async function writeLocalAccounts(accounts: Record<string, LocalAccountEntry>): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(accounts));
+async function clearAccountSpecificCacheKeys(): Promise<void> {
+  const cacheKeys = [
+    LEGACY_LOCAL_ACCOUNTS_KEY,
+    'keepit.local_moments.v1',
+    'keepit.local_statuses.v1',
+    'keepit.local_locations.v1',
+    'keepit.local_events.v1',
+    'keepit.local_messages.v1',
+    'keepit.local_friends.v1',
+    'keepit.local_friends_seeded.v1',
+    'keepit.widget_snapshot.v1',
+    'keepit.widget_pinned.v1',
+  ];
+  await Promise.all(cacheKeys.map((k) => AsyncStorage.removeItem(k).catch(() => {})));
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -99,6 +107,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   hydrate: async () => {
     try {
+      await AsyncStorage.removeItem(LEGACY_LOCAL_ACCOUNTS_KEY).catch(() => {});
       const raw = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
       const saved: Partial<PersistedSessionSlice> | null = raw ? JSON.parse(raw) : null;
 
@@ -129,16 +138,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
           if (effectiveProfile) {
             const pairing = await fetchPairingSnapshot(effectiveProfile.id);
-            const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
-              id: `solo_${effectiveProfile.id}`,
-              user_a_id: effectiveProfile.id,
-              user_b_id: null,
-              invite_code: '',
-              invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-              state: 'active',
-              paired_at: null,
-              created_at: effectiveProfile.created_at,
-            };
+            const soloFallbackCouple: CoupleRecord =
+              pairing.couple ??
+              buildSoloFallbackCouple(effectiveProfile.id, effectiveProfile.created_at);
             set({
               user: effectiveProfile,
               email: session.user.email ?? saved?.email ?? null,
@@ -153,16 +155,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       if (saved?.user) {
         const pairing = await fetchPairingSnapshot(saved.user.id);
-        const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
-          id: `solo_${saved.user.id}`,
-          user_a_id: saved.user.id,
-          user_b_id: null,
-          invite_code: '',
-          invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-          state: 'active',
-          paired_at: null,
-          created_at: saved.user.created_at,
-        };
+        const soloFallbackCouple: CoupleRecord =
+          pairing.couple ?? buildSoloFallbackCouple(saved.user.id, saved.user.created_at);
         set({
           user: saved.user,
           email: saved.email ?? null,
@@ -196,7 +190,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       throw new Error('Passwords do not match.');
     }
 
-    let userId = `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
+    let userId = '';
+    const prevUserId = get().user?.id;
 
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase.auth.signUp({
@@ -211,40 +206,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (/already registered|already exists/i.test(error.message)) {
           throw new Error('An account with this email already exists. Sign in instead.');
         }
-        if (!/rate limit|security purposes|sending|confirmation/i.test(error.message)) {
-          throw new Error(error.message);
+        if (/rate limit|too many requests|security purposes/i.test(error.message)) {
+          throw new Error('Too many signup attempts. Please wait a moment and try again.');
         }
+        throw new Error(error.message || 'Could not create account.');
       }
 
-      if (data?.user?.id) {
+      if (!data?.user?.id) {
+        throw new Error('Account creation failed. Please check your email and try again.');
+      }
+
+      if (!data.session) {
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+          email: cleanedEmail,
+          password,
+        });
+        if (signInErr && /Email not confirmed/i.test(signInErr.message)) {
+          throw new Error(
+            'Please check your email inbox and confirm your address before signing in.'
+          );
+        }
+        if (signInData?.user?.id) {
+          userId = signInData.user.id;
+        } else {
+          userId = data.user.id;
+        }
+      } else {
         userId = data.user.id;
       }
+    } else {
+      userId = `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
     }
 
-    const accounts = await readLocalAccounts();
-    accounts[cleanedEmail] = {
-      userId,
-      email: cleanedEmail,
-      password,
-      displayName: cleanedName,
-    };
-    await writeLocalAccounts(accounts);
+    if (prevUserId && prevUserId !== userId) {
+      await clearAccountSpecificCacheKeys();
+    } else {
+      await AsyncStorage.removeItem(LEGACY_LOCAL_ACCOUNTS_KEY).catch(() => {});
+    }
 
     const profile = await upsertUserProfile({
       userId,
       displayName: cleanedName,
     });
     const pairing = await fetchPairingSnapshot(userId);
-    const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
-      id: `solo_${userId}`,
-      user_a_id: userId,
-      user_b_id: null,
-      invite_code: '',
-      invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-      state: 'active',
-      paired_at: null,
-      created_at: profile.created_at,
-    };
+    const soloFallbackCouple: CoupleRecord =
+      pairing.couple ?? buildSoloFallbackCouple(userId, profile.created_at);
 
     await persistSessionSlice({
       user: profile,
@@ -272,10 +278,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       throw new Error('Enter your password (at least 6 characters).');
     }
 
-    const accounts = await readLocalAccounts();
-    const localAccount = accounts[cleanedEmail];
-    let userId = localAccount?.userId ?? `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
-    let displayName = localAccount?.displayName ?? cleanedEmail.split('@')[0] ?? 'Partner';
+    let userId = '';
+    let displayName = cleanedEmail.split('@')[0] ?? 'KeepIt User';
+    const prevUserId = get().user?.id;
 
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -283,24 +288,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         password,
       });
 
-      if (!error && data.user) {
-        userId = data.user.id;
-        const metaName =
-          typeof data.user.user_metadata?.display_name === 'string'
-            ? data.user.user_metadata.display_name
-            : null;
-        if (metaName) displayName = metaName;
-      } else if (localAccount) {
-        if (localAccount.password !== password) {
-          throw new Error('Incorrect email or password.');
+      if (error || !data?.user) {
+        if (error && /Email not confirmed/i.test(error.message)) {
+          throw new Error('Please confirm your email address before signing in.');
         }
-        userId = localAccount.userId;
-        displayName = localAccount.displayName;
-      } else if (error && !/Email not confirmed/i.test(error.message)) {
+        if (error && /rate limit|too many requests/i.test(error.message)) {
+          throw new Error('Too many sign-in attempts. Please wait a moment and try again.');
+        }
         throw new Error('Incorrect email or password.');
       }
-    } else if (localAccount && localAccount.password !== password) {
-      throw new Error('Incorrect email or password.');
+
+      userId = data.user.id;
+      const metaName =
+        typeof data.user.user_metadata?.display_name === 'string'
+          ? data.user.user_metadata.display_name
+          : null;
+      if (metaName) displayName = metaName;
+    } else {
+      userId = `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
+    }
+
+    if (prevUserId && prevUserId !== userId) {
+      await clearAccountSpecificCacheKeys();
+    } else {
+      await AsyncStorage.removeItem(LEGACY_LOCAL_ACCOUNTS_KEY).catch(() => {});
     }
 
     const profile = await upsertUserProfile({
@@ -308,16 +319,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       displayName,
     });
     const pairing = await fetchPairingSnapshot(userId);
-    const soloFallbackCouple: CoupleRecord = pairing.couple ?? {
-      id: `solo_${userId}`,
-      user_a_id: userId,
-      user_b_id: null,
-      invite_code: '',
-      invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-      state: 'active',
-      paired_at: null,
-      created_at: profile.created_at,
-    };
+    const soloFallbackCouple: CoupleRecord =
+      pairing.couple ?? buildSoloFallbackCouple(userId, profile.created_at);
 
     await persistSessionSlice({
       user: profile,
@@ -376,7 +379,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const currentUser = get().user;
     if (!currentUser) return;
     const pairing = await fetchPairingSnapshot(currentUser.id);
-    set({ couple: pairing.couple, partner: pairing.partner });
+    const effectiveCouple: CoupleRecord =
+      pairing.couple ?? buildSoloFallbackCouple(currentUser.id, currentUser.created_at);
+    set({ couple: effectiveCouple, partner: pairing.partner });
   },
 
   setThemePreference: async (mode: ThemeMode) => {
@@ -420,6 +425,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (isSupabaseConfigured && supabase) {
       await supabase.auth.signOut().catch(() => {});
     }
+    await clearAccountSpecificCacheKeys();
     await persistSessionSlice({
       user: null,
       email: null,
@@ -439,17 +445,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const themePreference = get().themePreference;
     const motionEnabled = get().motionEnabled;
     const motionSpeed = get().motionSpeed;
-    const keysToWipe = [
-      SESSION_STORAGE_KEY,
-      LOCAL_ACCOUNTS_KEY,
-      'keepit.local_db.v1',
-      'keepit.local_moments.v1',
-      'keepit.local_statuses.v1',
-      'keepit.local_locations.v1',
-      'keepit.local_events.v1',
-      'keepit.widget_snapshot.v1',
-    ];
-    await Promise.all(keysToWipe.map((k) => AsyncStorage.removeItem(k)));
+    await clearAccountSpecificCacheKeys();
+    await Promise.all([
+      AsyncStorage.removeItem(SESSION_STORAGE_KEY).catch(() => {}),
+      AsyncStorage.removeItem('keepit.local_db.v1').catch(() => {}),
+    ]);
     await persistSessionSlice({
       user: null,
       email: null,

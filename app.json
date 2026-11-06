@@ -2,7 +2,7 @@
   "expo": {
     "name": "KeepIt",
     "slug": "keepit",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "keepit",
@@ -12,12 +12,19 @@
       "icon": "./assets/expo.icon",
       "infoPlist": {
         "NSCameraUsageDescription": "KeepIt uses your front and back cameras together to capture your daily Moment.",
+        "NSMicrophoneUsageDescription": "KeepIt uses your microphone when recording 15-second Dual Video Moments.",
         "NSLocationWhenInUseUsageDescription": "KeepIt shares your location with your partner only when you opt into Live or On-Moment sharing."
       }
     },
     "android": {
       "package": "com.keepit.couples",
-      "versionCode": 1,
+      "versionCode": 2,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

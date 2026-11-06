@@ -45,8 +45,10 @@ export function buildWidgetSnapshotPayload(params: {
   now?: Date;
 }): WidgetSnapshotPayload {
   const now = params.now ?? new Date();
-  const partnerMoment = params.momentBundle?.partner ?? null;
-  const myMoment = params.momentBundle?.mine ?? null;
+  const rawPartnerMoment = params.momentBundle?.partner ?? null;
+  const rawMyMoment = params.momentBundle?.mine ?? null;
+  const partnerMoment = rawPartnerMoment?.snap_once ? null : rawPartnerMoment;
+  const myMoment = rawMyMoment?.snap_once ? null : rawMyMoment;
   const momentLocked = Boolean(partnerMoment?.locked);
 
   const activePartnerStatus =
@@ -170,9 +172,10 @@ export function useWidgetSync({
       return;
     }
     lastSyncedSignatureRef.current = null;
-    setCachedSnapshot(null);
-    setLastSyncedAt(null);
-    void clearWidgetSnapshot();
+    void clearWidgetSnapshot().then(() => {
+      setCachedSnapshot(null);
+      setLastSyncedAt(null);
+    });
   }, [coupleId]);
 
   // Sync automatically whenever partner Moment, lock state, or status changes
@@ -228,8 +231,8 @@ export function useWidgetSync({
   }, [coupleId, partnerName, momentBundle, statusBundle]);
 
   return {
-    snapshot: liveSnapshot ?? cachedSnapshot,
-    lastSyncedAt,
+    snapshot: coupleId ? (liveSnapshot ?? cachedSnapshot) : null,
+    lastSyncedAt: coupleId ? lastSyncedAt : null,
     forceSync,
   };
 }

@@ -55,10 +55,17 @@ export default function PairScreen() {
   const [joining, setJoining] = useState(false);
   const [copiedNotice, setCopiedNotice] = useState(false);
 
-  const [partnerCode, setPartnerCode] = useState('');
+  const initialPrefillCode =
+    typeof params.code === 'string' && params.code.trim().length > 0
+      ? normalizeInviteCode(params.code).slice(0, 6)
+      : pendingInviteCode && pendingInviteCode.trim().length > 0
+        ? normalizeInviteCode(pendingInviteCode).slice(0, 6)
+        : '';
+
+  const [partnerCode, setPartnerCode] = useState(initialPrefillCode);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
-  const [remainingLabel, setRemainingLabel] = useState('');
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const loadInvite = useCallback(
     async (forceRefresh = false) => {
@@ -70,7 +77,6 @@ export default function PairScreen() {
       try {
         const record = await createOrRefreshInvite(user.id, forceRefresh);
         setInviteRecord(record);
-        setRemainingLabel(formatRemainingTime(record.invite_expires_at));
         if (record.state === 'active') {
           await useSessionStore.getState().refreshPairing();
           router.replace('/(tabs)');
@@ -86,30 +92,48 @@ export default function PairScreen() {
   );
 
   useEffect(() => {
-    void loadInvite(false);
-  }, [loadInvite]);
+    if (!user) return;
+    let cancelled = false;
+    void createOrRefreshInvite(user.id, false)
+      .then(async (record) => {
+        if (cancelled) return;
+        setInviteRecord(record);
+        if (record.state === 'active') {
+          await useSessionStore.getState().refreshPairing();
+          router.replace('/(tabs)');
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setInviteError(err instanceof Error ? err.message : 'Could not generate invite code.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingInvite(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, router]);
 
-  // Pre-fill partner code when opened from keepit://pair?code=XXXXXX deep link
   useEffect(() => {
-    const raw =
-      typeof params.code === 'string' && params.code.trim().length > 0
-        ? params.code
-        : pendingInviteCode;
-    if (raw && raw.trim().length > 0) {
-      setPartnerCode(normalizeInviteCode(raw).slice(0, 6));
-      if (pendingInviteCode) setPendingInviteCode(null);
+    if (pendingInviteCode) {
+      setPendingInviteCode(null);
     }
-  }, [params.code, pendingInviteCode, setPendingInviteCode]);
+  }, [pendingInviteCode, setPendingInviteCode]);
 
   // Live countdown ticker for 24h invite expiry
   useEffect(() => {
     if (!inviteRecord?.invite_expires_at) return;
-    setRemainingLabel(formatRemainingTime(inviteRecord.invite_expires_at));
     const timer = setInterval(() => {
-      setRemainingLabel(formatRemainingTime(inviteRecord.invite_expires_at));
+      setNowTick(Date.now());
     }, 30_000);
     return () => clearInterval(timer);
   }, [inviteRecord?.invite_expires_at]);
+
+  void nowTick;
+  const remainingLabel = inviteRecord?.invite_expires_at
+    ? formatRemainingTime(inviteRecord.invite_expires_at)
+    : '';
 
   // Host Realtime invite room so a partner on another phone can discover & redeem this code live
   useEffect(() => {

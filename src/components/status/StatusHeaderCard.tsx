@@ -41,14 +41,14 @@ export function StatusHeaderCard({
   const { colors, radii, spacing } = useKeepItTheme();
   const motionEnabled = useSessionStore((s) => s.motionEnabled);
   const motionSpeed = useSessionStore((s) => s.motionSpeed);
-  const [, setTick] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const nudgeScale = useSharedValue(1);
   const myRowScale = useSharedValue(1);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setTick((t) => t + 1);
+      setNowMs(Date.now());
     }, 30_000);
     return () => clearInterval(interval);
   }, []);
@@ -62,13 +62,12 @@ export function StatusHeaderCard({
   }));
 
   const partnerActive =
-    partnerStatus && new Date(partnerStatus.expires_at).getTime() > Date.now()
+    partnerStatus && new Date(partnerStatus.expires_at).getTime() > nowMs
       ? partnerStatus
       : null;
 
   const myActive =
-    myStatus && new Date(myStatus.expires_at).getTime() > Date.now() ? myStatus : null;
-
+    myStatus && new Date(myStatus.expires_at).getTime() > nowMs ? myStatus : null;
   const incomingNudge =
     latestNudge && latestNudge.actor_id !== currentUserId ? latestNudge : null;
 

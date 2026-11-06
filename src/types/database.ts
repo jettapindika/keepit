@@ -95,6 +95,8 @@ export interface DirectMessageRecord {
   reply_moment_id?: string | null;
   reply_moment_preview?: string | null;
   snap_once?: boolean;
+  snap_duration_seconds?: number;
+  snap_opened_at_by_user?: Record<string, string>;
   viewed_by_user_ids?: string[];
   viewed_at?: string | null;
   reactions?: Record<string, string>; // userId -> emoji

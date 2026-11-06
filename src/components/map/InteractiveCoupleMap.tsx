@@ -2,8 +2,8 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  GestureResponderEvent,
   LayoutChangeEvent,
-  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
@@ -170,13 +170,12 @@ export function InteractiveCoupleMap({
   const [customCenter, setCustomCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<SelectedPinId | null>(null);
 
-  const panOriginRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const latestPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  useEffect(() => {
-    latestPanRef.current = pan;
-  }, [pan]);
-
+  const touchStartRef = useRef<{ pageX: number; pageY: number; baseX: number; baseY: number }>({
+    pageX: 0,
+    pageY: 0,
+    baseX: 0,
+    baseY: 0,
+  });
   const myScale = useSharedValue(0);
   const partnerScale = useSharedValue(0);
   const veilOpacity = useSharedValue(0);
@@ -239,21 +238,29 @@ export function InteractiveCoupleMap({
     opacity: veilOpacity.get(),
   }));
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gesture) =>
-        Math.abs(gesture.dx) > 5 || Math.abs(gesture.dy) > 5,
-      onPanResponderGrant: () => {
-        panOriginRef.current = latestPanRef.current;
-      },
-      onPanResponderMove: (_, gesture) => {
-        const nextX = clamp(panOriginRef.current.x + gesture.dx, -900, 900);
-        const nextY = clamp(panOriginRef.current.y + gesture.dy, -900, 900);
-        setPan({ x: nextX, y: nextY });
-      },
-    })
-  ).current;
+  const handleMoveShouldSetResponder = (e: GestureResponderEvent): boolean => {
+    const dx = e.nativeEvent.pageX - touchStartRef.current.pageX;
+    const dy = e.nativeEvent.pageY - touchStartRef.current.pageY;
+    return Math.abs(dx) > 5 || Math.abs(dy) > 5;
+  };
+
+  const handleTouchStart = (e: GestureResponderEvent) => {
+    touchStartRef.current = {
+      pageX: e.nativeEvent.pageX,
+      pageY: e.nativeEvent.pageY,
+      baseX: pan.x,
+      baseY: pan.y,
+    };
+  };
+
+  const handleResponderMove = (e: GestureResponderEvent) => {
+    const dx = e.nativeEvent.pageX - touchStartRef.current.pageX;
+    const dy = e.nativeEvent.pageY - touchStartRef.current.pageY;
+    setPan({
+      x: clamp(touchStartRef.current.baseX + dx, -900, 900),
+      y: clamp(touchStartRef.current.baseY + dy, -900, 900),
+    });
+  };
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const nextWidth = Math.max(260, Math.round(event.nativeEvent.layout.width));
@@ -537,7 +544,9 @@ export function InteractiveCoupleMap({
   return (
     <View
       onLayout={handleLayout}
-      {...panResponder.panHandlers}
+      onTouchStart={handleTouchStart}
+      onMoveShouldSetResponder={handleMoveShouldSetResponder}
+      onResponderMove={handleResponderMove}
       accessibilityLabel={`Interactive live map for ${myName}, ${partnerName}, and friends`}
       style={[
         styles.canvas,

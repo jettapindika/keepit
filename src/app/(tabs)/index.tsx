@@ -45,8 +45,7 @@ export default function HomeScreen() {
   const couple = useSessionStore((s) => s.couple);
 
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
-  const [activeTab, setActiveTab] = useState<HomeViewTab>(isPartnerPaired ? 'partner' : 'mine');
-  const [hasAutoSelectedTab, setHasAutoSelectedTab] = useState(false);
+  const [selectedTab, setSelectedTab] = useState<HomeViewTab | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [nudging, setNudging] = useState(false);
   const [nudgeFeedback, setNudgeFeedback] = useState<string | null>(null);
@@ -155,16 +154,19 @@ export default function HomeScreen() {
   const bothUnlocked = Boolean(myMoment && partnerMoment && !partnerMoment.locked);
   const streakCount = bundle?.streak?.current_count ?? 0;
 
-  useEffect(() => {
-    if (hasAutoSelectedTab || !bundle) return;
-    if (myMoment && !partnerMoment) {
-      setActiveTab('mine');
-      setHasAutoSelectedTab(true);
-    } else if (partnerMoment) {
-      setActiveTab('partner');
-      setHasAutoSelectedTab(true);
-    }
-  }, [bundle, hasAutoSelectedTab, myMoment, partnerMoment]);
+  const defaultTab: HomeViewTab =
+    myMoment && !partnerMoment
+      ? 'mine'
+      : partnerMoment
+        ? 'partner'
+        : isPartnerPaired
+          ? 'partner'
+          : 'mine';
+  const activeTab: HomeViewTab = selectedTab ?? defaultTab;
+
+  const nonSnapMyMoment = myMomentsToday.find((m) => !m.snap_once) ?? null;
+  const nonSnapPartnerMoment =
+    partnerMomentsToday.find((pm) => !pm.locked && !pm.snap_once) ?? null;
 
   const refreshMoments = async () => {
     if (!couple?.id) return;
@@ -248,7 +250,7 @@ export default function HomeScreen() {
         partnerName,
       });
       await refreshMoments();
-      setActiveTab('partner');
+      setSelectedTab('partner');
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not load partner Moment.');
     } finally {
@@ -257,46 +259,48 @@ export default function HomeScreen() {
   };
 
   const unlockedPartnerAsRecord: MomentRecord | null =
-    bothUnlocked && partnerMoment && couple && bundle
+    bothUnlocked && nonSnapPartnerMoment && couple && bundle
       ? {
-          id: partnerMoment.id,
+          id: nonSnapPartnerMoment.id,
           couple_id: couple.id,
           prompt_id: bundle.prompt.id,
-          user_id: partnerMoment.user_id,
-          author_name: partnerMoment.author_name ?? partnerName,
-          author_username: partnerMoment.author_username,
-          author_avatar: partnerMoment.author_avatar,
-          back_photo_path: partnerMoment.back_photo_path ?? '',
-          front_photo_path: partnerMoment.front_photo_path ?? '',
-          back_blurhash: partnerMoment.back_blurhash || DEFAULT_WARM_BLURHASH,
+          user_id: nonSnapPartnerMoment.user_id,
+          author_name: nonSnapPartnerMoment.author_name ?? partnerName,
+          author_username: nonSnapPartnerMoment.author_username,
+          author_avatar: nonSnapPartnerMoment.author_avatar,
+          back_photo_path: nonSnapPartnerMoment.back_photo_path ?? '',
+          front_photo_path: nonSnapPartnerMoment.front_photo_path ?? '',
+          back_blurhash: nonSnapPartnerMoment.back_blurhash || DEFAULT_WARM_BLURHASH,
           collage_photo_path: null,
-          caption: partnerMoment.caption,
-          captured_at: partnerMoment.captured_at,
-          posted_at: partnerMoment.posted_at,
-          late_by_seconds: partnerMoment.late_by_seconds,
-          is_late: partnerMoment.is_late,
-          retake_count: partnerMoment.retake_count,
-          daily_index: partnerMoment.daily_index,
-          lat: partnerMoment.lat ?? null,
-          lng: partnerMoment.lng ?? null,
-          location_label: partnerMoment.location_label,
-          music_track: partnerMoment.music_track,
-          tagged_users: partnerMoment.tagged_users,
-          overlays: partnerMoment.overlays,
-          visibility: partnerMoment.visibility,
-          snap_once: partnerMoment.snap_once,
-          snap_duration_seconds: partnerMoment.snap_duration_seconds,
-          viewed_by_user_ids: partnerMoment.viewed_by_user_ids,
-          snap_opened_at_by_user: partnerMoment.snap_opened_at_by_user,
-          comments: partnerMoment.comments,
-          reactions: partnerMoment.reactions,
-          watermark_tag: partnerMoment.watermark_tag ?? '#KeepIt',
-          media_type: partnerMoment.media_type,
-          video_uri: partnerMoment.video_uri,
-          video_duration_seconds: partnerMoment.video_duration_seconds,
-          filter_preset: partnerMoment.filter_preset,
-          back_photo_url: partnerMoment.back_photo_url ?? partnerMoment.back_photo_path,
-          front_photo_url: partnerMoment.front_photo_url ?? partnerMoment.front_photo_path,
+          caption: nonSnapPartnerMoment.caption,
+          captured_at: nonSnapPartnerMoment.captured_at,
+          posted_at: nonSnapPartnerMoment.posted_at,
+          late_by_seconds: nonSnapPartnerMoment.late_by_seconds,
+          is_late: nonSnapPartnerMoment.is_late,
+          retake_count: nonSnapPartnerMoment.retake_count,
+          daily_index: nonSnapPartnerMoment.daily_index,
+          lat: nonSnapPartnerMoment.lat ?? null,
+          lng: nonSnapPartnerMoment.lng ?? null,
+          location_label: nonSnapPartnerMoment.location_label,
+          music_track: nonSnapPartnerMoment.music_track,
+          tagged_users: nonSnapPartnerMoment.tagged_users,
+          overlays: nonSnapPartnerMoment.overlays,
+          visibility: nonSnapPartnerMoment.visibility,
+          snap_once: false,
+          snap_duration_seconds: nonSnapPartnerMoment.snap_duration_seconds,
+          viewed_by_user_ids: nonSnapPartnerMoment.viewed_by_user_ids,
+          snap_opened_at_by_user: nonSnapPartnerMoment.snap_opened_at_by_user,
+          comments: nonSnapPartnerMoment.comments,
+          reactions: nonSnapPartnerMoment.reactions,
+          watermark_tag: nonSnapPartnerMoment.watermark_tag ?? '#KeepIt',
+          media_type: nonSnapPartnerMoment.media_type,
+          video_uri: nonSnapPartnerMoment.video_uri,
+          video_duration_seconds: nonSnapPartnerMoment.video_duration_seconds,
+          filter_preset: nonSnapPartnerMoment.filter_preset,
+          back_photo_url:
+            nonSnapPartnerMoment.back_photo_url ?? nonSnapPartnerMoment.back_photo_path,
+          front_photo_url:
+            nonSnapPartnerMoment.front_photo_url ?? nonSnapPartnerMoment.front_photo_path,
         }
       : null;
 
@@ -564,7 +568,7 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'partner' }}
-            onPress={() => setActiveTab('partner')}
+            onPress={() => setSelectedTab('partner')}
             style={[
               styles.switcherTab,
               {
@@ -589,7 +593,7 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'mine' }}
-            onPress={() => setActiveTab('mine')}
+            onPress={() => setSelectedTab('mine')}
             style={[
               styles.switcherTab,
               {
@@ -614,7 +618,7 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'friends' }}
-            onPress={() => setActiveTab('friends')}
+            onPress={() => setSelectedTab('friends')}
             style={[
               styles.switcherTab,
               {
@@ -639,7 +643,7 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'together' }}
-            onPress={() => setActiveTab('together')}
+            onPress={() => setSelectedTab('together')}
             style={[
               styles.switcherTab,
               {
@@ -888,10 +892,10 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
-        ) : bothUnlocked && myMoment && unlockedPartnerAsRecord ? (
+        ) : bothUnlocked && nonSnapMyMoment && unlockedPartnerAsRecord ? (
           <TogetherCollageCard
             promptDate={bundle!.prompt.prompt_date}
-            myMoment={myMoment}
+            myMoment={nonSnapMyMoment}
             partnerMoment={unlockedPartnerAsRecord}
             myName={user?.display_name ?? 'You'}
             partnerName={partnerName}
@@ -940,7 +944,7 @@ export default function HomeScreen() {
           snapshot={widgetSync.snapshot}
           lastSyncedAt={widgetSync.lastSyncedAt}
           onPressCaptureLocked={() => openCameraModal()}
-          onPressOpenApp={() => setActiveTab('partner')}
+          onPressOpenApp={() => setSelectedTab('partner')}
           onPressSyncNow={widgetSync.forceSync}
         />
       </ScrollView>

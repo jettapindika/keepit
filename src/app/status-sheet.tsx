@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -33,7 +33,6 @@ export default function StatusSheetScreen() {
   const { colors, radii, spacing } = useKeepItTheme();
 
   const user = useSessionStore((s) => s.user);
-  const partner = useSessionStore((s) => s.partner);
   const couple = useSessionStore((s) => s.couple);
 
   const statusQuery = useQuery({
@@ -48,28 +47,25 @@ export default function StatusSheetScreen() {
 
   const existingMine = statusQuery.data?.mine ?? null;
 
-  const [emoji, setEmoji] = useState('📚');
-  const [text, setText] = useState('');
-  const [duration, setDuration] = useState<StatusDurationPreset>('1h');
+  const [draftEmoji, setDraftEmoji] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState<string | null>(null);
+  const [draftDuration, setDraftDuration] = useState<StatusDurationPreset | null>(null);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!existingMine) return;
-    setEmoji(existingMine.emoji);
-    setText(existingMine.text);
-    setDuration(existingMine.duration_preset);
-  }, [existingMine?.updated_at]);
+  const emoji = draftEmoji ?? existingMine?.emoji ?? '📚';
+  const text = draftText ?? existingMine?.text ?? '';
+  const duration: StatusDurationPreset = draftDuration ?? existingMine?.duration_preset ?? '1h';
 
   const handleSelectPreset = (preset: (typeof STATUS_PRESETS)[number]) => {
     if (Platform.OS !== 'web') {
       void Haptics.selectionAsync();
     }
     setError(null);
-    setEmoji(preset.emoji);
-    setText(preset.text);
-    setDuration(preset.defaultDuration);
+    setDraftEmoji(preset.emoji);
+    setDraftText(preset.text);
+    setDraftDuration(preset.defaultDuration);
   };
 
   const handleSaveStatus = async () => {
@@ -116,7 +112,6 @@ export default function StatusSheetScreen() {
     }
   };
 
-  const partnerName = partner?.display_name ?? 'your partner';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.sheetSurface }]}>
@@ -228,7 +223,7 @@ export default function StatusSheetScreen() {
                 placeholderTextColor={colors.inkMuted}
                 onChangeText={(val) => {
                   setError(null);
-                  setEmoji(val);
+                  setDraftEmoji(val);
                 }}
                 style={[
                   styles.emojiInput,
@@ -249,7 +244,7 @@ export default function StatusSheetScreen() {
                 placeholderTextColor={colors.inkMuted}
                 onChangeText={(val) => {
                   setError(null);
-                  setText(val);
+                  setDraftText(val);
                 }}
                 onSubmitEditing={() => void handleSaveStatus()}
                 style={[
@@ -286,7 +281,7 @@ export default function StatusSheetScreen() {
                     accessibilityRole="radio"
                     accessibilityLabel={`Expire after ${opt.label}`}
                     accessibilityState={{ selected }}
-                    onPress={() => setDuration(opt.value)}
+                    onPress={() => setDraftDuration(opt.value)}
                     style={[
                       styles.durationSegment,
                       {

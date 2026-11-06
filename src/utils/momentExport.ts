@@ -1,9 +1,11 @@
 import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system';
 import { Platform, Share } from 'react-native';
 
 import { getFilterPresetMeta } from '@/api/social';
-import { MomentFilterPreset, PhotoOverlayItem } from '@/types/database';
+import { MomentFilterPreset, PhotoOverlayItem, TaggedPerson } from '@/types/database';
 
+import { exportNativeCompositeMomentJpeg } from '../../modules/keepit-widget-bridge';
 export type StoryThemePreset = 'midnight' | 'terracotta' | 'forest' | 'neon';
 
 export const STORY_THEME_PRESETS: readonly {
@@ -57,6 +59,7 @@ export function buildMomentCompositeSvgDataUri(params: {
   musicTitle?: string | null;
   filterPreset?: MomentFilterPreset;
   overlays?: PhotoOverlayItem[];
+  taggedUsers?: TaggedPerson[];
   aspect: '3:4' | '9:16';
   storyTheme?: StoryThemePreset;
 }): string {
@@ -213,6 +216,12 @@ export function buildMomentCompositeSvgDataUri(params: {
   if (safeMusic) {
     metaChips.push(`🎵 ${safeMusic}`);
   }
+  if (params.taggedUsers && params.taggedUsers.length > 0) {
+    const safeTags = params.taggedUsers
+      .map((t) => `@${t.username.replace(/[^a-zA-Z0-9._]/g, '')}`)
+      .join(' ');
+    metaChips.push(`🏷️ ${safeTags}`);
+  }
   const metaLine = metaChips.join('   ·   ');
 
   const svg9x16 = `
@@ -289,16 +298,80 @@ export function buildMomentCompositeSvgDataUri(params: {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg9x16.trim())}`;
 }
 
-export async function downloadOrShareMomentUri(params: {
-  dataUri: string;
-  filename: string;
+async function rasterizeSvgDataUriOnWeb(
+  svgDataUri: string,
+  width: number,
+  height: number
+): Promise<string | null> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined') {
+    return null;
+  }
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(null);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/png'));
+    } catch {
+      resolve(null);
+    }
+  };
+  img.onerror = () => resolve(null);
+  img.src = svgDataUri;
+  return promise;
+}
+
+export async function exportAndShareCompositeMoment(params: {
+  backUri: string;
+  frontUri: string;
+  authorName: string;
+  caption?: string | null;
+  locationLabel?: string | null;
+  musicTitle?: string | null;
+  taggedUsers?: TaggedPerson[];
+  filterPreset?: MomentFilterPreset;
+  overlays?: PhotoOverlayItem[];
+  aspect: '3:4' | '9:16';
+  storyTheme?: StoryThemePreset;
+  baseFilename: string;
   title: string;
 }): Promise<string> {
+  const svgDataUri = buildMomentCompositeSvgDataUri({
+    backUri: params.backUri,
+    frontUri: params.frontUri,
+    authorName: params.authorName,
+    caption: params.caption,
+    locationLabel: params.locationLabel,
+    musicTitle: params.musicTitle,
+    taggedUsers: params.taggedUsers,
+    filterPreset: params.filterPreset,
+    overlays: params.overlays,
+    aspect: params.aspect,
+    storyTheme: params.storyTheme,
+  });
+
+  const cleanStem = params.baseFilename.replace(/\.(svg|png|jpe?g)$/i, '');
+
   if (Platform.OS === 'web') {
+    const targetW = params.aspect === '9:16' ? 1080 : 900;
+    const targetH = params.aspect === '9:16' ? 1920 : 1200;
+    const pngDataUri = await rasterizeSvgDataUriOnWeb(svgDataUri, targetW, targetH);
+    const downloadHref = pngDataUri ?? svgDataUri;
+    const finalName = pngDataUri ? `${cleanStem}.png` : `${cleanStem}.svg`;
+
     if (typeof document !== 'undefined') {
       const link = document.createElement('a');
-      link.href = params.dataUri;
-      link.download = params.filename;
+      link.href = downloadHref;
+      link.download = finalName;
       link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
@@ -309,12 +382,114 @@ export async function downloadOrShareMomentUri(params: {
     } catch {
       // Clipboard optional on restricted web contexts
     }
-    return 'Saved to device (' + params.filename + ')';
+    return `Saved ${finalName} to device`;
+  }
+
+  const filterMeta = getFilterPresetMeta(params.filterPreset);
+  const theme =
+    STORY_THEME_PRESETS.find((t) => t.id === params.storyTheme) ?? STORY_THEME_PRESETS[0];
+  const jpgName = `${cleanStem}.jpg`;
+
+  const nativeRes = await exportNativeCompositeMomentJpeg({
+    aspect: params.aspect,
+    backUri: params.backUri,
+    frontUri: params.frontUri,
+    authorName: params.authorName,
+    caption: params.caption ?? '',
+    filterHex: filterMeta.svgTintHex,
+    filterActive: Boolean(params.filterPreset && params.filterPreset !== 'normal'),
+    themeTop: theme.topHex,
+    themeBottom: theme.bottomHex,
+    overlays: params.overlays ?? [],
+    filename: jpgName,
+    saveToGallery: true,
+  });
+
+  if (nativeRes?.fileUri) {
+    if (Platform.OS === 'android') {
+      const previewFile = new FileSystem.File(nativeRes.fileUri);
+      const canPreview = await previewFile.canPreview().catch(() => false);
+      if (canPreview) {
+        await previewFile.preview({ title: params.title, mimeType: 'image/jpeg' }).catch(() => {});
+      } else {
+        await Share.share({
+          title: params.title,
+          message: `${params.title} #KeepIt`,
+        }).catch(() => {});
+      }
+      return nativeRes.savedToGallery
+        ? `Saved ${jpgName} to Pictures/KeepIt & opened preview`
+        : `Exported ${jpgName}`;
+    }
+
+    await Share.share({
+      title: params.title,
+      message: `${params.title} #KeepIt`,
+      url: nativeRes.fileUri,
+    }).catch(() => {});
+    return nativeRes.savedToGallery
+      ? `Saved ${jpgName} to Photos & opened Share Sheet`
+      : `Opened Share Sheet (${jpgName})`;
+  }
+
+  // Fallback when running inside Expo Go without the custom native module compiled:
+  // Write real camera JPEG bytes from `backUri` to cache so Share/Preview receives a valid `.jpg` file
+  if (params.backUri.startsWith('data:image/jpeg;base64,')) {
+    try {
+      const b64 = params.backUri.slice('data:image/jpeg;base64,'.length);
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const fallbackFile = new FileSystem.File(FileSystem.Paths.cache, jpgName);
+      await fallbackFile.write(bytes);
+      if (Platform.OS === 'ios') {
+        await Share.share({
+          title: params.title,
+          message: `${params.title} #KeepIt`,
+          url: fallbackFile.uri,
+        });
+      } else {
+        await fallbackFile.preview({ title: params.title, mimeType: 'image/jpeg' }).catch(() => {});
+      }
+      return `Exported ${jpgName} for sharing`;
+    } catch {
+      // Fall through to standard Share
+    }
   }
 
   await Share.share({
-    message: params.title + ' #KeepIt',
-    url: params.dataUri,
+    title: params.title,
+    message: `${params.title} #KeepIt`,
+  });
+  return 'Opened share sheet';
+}
+
+export async function downloadOrShareMomentUri(params: {
+  dataUri: string;
+  filename: string;
+  title: string;
+}): Promise<string> {
+  if (Platform.OS === 'web') {
+    const pngUri = await rasterizeSvgDataUriOnWeb(params.dataUri, 900, 1200);
+    const outName = pngUri
+      ? params.filename.replace(/\.svg$/i, '.png')
+      : params.filename;
+    if (typeof document !== 'undefined') {
+      const link = document.createElement('a');
+      link.href = pngUri ?? params.dataUri;
+      link.download = outName;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    return `Saved to device (${outName})`;
+  }
+  await Share.share({
+    title: params.title,
+    message: `${params.title} #KeepIt`,
   });
   return 'Opened share sheet';
 }

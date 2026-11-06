@@ -101,66 +101,70 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     val isMedium = minWidthDp >= 220
 
     thread(start = true) {
-      val snapshot = readSnapshot(context)
-      val photoBitmap = loadMomentBitmap(snapshot)
-      val cardBitmap = drawMochyWidgetBitmap(
-        context = context,
-        snapshot = snapshot,
-        photo = photoBitmap,
-        isMedium = isMedium,
-        widthDp = if (isMedium) 320 else 160,
-        heightDp = minHeightDp.coerceIn(140, 180)
-      )
+      try {
+        val snapshot = readSnapshot(context)
+        val photoBitmap = loadMomentBitmap(snapshot)
+        val cardBitmap = drawMochyWidgetBitmap(
+          context = context,
+          snapshot = snapshot,
+          photo = photoBitmap,
+          isMedium = isMedium,
+          widthDp = if (isMedium) 300 else 155,
+          heightDp = minHeightDp.coerceIn(135, 165)
+        )
 
-      val targetUri = when {
-        snapshot == null -> "keepit://"
-        snapshot.momentLocked -> "keepit://camera"
-        snapshot.deepLinkUrl.isNotBlank() -> snapshot.deepLinkUrl
-        else -> "keepit://"
-      }
-
-      val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUri)).apply {
-        setPackage(context.packageName)
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-      }
-
-      val pendingIntent = PendingIntent.getActivity(
-        context,
-        widgetId,
-        launchIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-      )
-
-      val resolvedLayoutId = context.resources.getIdentifier(
-        "keepit_appwidget",
-        "layout",
-        context.packageName
-      )
-      val resolvedImageId = context.resources.getIdentifier(
-        "widget_canvas_image",
-        "id",
-        context.packageName
-      )
-
-      val useCustomLayout = resolvedLayoutId != 0 && resolvedImageId != 0
-      val layoutId = if (useCustomLayout) resolvedLayoutId else android.R.layout.activity_list_item
-      val imageViewId = if (useCustomLayout) resolvedImageId else android.R.id.icon
-
-      val views = RemoteViews(context.packageName, layoutId).apply {
-        setImageViewBitmap(imageViewId, cardBitmap)
-        setOnClickPendingIntent(imageViewId, pendingIntent)
-        if (!useCustomLayout) {
-          setTextViewText(
-            android.R.id.text1,
-            snapshot?.let {
-              "${it.partnerName} · ${activeStatusText(it) ?: formatTimeAgo(it.momentPostedAt ?: it.updatedAt)}"
-            } ?: "KeepIt · Tap to pair"
-          )
-          setOnClickPendingIntent(android.R.id.text1, pendingIntent)
+        val targetUri = when {
+          snapshot == null -> "keepit://"
+          snapshot.momentLocked -> "keepit://camera"
+          snapshot.deepLinkUrl.isNotBlank() -> snapshot.deepLinkUrl
+          else -> "keepit://"
         }
-      }
 
-      appWidgetManager.updateAppWidget(widgetId, views)
+        val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUri)).apply {
+          setPackage(context.packageName)
+          flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+          context,
+          widgetId,
+          launchIntent,
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val resolvedLayoutId = context.resources.getIdentifier(
+          "keepit_appwidget",
+          "layout",
+          context.packageName
+        )
+        val resolvedImageId = context.resources.getIdentifier(
+          "widget_canvas_image",
+          "id",
+          context.packageName
+        )
+
+        val useCustomLayout = resolvedLayoutId != 0 && resolvedImageId != 0
+        val layoutId = if (useCustomLayout) resolvedLayoutId else android.R.layout.activity_list_item
+        val imageViewId = if (useCustomLayout) resolvedImageId else android.R.id.icon
+
+        val views = RemoteViews(context.packageName, layoutId).apply {
+          setImageViewBitmap(imageViewId, cardBitmap)
+          setOnClickPendingIntent(imageViewId, pendingIntent)
+          if (!useCustomLayout) {
+            setTextViewText(
+              android.R.id.text1,
+              snapshot?.let {
+                "${it.partnerName} · ${activeStatusText(it) ?: formatTimeAgo(it.momentPostedAt ?: it.updatedAt)}"
+              } ?: "KeepIt · Tap to open"
+            )
+            setOnClickPendingIntent(android.R.id.text1, pendingIntent)
+          }
+        }
+
+        appWidgetManager.updateAppWidget(widgetId, views)
+      } catch (_: Throwable) {
+        // Guard against RemoteViews / Binder IPC exceptions crashing the app process
+      }
     }
   }
 
@@ -173,16 +177,20 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     heightDp: Int
   ): Bitmap {
     val metrics = context.resources.displayMetrics
+    // Cap pixel dimensions so ARGB_8888 bitmap stays well under Android's 1MB Binder IPC transaction limit
+    val maxW = if (isMedium) 520 else 300
+    val maxH = 300
     val w = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, widthDp.toFloat(), metrics)
       .toInt()
-      .coerceAtLeast(240)
+      .coerceIn(200, maxW)
     val h = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, heightDp.toFloat(), metrics)
       .toInt()
-      .coerceAtLeast(220)
+      .coerceIn(180, maxH)
+    val scaleFactor = w.toFloat() / widthDp.toFloat().coerceAtLeast(1f)
     val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(out)
-    val density = metrics.density
-    val scaledDensity = metrics.scaledDensity
+    val density = scaleFactor.coerceIn(1.2f, 2.0f)
+    val scaledDensity = density
 
     val radius = 24f * density
     val cardRect = RectF(0f, 0f, w.toFloat(), h.toFloat())
@@ -768,11 +776,43 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
             BitmapFactory.decodeStream(stream)
           }
         }
+        uriStr.startsWith("data:image/svg+xml") -> {
+          renderSimulatedSvgDataUriToBitmap(uriStr)
+        }
         else -> null
       }
     } catch (_: Throwable) {
       null
     }
+  }
+
+  private fun renderSimulatedSvgDataUriToBitmap(svgDataUri: String): Bitmap {
+    val decoded = runCatching { Uri.decode(svgDataUri) }.getOrDefault(svgDataUri)
+    val hexMatches = Regex("#[0-9A-Fa-f]{6}")
+      .findAll(decoded)
+      .map { it.value }
+      .toList()
+    val topColor = runCatching { Color.parseColor(hexMatches.getOrNull(0) ?: "#EBD8C8") }.getOrDefault(Color.parseColor("#EBD8C8"))
+    val midColor = runCatching { Color.parseColor(hexMatches.getOrNull(1) ?: "#D7B49E") }.getOrDefault(Color.parseColor("#D7B49E"))
+    val accentColor = runCatching { Color.parseColor(hexMatches.getOrNull(3) ?: "#D95D39") }.getOrDefault(Color.parseColor("#D95D39"))
+
+    val bmp = Bitmap.createBitmap(450, 600, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      shader = LinearGradient(
+        0f, 0f, 0f, 600f,
+        intArrayOf(topColor, midColor, Color.parseColor("#1E1B18")),
+        floatArrayOf(0f, 0.55f, 1f),
+        Shader.TileMode.CLAMP
+      )
+    }
+    c.drawRect(0f, 0f, 450f, 600f, skyPaint)
+    val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = accentColor
+      alpha = 210
+    }
+    c.drawCircle(335f, 140f, 58f, orbPaint)
+    return bmp
   }
 }
 

@@ -20,7 +20,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   DEFAULT_WARM_BLURHASH,
-  deleteMomentPost,
   fetchTodayMomentBundle,
   fetchUserMomentsFeed,
   updateMomentCaption,
@@ -297,7 +296,10 @@ export default function ProfileScreen() {
       showTemporaryFeedback(
         `Added ${added.friend_profile.display_name} (@${added.friend_profile.username ?? 'friend'}) to your circle!`
       );
-      await queryClient.invalidateQueries({ queryKey: ['friends-list', userId] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
+        queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
+      ]);
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : 'Could not add friend.');
     } finally {
@@ -314,7 +316,10 @@ export default function ProfileScreen() {
         friendRecordId,
       });
       showTemporaryFeedback(`Removed ${name} from your Friends Circle.`);
-      await queryClient.invalidateQueries({ queryKey: ['friends-list', userId] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
+        queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
+      ]);
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : 'Could not remove friend.');
     }
@@ -716,7 +721,7 @@ export default function ProfileScreen() {
                   styles.subTabText,
                   { color: subTab === 'friends' ? colors.canvas : colors.inkMuted },
                 ]}>
-                Friends Circle ({friendsList.length + (partner ? 1 : 0)})
+                Friends Circle ({friendsList.length + (isPartnerPaired ? 1 : 0)})
               </Text>
             </Pressable>
           </View>
@@ -800,11 +805,6 @@ export default function ProfileScreen() {
                       }}
                       onUpdated={() => void handleRefreshPosts()}
                       onDeleted={async () => {
-                        await deleteMomentPost({
-                          momentId: post.id,
-                          userId,
-                          coupleId: post.couple_id || coupleId || 'local_couple',
-                        }).catch(() => {});
                         showTemporaryFeedback('Moment deleted from your profile.');
                         await handleRefreshPosts();
                       }}
@@ -912,7 +912,8 @@ export default function ProfileScreen() {
                 </View>
               </View>
 
-              {/* Partner Pinned Card */}
+              {/* Partner Pinned Card (only when paired with a real partner) */}
+              {isPartnerPaired ? (
               <View
                 style={[
                   styles.friendRowCard,
@@ -1002,7 +1003,7 @@ export default function ProfileScreen() {
                   </Pressable>
                 </View>
               </View>
-
+              ) : null}
               {/* Friends Circle List */}
               {friendsList.map((fr) => {
                 const fp = fr.friend_profile;
@@ -1134,7 +1135,7 @@ export default function ProfileScreen() {
       <Modal
         visible={editModalOpen}
         animationType="slide"
-        presentationStyle="pageSheet"
+        transparent={false}
         onRequestClose={() => setEditModalOpen(false)}>
         <SafeAreaView style={[styles.modalSafe, { backgroundColor: colors.sheetSurface }]}>
           <View

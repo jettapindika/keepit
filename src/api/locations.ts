@@ -290,12 +290,12 @@ export async function fetchCoupleLocations(params: {
           user_id: params.userId,
           couple_id: params.coupleId,
           display_name: myDisplayName,
-          mode: 'live' as LocationMode,
-          lat: FALLBACK_LIVE_COORDS.lat,
-          lng: FALLBACK_LIVE_COORDS.lng,
-          accuracy_m: FALLBACK_LIVE_COORDS.accuracyM,
-          place_name: FALLBACK_LIVE_COORDS.placeName,
-          location_updated_at: nowIso,
+          mode: 'ghost' as LocationMode,
+          lat: null,
+          lng: null,
+          accuracy_m: null,
+          place_name: null,
+          location_updated_at: null,
           mode_changed_at: nowIso,
         };
         const hydratedMine: LocationShareRecord =
@@ -310,21 +310,24 @@ export async function fetchCoupleLocations(params: {
               }
             : rawMine;
 
+        const isSolo = params.coupleId.startsWith('solo_') && !sessionState.partner;
         const fallbackPartnerId = sessionState.partner?.id ?? 'partner_live_default';
-        const rawPartner = raw.partner ?? {
-          user_id: fallbackPartnerId,
-          couple_id: params.coupleId,
-          display_name: sessionPartnerName ?? 'Partner',
-          mode: 'live' as LocationMode,
-          lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
-          lng: DEFAULT_PARTNER_LIVE_COORDS.lng,
-          accuracy_m: DEFAULT_PARTNER_LIVE_COORDS.accuracyM,
-          place_name: DEFAULT_PARTNER_LIVE_COORDS.placeName,
-          location_updated_at: nowIso,
-          mode_changed_at: nowIso,
-        };
-        const hydratedPartner: LocationShareRecord =
-          rawPartner.mode !== 'ghost' && (rawPartner.lat === null || rawPartner.lng === null)
+        const rawPartner = isSolo
+          ? null
+          : (raw.partner ?? {
+              user_id: fallbackPartnerId,
+              couple_id: params.coupleId,
+              display_name: sessionPartnerName ?? 'Partner',
+              mode: 'ghost' as LocationMode,
+              lat: null,
+              lng: null,
+              accuracy_m: null,
+              place_name: null,
+              location_updated_at: null,
+              mode_changed_at: nowIso,
+            });
+        const hydratedPartner: LocationShareRecord | null =
+          rawPartner && rawPartner.mode !== 'ghost' && (rawPartner.lat === null || rawPartner.lng === null)
             ? {
                 ...rawPartner,
                 lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
@@ -334,7 +337,6 @@ export async function fetchCoupleLocations(params: {
                 location_updated_at: rawPartner.location_updated_at ?? nowIso,
               }
             : rawPartner;
-
         return {
           mine: redactGhostShare(hydratedMine),
           partner: redactGhostShare(hydratedPartner),
@@ -358,12 +360,12 @@ export async function fetchCoupleLocations(params: {
       user_id: params.userId,
       couple_id: params.coupleId,
       display_name: myDisplayName,
-      mode: 'live',
-      lat: FALLBACK_LIVE_COORDS.lat,
-      lng: FALLBACK_LIVE_COORDS.lng,
-      accuracy_m: FALLBACK_LIVE_COORDS.accuracyM,
-      place_name: FALLBACK_LIVE_COORDS.placeName,
-      location_updated_at: nowIso,
+      mode: 'ghost',
+      lat: null,
+      lng: null,
+      accuracy_m: null,
+      place_name: null,
+      location_updated_at: null,
       mode_changed_at: nowIso,
     };
     mutated = true;
@@ -380,42 +382,47 @@ export async function fetchCoupleLocations(params: {
     mutated = true;
   }
 
-  const resolvedPartnerId =
-    (await resolveSandboxPartnerId(params.coupleId, params.userId, locationsMap)) ??
-    sessionState.partner?.id ??
-    'sandbox_partner_default';
-  const partnerKey = `${params.coupleId}:${resolvedPartnerId}`;
-  const existingPartner = locationsMap[partnerKey];
-  if (!existingPartner) {
-    locationsMap[partnerKey] = {
-      user_id: resolvedPartnerId,
-      couple_id: params.coupleId,
-      display_name: sessionPartnerName ?? 'Partner',
-      mode: 'live',
-      lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
-      lng: DEFAULT_PARTNER_LIVE_COORDS.lng,
-      accuracy_m: DEFAULT_PARTNER_LIVE_COORDS.accuracyM,
-      place_name: DEFAULT_PARTNER_LIVE_COORDS.placeName,
-      location_updated_at: nowIso,
-      mode_changed_at: nowIso,
-    };
-    mutated = true;
-  } else if (
-    existingPartner.mode !== 'ghost' &&
-    (existingPartner.lat === null || existingPartner.lng === null)
-  ) {
-    locationsMap[partnerKey] = {
-      ...existingPartner,
-      display_name: existingPartner.display_name ?? sessionPartnerName,
-      lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
-      lng: DEFAULT_PARTNER_LIVE_COORDS.lng,
-      accuracy_m: existingPartner.accuracy_m ?? DEFAULT_PARTNER_LIVE_COORDS.accuracyM,
-      place_name: existingPartner.place_name ?? DEFAULT_PARTNER_LIVE_COORDS.placeName,
-      location_updated_at: existingPartner.location_updated_at ?? nowIso,
-    };
-    mutated = true;
+  const isSolo = params.coupleId.startsWith('solo_') && !sessionState.partner;
+  let partnerRecord: LocationShareRecord | null = null;
+
+  if (!isSolo) {
+    const resolvedPartnerId =
+      (await resolveSandboxPartnerId(params.coupleId, params.userId, locationsMap)) ??
+      sessionState.partner?.id ??
+      'sandbox_partner_default';
+    const partnerKey = `${params.coupleId}:${resolvedPartnerId}`;
+    const existingPartner = locationsMap[partnerKey];
+    if (!existingPartner) {
+      locationsMap[partnerKey] = {
+        user_id: resolvedPartnerId,
+        couple_id: params.coupleId,
+        display_name: sessionPartnerName ?? 'Partner',
+        mode: 'ghost',
+        lat: null,
+        lng: null,
+        accuracy_m: null,
+        place_name: null,
+        location_updated_at: null,
+        mode_changed_at: nowIso,
+      };
+      mutated = true;
+    } else if (
+      existingPartner.mode !== 'ghost' &&
+      (existingPartner.lat === null || existingPartner.lng === null)
+    ) {
+      locationsMap[partnerKey] = {
+        ...existingPartner,
+        display_name: existingPartner.display_name ?? sessionPartnerName,
+        lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
+        lng: DEFAULT_PARTNER_LIVE_COORDS.lng,
+        accuracy_m: existingPartner.accuracy_m ?? DEFAULT_PARTNER_LIVE_COORDS.accuracyM,
+        place_name: existingPartner.place_name ?? DEFAULT_PARTNER_LIVE_COORDS.placeName,
+        location_updated_at: existingPartner.location_updated_at ?? nowIso,
+      };
+      mutated = true;
+    }
+    partnerRecord = locationsMap[partnerKey];
   }
-  const partnerRecord = locationsMap[partnerKey];
 
   if (mutated) {
     await AsyncStorage.setItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));

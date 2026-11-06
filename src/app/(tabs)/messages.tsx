@@ -18,6 +18,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchConversationMessages,
   fetchFriendsCircle,
+  getSnapDmRemainingSeconds,
+  isSnapDmExpiredForViewer,
   markSnapDirectMessageViewed,
   sendDirectMessage,
   toggleDirectMessageReaction,
@@ -82,28 +84,32 @@ export default function MessagesScreen() {
       }),
   });
 
+  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
+
   const peers = useMemo<PeerOption[]>(() => {
     const list: PeerOption[] = [];
     const partnerPeerId =
       partner?.id ??
-      (couple
+      (couple && !couple.id.startsWith('solo_')
         ? couple.user_a_id === userId
           ? couple.user_b_id ?? 'partner_default'
           : couple.user_a_id
-        : 'partner_default');
+        : null);
 
-    list.push({
-      id: partnerPeerId,
-      displayName: partner?.display_name ?? 'Partner',
-      username: partner?.username ?? 'partner',
-      roleLabel: 'Partner',
-      accentColor: partner?.banner_color ?? '#D95D39',
-      avatarPath: partner?.avatar_path ?? null,
-      isPartner: true,
-    });
+    if (isPartnerPaired && partnerPeerId) {
+      list.push({
+        id: partnerPeerId,
+        displayName: partner?.display_name ?? 'Partner',
+        username: partner?.username ?? 'partner',
+        roleLabel: 'Partner',
+        accentColor: partner?.banner_color ?? '#D95D39',
+        avatarPath: partner?.avatar_path ?? null,
+        isPartner: true,
+      });
+    }
 
     for (const fr of friendsQuery.data ?? []) {
-      if (fr.friend_id === partnerPeerId) continue;
+      if (partnerPeerId && fr.friend_id === partnerPeerId) continue;
       list.push({
         id: fr.friend_id,
         displayName: fr.friend_profile.display_name,
@@ -127,20 +133,27 @@ export default function MessagesScreen() {
       });
     }
 
-    return list;
-  }, [partner, couple, userId, friendsQuery.data, params.peerId, params.peerName]);
-
-  const [selectedPeerId, setSelectedPeerId] = useState<string>(() => params.peerId ?? '');
-
-  useEffect(() => {
-    if (params.peerId) {
-      setSelectedPeerId(params.peerId);
+    if (list.length === 0) {
+      list.push({
+        id: 'friend_sora_k',
+        displayName: 'Sora Kim',
+        username: 'sora.frames',
+        roleLabel: 'Bestie',
+        accentColor: '#8B5CF6',
+        avatarPath: null,
+        isPartner: false,
+      });
     }
-  }, [params.peerId]);
+
+    return list;
+  }, [isPartnerPaired, partner, couple, userId, friendsQuery.data, params.peerId, params.peerName]);
+
+  const [manualPeerId, setManualPeerId] = useState<string | null>(null);
+  const effectiveSelectedPeerId = manualPeerId ?? params.peerId ?? '';
 
   const activePeer = useMemo<PeerOption>(() => {
-    return peers.find((p) => p.id === selectedPeerId) ?? peers[0];
-  }, [peers, selectedPeerId]);
+    return peers.find((p) => p.id === effectiveSelectedPeerId) ?? peers[0];
+  }, [peers, effectiveSelectedPeerId]);
 
   const messagesQuery = useQuery({
     queryKey: ['direct-messages', userId, activePeer.id],
@@ -161,14 +174,50 @@ export default function MessagesScreen() {
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Snap Once active 15s countdowns: messageId -> remaining seconds (15..1)
+  // Snap Once active 15s countdowns + sender local preview toggle
   const [snapCountdowns, setSnapCountdowns] = useState<Record<string, number>>({});
-  const snapCountdownsRef = useRef<Record<string, number>>({});
-  snapCountdownsRef.current = snapCountdowns;
+  const [senderPreviewOpenIds, setSenderPreviewOpenIds] = useState<Record<string, boolean>>({});
   const tickIntervalRef = useRef<number | undefined>(undefined);
   const scrollRef = useRef<{ scrollToEnd?: (opts?: { animated?: boolean }) => void } | null>(null);
 
-  const hasActiveCountdowns = Object.keys(snapCountdowns).length > 0;
+  // Derive persisted remaining seconds for any in-progress Snap Once DMs without setState-in-effect
+  const persistedCountdowns = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const m of messagesQuery.data ?? []) {
+      if (!m.snap_once || m.sender_id === userId) continue;
+      const rem = getSnapDmRemainingSeconds(m, userId);
+      if (rem !== null && rem > 0) {
+        out[m.id] = rem;
+      }
+    }
+    return out;
+  }, [messagesQuery.data, userId]);
+
+  useEffect(() => {
+    const list = messagesQuery.data ?? [];
+    for (const m of list) {
+      if (!m.snap_once || m.sender_id === userId) continue;
+      const rem = getSnapDmRemainingSeconds(m, userId);
+      if (rem === 0 && !(m.viewed_by_user_ids ?? []).includes(userId)) {
+        void markSnapDirectMessageViewed({
+          coupleId: couple?.id ?? null,
+          messageId: m.id,
+          viewerId: userId,
+          expired: true,
+        }).then(() => {
+          void queryClient.invalidateQueries({
+            queryKey: ['direct-messages', userId, activePeer.id],
+          });
+        });
+      }
+    }
+  }, [messagesQuery.data, userId, couple?.id, activePeer.id, queryClient]);
+
+  const mergedCountdowns: Record<string, number> = {
+    ...persistedCountdowns,
+    ...snapCountdowns,
+  };
+  const hasActiveCountdowns = Object.keys(mergedCountdowns).length > 0;
 
   useEffect(() => {
     if (!hasActiveCountdowns) {
@@ -178,19 +227,19 @@ export default function MessagesScreen() {
     }
 
     tickIntervalRef.current = setInterval(() => {
-      const current = snapCountdownsRef.current;
-      const next: Record<string, number> = {};
       const expiredIds: string[] = [];
-
-      for (const [msgId, secs] of Object.entries(current)) {
-        if (secs <= 1) {
-          expiredIds.push(msgId);
-        } else {
-          next[msgId] = secs - 1;
+      setSnapCountdowns((current) => {
+        const combined = { ...persistedCountdowns, ...current };
+        const next: Record<string, number> = {};
+        for (const [msgId, secs] of Object.entries(combined)) {
+          if (secs <= 1) {
+            expiredIds.push(msgId);
+          } else {
+            next[msgId] = secs - 1;
+          }
         }
-      }
-
-      setSnapCountdowns(next);
+        return next;
+      });
 
       if (expiredIds.length > 0) {
         for (const msgId of expiredIds) {
@@ -198,6 +247,7 @@ export default function MessagesScreen() {
             coupleId: couple?.id ?? null,
             messageId: msgId,
             viewerId: userId,
+            expired: true,
           }).then(() => {
             void queryClient.invalidateQueries({
               queryKey: ['direct-messages', userId, activePeer.id],
@@ -210,7 +260,7 @@ export default function MessagesScreen() {
     return () => {
       clearInterval(tickIntervalRef.current);
     };
-  }, [hasActiveCountdowns, couple?.id, userId, activePeer.id, queryClient]);
+  }, [hasActiveCountdowns, persistedCountdowns, couple?.id, userId, activePeer.id, queryClient]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -228,15 +278,29 @@ export default function MessagesScreen() {
   };
 
   const handleOpenSnapMessage = (msg: DirectMessageRecord) => {
-    const alreadyViewed = (msg.viewed_by_user_ids ?? []).includes(userId);
-    if (alreadyViewed) return;
+    if (msg.sender_id === userId) {
+      triggerHaptic();
+      setSenderPreviewOpenIds((prev) => ({
+        ...prev,
+        [msg.id]: !prev[msg.id],
+      }));
+      return;
+    }
+    if (isSnapDmExpiredForViewer(msg, userId)) return;
     if (snapCountdowns[msg.id] !== undefined) return;
 
     triggerHaptic();
+    const rem = getSnapDmRemainingSeconds(msg, userId) ?? 15;
     setSnapCountdowns((prev) => ({
       ...prev,
-      [msg.id]: 15,
+      [msg.id]: rem,
     }));
+    void markSnapDirectMessageViewed({
+      coupleId: couple?.id ?? null,
+      messageId: msg.id,
+      viewerId: userId,
+      expired: false,
+    });
   };
 
   const handleSendText = async (overrideText?: string) => {
@@ -411,7 +475,7 @@ export default function MessagesScreen() {
                   accessibilityLabel={`${peer.displayName} (${peer.roleLabel})`}
                   onPress={() => {
                     triggerHaptic();
-                    setSelectedPeerId(peer.id);
+                    setManualPeerId(peer.id);
                     setActiveReactionMsgId(null);
                   }}
                   style={[
@@ -502,11 +566,13 @@ export default function MessagesScreen() {
               const isMine = msg.sender_id === userId;
               const isSnap = Boolean(msg.snap_once);
               const viewedList = msg.viewed_by_user_ids ?? [];
-              const hasViewerOpened = viewedList.includes(userId);
-              const peerOpenedMine = isMine && viewedList.some((id) => id !== userId);
-              const activeRemainingSecs = snapCountdowns[msg.id];
-              const isRevealedNow = activeRemainingSecs !== undefined;
-
+              const isExpiredSnap = isSnap && isSnapDmExpiredForViewer(msg, userId);
+              const hasViewerOpened = !isMine && isExpiredSnap;
+              const peerOpenedMine = isMine && (isExpiredSnap || viewedList.some((id) => id !== userId));
+              const activeRemainingSecs = !isMine ? mergedCountdowns[msg.id] : undefined;
+              const isRevealedNow = isMine
+                ? Boolean(senderPreviewOpenIds[msg.id]) && !peerOpenedMine
+                : activeRemainingSecs !== undefined && !hasViewerOpened;
               const reactionsMap = msg.reactions ?? {};
               const reactionEntries = Object.entries(reactionsMap);
               const showReactionPicker = activeReactionMsgId === msg.id;
@@ -556,7 +622,7 @@ export default function MessagesScreen() {
                       onPress={() => {
                         if (!isMine && !hasViewerOpened && !isRevealedNow) {
                           handleOpenSnapMessage(msg);
-                        } else if (isMine && !hasViewerOpened && !isRevealedNow) {
+                        } else if (isMine && !peerOpenedMine) {
                           handleOpenSnapMessage(msg);
                         } else {
                           setActiveReactionMsgId((prev) => (prev === msg.id ? null : msg.id));
@@ -599,10 +665,14 @@ export default function MessagesScreen() {
                       ) : isRevealedNow ? (
                         <View style={{ gap: 6 }}>
                           <View style={styles.snapCountdownHeader}>
-                            <Text style={styles.snapLiveBadge}>🔥 SNAP ONCE</Text>
-                            <View style={styles.countdownPill}>
-                              <Text style={styles.countdownPillText}>{activeRemainingSecs}s</Text>
-                            </View>
+                            <Text style={styles.snapLiveBadge}>
+                              {isMine ? '🔥 YOUR SNAP PREVIEW (TAP TO HIDE)' : '🔥 SNAP ONCE'}
+                            </Text>
+                            {!isMine && activeRemainingSecs !== undefined ? (
+                              <View style={styles.countdownPill}>
+                                <Text style={styles.countdownPillText}>{activeRemainingSecs}s</Text>
+                              </View>
+                            ) : null}
                           </View>
                           <Text style={styles.snapRevealedText}>{msg.text}</Text>
                         </View>

@@ -18,6 +18,8 @@ struct KeepItWidgetSnapshot: Codable {
   let streakCount: Int
   let deepLinkUrl: String
   let updatedAt: String
+  let locationLabel: String?
+  let musicTitle: String?
 }
 
 struct KeepItWidgetEntry: TimelineEntry {
@@ -72,7 +74,9 @@ struct KeepItTimelineProvider: TimelineProvider {
         momentLocked: false,
         streakCount: 7,
         deepLinkUrl: "keepit://",
-        updatedAt: ISO8601DateFormatter().string(from: Date())
+        updatedAt: ISO8601DateFormatter().string(from: Date()),
+        locationLabel: "Blue Bottle Coffee",
+        musicTitle: "Sunset Lover"
       ),
       momentImage: nil
     )
@@ -301,6 +305,14 @@ private struct SmallWidgetLayout: View {
               .font(.system(size: 11, weight: .medium))
               .foregroundColor(MochyWidgetTheme.inkMuted)
           }
+
+          Text("#KeepIt")
+            .font(.system(size: 10, weight: .heavy))
+            .foregroundColor(MochyWidgetTheme.ink)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.68))
+            .clipShape(Capsule())
         }
         .padding(12)
       } else {
@@ -323,7 +335,7 @@ private struct MediumWidgetLayout: View {
       if let snapshot = entry.snapshot {
         HStack(spacing: 12) {
           // Left squircle Moment tile
-          ZStack {
+          ZStack(alignment: .bottomLeading) {
             MochyWidgetTheme.surface
 
             if snapshot.momentLocked {
@@ -341,6 +353,17 @@ private struct MediumWidgetLayout: View {
                   .font(.system(size: 10, weight: .semibold))
                   .foregroundColor(MochyWidgetTheme.inkMuted)
               }
+            }
+
+            if !snapshot.momentLocked {
+              Text("#KeepIt")
+                .font(.system(size: 9.5, weight: .heavy))
+                .foregroundColor(MochyWidgetTheme.ink)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.black.opacity(0.72))
+                .clipShape(Capsule())
+                .padding(6)
             }
           }
           .frame(width: 112)

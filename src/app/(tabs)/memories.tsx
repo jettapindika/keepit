@@ -48,7 +48,6 @@ export default function MemoriesScreen() {
   const [cursorMonth, setCursorMonth] = useState(currentUtcMonth);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [recapOpen, setRecapOpen] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const myName = user?.display_name ?? 'You';
   const partnerName = partner?.display_name ?? 'Your partner';
@@ -103,7 +102,7 @@ export default function MemoriesScreen() {
     };
   }, [couple?.id, queryClient]);
 
-  const days = memoriesQuery.data?.days ?? [];
+  const days = useMemo(() => memoriesQuery.data?.days ?? [], [memoriesQuery.data?.days]);
   const streak = memoriesQuery.data?.streak ?? null;
   const currentStreak = streak?.current_count ?? 0;
   const longestStreak = streak?.longest_count ?? 0;
@@ -116,16 +115,12 @@ export default function MemoriesScreen() {
     return map;
   }, [days]);
 
-  // Keep selectedDate pointing to a real day in this month (newest day by default)
-  useEffect(() => {
-    if (days.length === 0) {
-      setSelectedDate(null);
-      return;
-    }
-    if (!selectedDate || !dayMap.has(selectedDate)) {
-      setSelectedDate(days[0].prompt_date);
-    }
-  }, [days, selectedDate, dayMap]);
+  const effectiveSelectedDate =
+    days.length === 0
+      ? null
+      : selectedDate && dayMap.has(selectedDate)
+        ? selectedDate
+        : days[0].prompt_date;
 
   const monthLabel = useMemo(() => {
     const refDate = new Date(Date.UTC(cursorYear, cursorMonth - 1, 15));
@@ -165,7 +160,7 @@ export default function MemoriesScreen() {
     const totalDaysInMonth = new Date(Date.UTC(cursorYear, cursorMonth, 0)).getUTCDate();
     const prefix = `${String(cursorYear).padStart(4, '0')}-${String(cursorMonth).padStart(2, '0')}-`;
 
-    const cells: Array<{ dayNum: number; dateStr: string } | null> = [];
+    const cells: ({ dayNum: number; dateStr: string } | null)[] = [];
     for (let i = 0; i < firstWeekday; i += 1) {
       cells.push(null);
     }
@@ -179,7 +174,7 @@ export default function MemoriesScreen() {
       cells.push(null);
     }
 
-    const weeks: Array<typeof cells> = [];
+    const weeks: (typeof cells)[] = [];
     for (let i = 0; i < cells.length; i += 7) {
       weeks.push(cells.slice(i, i + 7));
     }
@@ -209,7 +204,7 @@ export default function MemoriesScreen() {
   }, [days]);
 
 
-  const selectedRecord = selectedDate ? dayMap.get(selectedDate) ?? null : null;
+  const selectedRecord = effectiveSelectedDate ? dayMap.get(effectiveSelectedDate) ?? null : null;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
@@ -312,7 +307,7 @@ export default function MemoriesScreen() {
           </View>
         </RevealOnAppear>
 
-        {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
+
 
         {memoriesQuery.isError ? (
           <View style={{ gap: spacing.sm }}>

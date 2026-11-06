@@ -61,18 +61,16 @@ function computeSnapshot(triggerAtIso: string | null | undefined): CountdownSnap
 }
 
 export function useMomentCountdown(triggerAtIso: string | null | undefined): CountdownSnapshot {
-  const [snapshot, setSnapshot] = useState<CountdownSnapshot>(() => computeSnapshot(triggerAtIso));
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
-    setSnapshot(computeSnapshot(triggerAtIso));
     if (!triggerAtIso) return;
-
     const interval = setInterval(() => {
-      setSnapshot(computeSnapshot(triggerAtIso));
+      setNowMs(Date.now());
     }, 1000);
-
     return () => clearInterval(interval);
   }, [triggerAtIso]);
 
-  return snapshot;
+  void nowMs;
+  return computeSnapshot(triggerAtIso);
 }

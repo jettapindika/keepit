@@ -41,13 +41,21 @@ export interface MochyTabBarProps {
       };
     }
   >;
-  navigation: {
+  emitter?: {
     emit: (event: {
       type: 'tabPress';
       target: string;
       canPreventDefault: boolean;
     }) => { defaultPrevented: boolean };
-    navigate: (name: string, params?: object) => void;
+  };
+  navigateToTab?: (routeKey: string) => void;
+  navigation?: {
+    emit?: (event: {
+      type: 'tabPress';
+      target: string;
+      canPreventDefault: boolean;
+    }) => { defaultPrevented: boolean };
+    navigate?: (name: string, params?: object) => void;
   };
 }
 
@@ -132,7 +140,7 @@ function MochyNavItem({
         onPress();
       }}
       style={styles.tabItem}>
-      <Animated.View style={[styles.tabItemInner, itemStyle]}>
+      <Animated.View pointerEvents="none" style={[styles.tabItemInner, itemStyle]}>
         <SymbolView
           name={iconSpec as never}
           tintColor={isFocused ? colors.ink : colors.inkMuted}
@@ -223,7 +231,7 @@ function CenterCameraShutter({ onPress }: { onPress: () => void }) {
   );
 }
 
-export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps) {
+export function MochyTabBar({ state, descriptors, emitter, navigateToTab, navigation }: MochyTabBarProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useKeepItTheme();
@@ -232,12 +240,13 @@ export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps
 
   const [barWidth, setBarWidth] = useState(0);
 
+  const stateRoutes = state.routes;
   const visibleRoutes = useMemo(() => {
-    const byName = new Map(state.routes.map((r) => [r.name, r]));
+    const byName = new Map(stateRoutes.map((r) => [r.name, r]));
     return DOCK_TAB_ORDER.map((name) => byName.get(name)).filter(
-      (r): r is (typeof state.routes)[number] => Boolean(r)
+      (r): r is (typeof stateRoutes)[number] => Boolean(r)
     );
-  }, [state.routes]);
+  }, [stateRoutes]);
 
   const activeRouteName = state.routes[state.index]?.name ?? 'index';
 
@@ -312,14 +321,22 @@ export function MochyTabBar({ state, descriptors, navigation }: MochyTabBarProps
     const isFocused = activeRouteName === route.name;
 
     const onPress = () => {
-      const event = navigation.emit({
-        type: 'tabPress',
-        target: route.key,
-        canPreventDefault: true,
-      });
-      if (event.defaultPrevented || isFocused) return;
+      if (isFocused) return;
+      const emitFn = emitter?.emit ?? navigation?.emit;
+      if (emitFn) {
+        const event = emitFn({
+          type: 'tabPress',
+          target: route.key,
+          canPreventDefault: true,
+        });
+        if (event?.defaultPrevented) return;
+      }
+      if (navigateToTab) {
+        navigateToTab(route.key);
+        return;
+      }
       const href = route.name === 'index' ? '/(tabs)' : (`/(tabs)/${route.name}` as never);
-      router.replace(href);
+      router.navigate(href);
     };
 
     return (

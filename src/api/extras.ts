@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { buildSimulatedDualPhotos, DEFAULT_WARM_BLURHASH } from '@/api/moments';
+import { buildSimulatedDualPhotos, DEFAULT_WARM_BLURHASH, todayLocalDateString } from '@/api/moments';
 import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
@@ -204,14 +204,18 @@ export async function fetchMonthMemories(params: {
               day.mine.front_photo_path;
           }
           if (day.partner) {
-            day.partner.back_photo_url =
-              urlMap[day.partner.back_photo_path] ??
-              day.partner.back_photo_url ??
-              day.partner.back_photo_path;
-            day.partner.front_photo_url =
-              urlMap[day.partner.front_photo_path] ??
-              day.partner.front_photo_url ??
-              day.partner.front_photo_path;
+            if (day.partner.snap_once) {
+              day.partner = null;
+            } else {
+              day.partner.back_photo_url =
+                urlMap[day.partner.back_photo_path] ??
+                day.partner.back_photo_url ??
+                day.partner.back_photo_path;
+              day.partner.front_photo_url =
+                urlMap[day.partner.front_photo_path] ??
+                day.partner.front_photo_url ??
+                day.partner.front_photo_path;
+            }
           }
         })
       );
@@ -230,16 +234,29 @@ export async function fetchMonthMemories(params: {
 
   const state = await readLocalMoments();
   const monthPrefix = `${String(params.year).padStart(4, '0')}-${String(params.month).padStart(2, '0')}-`;
-  const todayUtc = new Date().toISOString().slice(0, 10);
+  const todayLocal = todayLocalDateString();
 
   const promptsInMonth = Object.values(state.prompts).filter(
     (p) => p.couple_id === params.coupleId && p.prompt_date.startsWith(monthPrefix)
   );
 
+  const uniqueMomentsMap = new Map<string, MomentRecord>();
+  for (const rec of Object.values(state.moments)) {
+    if (!rec?.id) continue;
+    const prev = uniqueMomentsMap.get(rec.id);
+    if (!prev || rec.posted_at >= prev.posted_at) {
+      uniqueMomentsMap.set(rec.id, rec);
+    }
+  }
+  const allUniqueMoments = Array.from(uniqueMomentsMap.values()).sort((a, b) =>
+    a.posted_at < b.posted_at ? 1 : -1
+  );
+
   const days: MemoryDayRecord[] = [];
 
   for (const prompt of promptsInMonth) {
-    const promptMoments = Object.values(state.moments).filter((m) => {
+    const promptMoments = allUniqueMoments.filter((m) => {
+      if (m.snap_once) return false;
       const mDate = (m.posted_at || m.captured_at || '').slice(0, 10);
       return (
         m.prompt_id === prompt.id ||
@@ -253,7 +270,7 @@ export async function fetchMonthMemories(params: {
       promptMoments.find((m) => m.user_id !== params.userId && !m.user_id.startsWith('friend_')) ??
       null;
 
-    const canRevealPartner = prompt.prompt_date < todayUtc || Boolean(rawMine);
+    const canRevealPartner = prompt.prompt_date < todayLocal || Boolean(rawMine);
 
     const mine: MomentRecord | null = rawMine
       ? {
@@ -264,7 +281,7 @@ export async function fetchMonthMemories(params: {
       : null;
 
     const partner: MomentRecord | null =
-      rawPartner && canRevealPartner
+      rawPartner && canRevealPartner && !rawPartner.snap_once
         ? {
             ...rawPartner,
             back_photo_url: rawPartner.back_photo_url ?? rawPartner.back_photo_path,

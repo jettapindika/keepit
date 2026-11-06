@@ -16,7 +16,7 @@ import { WidgetSnapshotPayload } from '@/types/database';
 
 import {
   isKeepItWidgetPinned,
-  requestPinKeepItWidget,
+  requestPinKeepItWidgetDetailed,
 } from '../../../modules/keepit-widget-bridge';
 
 export type WidgetSizePreset = 'small' | 'medium';
@@ -92,7 +92,7 @@ export function WidgetPreviewCard({
   const [syncing, setSyncing] = useState(false);
   const [pinning, setPinning] = useState(false);
   const [widgetPinned, setWidgetPinned] = useState(false);
-
+  const [pinStatusMessage, setPinStatusMessage] = useState<string | null>(null);
   const widgetPopScale = useSharedValue(1);
   const tapPressScale = useSharedValue(1);
 
@@ -171,9 +171,13 @@ export function WidgetPreviewCard({
       if (onPressSyncNow) {
         await onPressSyncNow();
       }
-      const ok = await requestPinKeepItWidget();
-      if (ok) {
+      const pinRes = await requestPinKeepItWidgetDetailed();
+      if (pinRes.pinned) {
         setWidgetPinned(true);
+        setPinStatusMessage(null);
+      } else {
+        setWidgetPinned(false);
+        setPinStatusMessage(pinRes.message);
       }
       if (motionEnabled) {
         widgetPopScale.set(0.95);
@@ -658,6 +662,20 @@ export function WidgetPreviewCard({
             <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
             <Text style={[styles.pinnedConfirmationText, { color: colors.ink }]}>
               Widget pinned & active on Home Screen
+            </Text>
+          </View>
+        ) : pinStatusMessage ? (
+          <View
+            style={[
+              styles.pinnedConfirmationBadge,
+              {
+                backgroundColor: colors.surfaceElevated,
+                borderColor: colors.border,
+                borderRadius: radii.card,
+              },
+            ]}>
+            <Text style={[styles.pinnedConfirmationText, { color: colors.inkMuted }]}>
+              {pinStatusMessage}
             </Text>
           </View>
         ) : null}

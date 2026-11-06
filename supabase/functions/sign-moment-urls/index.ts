@@ -56,17 +56,37 @@ Deno.serve(async (req) => {
 
   const pathsToSign: string[] = [];
   if (mine) {
-    pathsToSign.push(mine.back_photo_path, mine.front_photo_path);
+    if (mine.back_photo_path) pathsToSign.push(mine.back_photo_path);
+    if (mine.front_photo_path) pathsToSign.push(mine.front_photo_path);
   }
   if (mine && partner) {
-    pathsToSign.push(partner.back_photo_path, partner.front_photo_path);
+    const viewedList = Array.isArray(partner.viewed_by_user_ids)
+      ? partner.viewed_by_user_ids
+      : [];
+    const openedIso =
+      partner.snap_opened_at_by_user && typeof partner.snap_opened_at_by_user === 'object'
+        ? (partner.snap_opened_at_by_user as Record<string, string>)[user.id]
+        : undefined;
+    const durationSec = Number(partner.snap_duration_seconds ?? 15);
+    const expiredByTimer =
+      Boolean(openedIso) &&
+      Date.now() >= new Date(openedIso!).getTime() + durationSec * 1000;
+    const snapExpired =
+      Boolean(partner.snap_once) && (viewedList.includes(user.id) || expiredByTimer);
+
+    if (!snapExpired) {
+      if (partner.back_photo_path) pathsToSign.push(partner.back_photo_path);
+      if (partner.front_photo_path) pathsToSign.push(partner.front_photo_path);
+    }
   }
 
   const signedMap: Record<string, string> = {};
   if (pathsToSign.length > 0) {
+    // Short-lived 60s TTL for Snap Once media, 3600s for regular Moments
+    const ttlSeconds = partner?.snap_once ? 60 : 3600;
     const { data: signed } = await admin.storage
       .from('moments')
-      .createSignedUrls(pathsToSign, 3600);
+      .createSignedUrls(pathsToSign, ttlSeconds);
 
     for (const item of signed ?? []) {
       if (item.path && item.signedUrl) {

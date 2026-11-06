@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { useSessionStore } from '@/store/sessionStore';
 import {
   CoupleEventRecord,
   DirectMessageRecord,
@@ -29,19 +30,32 @@ export type CoupleSyncPacket =
   | { kind: 'moment_upsert'; moment: MomentRecord }
   | { kind: 'moment_delete'; momentId: string; userId: string }
   | { kind: 'moment_comment'; momentId: string; comment: MomentCommentRecord }
+  | { kind: 'moment_comment_delete'; momentId: string; commentId: string }
   | { kind: 'moment_reaction'; momentId: string; userId: string; emoji: string | null }
-  | { kind: 'moment_snap_viewed'; momentId: string; viewerId: string; openedAtIso: string; expired?: boolean }
+  | {
+      kind: 'moment_snap_viewed';
+      momentId: string;
+      viewerId: string;
+      openedAtIso: string;
+      expired?: boolean;
+    }
   | { kind: 'status_upsert'; status: StatusRecord }
   | { kind: 'status_clear'; userId: string }
   | { kind: 'location_upsert'; location: LocationShareRecord; event?: CoupleEventRecord }
   | { kind: 'nudge_sent'; event: CoupleEventRecord }
   | { kind: 'dm_upsert'; message: DirectMessageRecord }
-  | { kind: 'dm_reaction'; messageId: string; userId: string; emoji: string }
-  | { kind: 'dm_snap_viewed'; messageId: string; viewerId: string; viewedAtIso: string }
+  | { kind: 'dm_reaction'; messageId: string; userId: string; emoji: string | null }
+  | {
+      kind: 'dm_snap_viewed';
+      messageId: string;
+      viewerId: string;
+      openedAtIso?: string;
+      viewedAtIso: string;
+      expired?: boolean;
+    }
   | { kind: 'profile_upsert'; profile: UserProfile }
   | { kind: 'friend_added'; friend: FriendRecord }
   | { kind: 'unpair'; actorId: string };
-
 let activeCoupleChannel: RealtimeChannel | null = null;
 let activeCoupleChannelId: string | null = null;
 
@@ -186,6 +200,25 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
     return;
   }
+  if (packet.kind === 'moment_comment_delete') {
+    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw) as {
+      prompts: Record<string, unknown>;
+      moments: Record<string, MomentRecord>;
+      streaks: Record<string, unknown>;
+    };
+    for (const [k, rec] of Object.entries(state.moments)) {
+      if (rec.id === packet.momentId) {
+        state.moments[k] = {
+          ...rec,
+          comments: (rec.comments ?? []).filter((c) => c.id !== packet.commentId),
+        };
+      }
+    }
+    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    return;
+  }
 
   if (packet.kind === 'moment_reaction') {
     const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
@@ -223,6 +256,7 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     };
     for (const [k, rec] of Object.entries(state.moments)) {
       if (rec.id === packet.momentId) {
+        if (rec.user_id === packet.viewerId) continue;
         const openedMap = { ...(rec.snap_opened_at_by_user ?? {}) };
         if (!openedMap[packet.viewerId]) {
           openedMap[packet.viewerId] = packet.openedAtIso;
@@ -231,10 +265,24 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         if (packet.expired) {
           viewedSet.add(packet.viewerId);
         }
+        const currentViewerId = useSessionStore.getState().user?.id;
+        const shouldScrubOnThisDevice = Boolean(
+          packet.expired && currentViewerId && currentViewerId === packet.viewerId
+        );
         state.moments[k] = {
           ...rec,
           snap_opened_at_by_user: openedMap,
           viewed_by_user_ids: Array.from(viewedSet),
+          ...(shouldScrubOnThisDevice
+            ? {
+                back_photo_path: '',
+                front_photo_path: '',
+                back_photo_url: null,
+                front_photo_url: null,
+                video_uri: null,
+                caption: null,
+              }
+            : {}),
         };
       }
     }
@@ -305,9 +353,15 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     const list = JSON.parse(raw) as DirectMessageRecord[];
     const next = list.map((m) => {
       if (m.id !== packet.messageId) return m;
+      const nextReactions = { ...(m.reactions ?? {}) };
+      if (packet.emoji) {
+        nextReactions[packet.userId] = packet.emoji;
+      } else {
+        delete nextReactions[packet.userId];
+      }
       return {
         ...m,
-        reactions: { ...(m.reactions ?? {}), [packet.userId]: packet.emoji },
+        reactions: nextReactions,
       };
     });
     await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
@@ -320,12 +374,23 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     const list = JSON.parse(raw) as DirectMessageRecord[];
     const next = list.map((m) => {
       if (m.id !== packet.messageId) return m;
+      if (m.sender_id === packet.viewerId) return m;
+      const openedMap = { ...(m.snap_opened_at_by_user ?? {}) };
+      if (!openedMap[packet.viewerId]) {
+        openedMap[packet.viewerId] = packet.openedAtIso ?? packet.viewedAtIso;
+      }
       const viewed = new Set(m.viewed_by_user_ids ?? []);
-      viewed.add(packet.viewerId);
+      const isExpired = packet.expired !== false;
+      if (isExpired) {
+        viewed.add(packet.viewerId);
+      }
       return {
         ...m,
+        snap_opened_at_by_user: openedMap,
         viewed_by_user_ids: Array.from(viewed),
-        viewed_at: packet.viewedAtIso,
+        viewed_at: isExpired ? packet.viewedAtIso : (m.viewed_at ?? null),
+        text: isExpired ? '' : m.text,
+        media_uri: isExpired ? null : m.media_uri,
       };
     });
     await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));

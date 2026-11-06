@@ -79,7 +79,7 @@ export function RevealOnAppear({
       (delayMs + nextCascadeDelayMs(cascade)) / Math.max(0.25, motionSpeed)
     );
     const cfg = mochyTiming(220, MOCHY_REVEAL_EASING, motionEnabled, motionSpeed);
-    progress.set(withTiming(1, cfg));
+    progress.set(withDelay(waitMs, withTiming(1, cfg)));
   }, [revealKey, cascade, delayMs, motionEnabled, motionSpeed, progress]);
 
   const animatedStyle = useAnimatedStyle(() => {

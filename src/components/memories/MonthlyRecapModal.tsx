@@ -47,8 +47,8 @@ export function MonthlyRecapModal({
   const motionEnabled = useSessionStore((s) => s.motionEnabled);
   const motionSpeed = useSessionStore((s) => s.motionSpeed);
 
-  const [stepIndex, setStepIndex] = useState(0);
-
+  const [stepState, setStepState] = useState<{ openGen: number; idx: number }>({ openGen: 0, idx: 0 });
+  const stepIndex = stepState.idx;
   // Computed strictly from real days[] records
   const recapMetrics = useMemo(() => {
     const togetherDays = [...days]
@@ -113,7 +113,6 @@ export function MonthlyRecapModal({
 
   useEffect(() => {
     if (visible) {
-      setStepIndex(0);
       if (motionEnabled) {
         deckScale.set(0.94);
         deckOpacity.set(0);
@@ -134,7 +133,7 @@ export function MonthlyRecapModal({
       void Haptics.selectionAsync();
     }
 
-    setStepIndex(bounded);
+    setStepState((prev) => ({ openGen: prev.openGen, idx: bounded }));
     if (motionEnabled) {
       deckScale.set(0.96);
       deckOpacity.set(0.72);

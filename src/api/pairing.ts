@@ -303,20 +303,72 @@ export async function upsertUserProfile(params: {
 
   const db = await readLocalDb();
   const existing = db.users[params.userId];
-  const cleanedUsername =
+  const rawRequestedUsername =
     params.username !== undefined
-      ? params.username.trim().toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 24)
-      : existing?.username || buildDefaultUsername(trimmedName, params.userId);
+      ? params.username.trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9._]/g, '').slice(0, 24)
+      : undefined;
+
+  if (rawRequestedUsername !== undefined && rawRequestedUsername.length < 2) {
+    throw new Error('Username must be between 2 and 24 characters (letters, numbers, . or _).');
+  }
+
+  const candidateUsername =
+    rawRequestedUsername ??
+    existing?.username ??
+    buildDefaultUsername(trimmedName, params.userId);
+
+  const duplicateLocalUser = Object.values(db.users).find(
+    (u) =>
+      u.id !== params.userId &&
+      u.username &&
+      u.username.toLowerCase() === candidateUsername.toLowerCase()
+  );
+  if (duplicateLocalUser) {
+    throw new Error(`@${candidateUsername} is already taken. Choose another handle.`);
+  }
+
+  if (isSupabaseConfigured && supabase && rawRequestedUsername) {
+    try {
+      const { data: conflictRow, error: conflictErr } = await supabase
+        .from('users')
+        .select('id, username')
+        .ilike('username', candidateUsername)
+        .neq('id', params.userId)
+        .maybeSingle();
+      if (!conflictErr && conflictRow) {
+        throw new Error(`@${candidateUsername} is already taken. Choose another handle.`);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('already taken')) {
+        throw err;
+      }
+    }
+  }
 
   const profile: UserProfile = {
     id: params.userId,
     display_name: trimmedName,
-    username: cleanedUsername || buildDefaultUsername(trimmedName, params.userId),
-    bio: params.bio !== undefined ? params.bio.trim().slice(0, 140) : (existing?.bio ?? 'Keeping daily Moments alive ✨'),
-    pronouns: params.pronouns !== undefined ? params.pronouns.trim().slice(0, 24) : (existing?.pronouns ?? ''),
-    mood_song: params.moodSong !== undefined ? params.moodSong.trim().slice(0, 60) : (existing?.mood_song ?? 'Sunset Lover · Petit Biscuit'),
-    banner_color: params.bannerColor !== undefined ? params.bannerColor : (existing?.banner_color ?? '#D95D39'),
-    website: params.website !== undefined ? params.website.trim().slice(0, 60) : (existing?.website ?? ''),
+    username: candidateUsername,
+    bio:
+      params.bio !== undefined
+        ? params.bio.trim().slice(0, 140)
+        : (existing?.bio ?? 'Keeping daily Moments alive ✨'),
+    pronouns:
+      params.pronouns !== undefined
+        ? params.pronouns.trim().slice(0, 24)
+        : (existing?.pronouns ?? ''),
+    mood_song:
+      params.moodSong !== undefined
+        ? params.moodSong.trim().slice(0, 60)
+        : (existing?.mood_song ?? 'Sunset Lover · Petit Biscuit'),
+    banner_color:
+      params.bannerColor !== undefined
+        ? params.bannerColor
+        : (existing?.banner_color ?? '#D95D39'),
+    website:
+      params.website !== undefined
+        ? params.website.trim().slice(0, 80)
+        : (existing?.website ?? ''),
     friend_code: existing?.friend_code ?? buildFriendCode(params.userId, trimmedName),
     is_private:
       params.isPrivate !== undefined ? params.isPrivate : (existing?.is_private ?? false),
@@ -337,23 +389,58 @@ export async function upsertUserProfile(params: {
 
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase
+      const { data: upsertedRow, error: fullUpsertErr } = await supabase
         .from('users')
         .upsert(
           {
             id: params.userId,
-            display_name: trimmedName,
+            display_name: profile.display_name,
+            username: profile.username,
+            bio: profile.bio,
+            pronouns: profile.pronouns,
+            mood_song: profile.mood_song,
+            banner_color: profile.banner_color,
+            website: profile.website,
+            friend_code: profile.friend_code,
+            is_private: profile.is_private,
+            dump_mode: profile.dump_mode,
+            avatar_path: profile.avatar_path,
             timezone: tz,
           },
           { onConflict: 'id' }
         )
         .select('*')
         .single();
-    } catch {
-      // Keep local profile when Postgres table is not migrated
+
+      if (fullUpsertErr) {
+        if (fullUpsertErr.code === '23505') {
+          throw new Error(`@${candidateUsername} is already taken. Choose another handle.`);
+        }
+        await supabase
+          .from('users')
+          .upsert(
+            {
+              id: params.userId,
+              display_name: trimmedName,
+              avatar_path: profile.avatar_path,
+              timezone: tz,
+            },
+            { onConflict: 'id' }
+          )
+          .select('*')
+          .single();
+      } else if (upsertedRow) {
+        const merged = { ...profile, ...(upsertedRow as Partial<UserProfile>) };
+        db.users[params.userId] = merged;
+        await writeLocalDb(db);
+        return merged;
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('already taken')) {
+        throw err;
+      }
     }
   }
-
   return profile;
 }
 
@@ -524,40 +611,6 @@ export async function redeemInviteCode(
       selfProfile: joinerProfile,
     });
     return realtimeResult;
-  }
-
-  // Offline / async fallback: if the 6-character code matches the valid KeepIt invite alphabet,
-  // deterministically pair the couple space so offline/asymmetric code entry still succeeds cleanly.
-  if (/^[A-Z2-9]{6}$/.test(cleaned)) {
-    const deterministicCoupleId = `couple_code_${cleaned}`;
-    const syntheticHostId = `partner_host_${cleaned}`;
-    const syntheticPartner: UserProfile = db.users[syntheticHostId] ?? {
-      id: syntheticHostId,
-      display_name: 'Partner',
-      avatar_path: null,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
-      push_token: null,
-      created_at: new Date().toISOString(),
-    };
-    const pairedCouple: CoupleRecord = {
-      id: deterministicCoupleId,
-      user_a_id: syntheticHostId,
-      user_b_id: userId,
-      invite_code: cleaned,
-      invite_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      state: 'active',
-      paired_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
-    await saveCompletedPairingLocally({
-      couple: pairedCouple,
-      partner: syntheticPartner,
-      selfProfile: joinerProfile,
-    });
-    return {
-      couple: pairedCouple,
-      partner: syntheticPartner,
-    };
   }
 
   throw new PairingError('CODE_NOT_FOUND', KNOWN_ERROR_MESSAGES.CODE_NOT_FOUND);

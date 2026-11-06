@@ -236,6 +236,7 @@ function withKeepItWidgets(config, props = {}) {
   nextConfig = withIosWidgetTargetFiles(nextConfig, appGroupId);
   nextConfig = withAndroidWidgetStrings(nextConfig);
   nextConfig = withAndroidWidgetManifest(nextConfig);
+  nextConfig = withAndroidGlanceDependencies(nextConfig);
   nextConfig = withAndroidWidgetResources(nextConfig);
   return nextConfig;
 }

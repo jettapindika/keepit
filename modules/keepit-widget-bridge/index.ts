@@ -7,11 +7,23 @@ import { WidgetSnapshotPayload } from '@/types/database';
 export const WIDGET_SNAPSHOT_STORAGE_KEY = 'keepit.widget_snapshot.v1';
 export const WIDGET_PINNED_STORAGE_KEY = 'keepit.widget_pinned.v1';
 
+export interface PinWidgetResult {
+  pinned: boolean;
+  mode: 'native_pinned' | 'manual_instructions' | 'unsupported';
+  message: string;
+}
+
+export interface NativeCompositeExportResult {
+  fileUri?: string;
+  savedToGallery?: boolean;
+}
+
 interface KeepItWidgetBridgeNativeModule {
   syncWidgetSnapshotAsync(snapshotJson: string): Promise<void>;
   clearWidgetSnapshotAsync(): Promise<void>;
   getLastSyncedWidgetSnapshotAsync?(): Promise<string | null>;
   requestPinWidgetAsync?(): Promise<boolean>;
+  exportCompositeMomentJpegAsync?(payloadJson: string): Promise<string>;
 }
 
 function getNativeBridge(): KeepItWidgetBridgeNativeModule | null {
@@ -113,25 +125,89 @@ export async function getLastSyncedWidgetSnapshot(): Promise<WidgetSnapshotPaylo
 
 /**
  * Requests pinning the KeepIt widget directly onto the user's Home Screen on Android O+
- * (API 26+) via `AppWidgetManager.requestPinAppWidget`, persisting pinned state locally
- * so in-app previews and Expo Go / web / iOS sessions also reflect confirmation.
+ * (API 26+) via `AppWidgetManager.requestPinAppWidget`. Returns truthful platform status
+ * instead of fabricating pin success on iOS, Web, or unsupported launchers.
  */
-export async function requestPinKeepItWidget(): Promise<boolean> {
+export async function requestPinKeepItWidgetDetailed(): Promise<PinWidgetResult> {
   const nativeBridge = getNativeBridge();
-  if (Platform.OS === 'android' && nativeBridge?.requestPinWidgetAsync) {
-    try {
-      const requested = await nativeBridge.requestPinWidgetAsync();
-      if (requested) {
-        await AsyncStorage.setItem(WIDGET_PINNED_STORAGE_KEY, 'true');
-        return true;
+  if (Platform.OS === 'android') {
+    if (nativeBridge?.requestPinWidgetAsync) {
+      try {
+        const requested = await nativeBridge.requestPinWidgetAsync();
+        if (requested) {
+          await AsyncStorage.setItem(WIDGET_PINNED_STORAGE_KEY, 'true');
+          return {
+            pinned: true,
+            mode: 'native_pinned',
+            message: 'System widget pin prompt opened on your Android Home Screen.',
+          };
+        }
+        return {
+          pinned: false,
+          mode: 'manual_instructions',
+          message:
+            'Your launcher does not support one-tap pinning. Long-press your Home Screen → Widgets → KeepIt.',
+        };
+      } catch {
+        return {
+          pinned: false,
+          mode: 'manual_instructions',
+          message:
+            'Widget extension requires a native Android build. Long-press your Home Screen → Widgets → KeepIt.',
+        };
       }
-    } catch {
-      // Fall back to persisted local pin state when running in Expo Go / non-native preview
     }
+    return {
+      pinned: false,
+      mode: 'manual_instructions',
+      message: 'Long-press your Android Home Screen → Widgets → KeepIt to add the widget.',
+    };
   }
 
-  await AsyncStorage.setItem(WIDGET_PINNED_STORAGE_KEY, 'true');
-  return true;
+  if (Platform.OS === 'ios') {
+    return {
+      pinned: false,
+      mode: 'manual_instructions',
+      message:
+        'Snapshot synced! On iOS, long-press your Home Screen → tap + in the top corner → search "KeepIt".',
+    };
+  }
+
+  return {
+    pinned: false,
+    mode: 'unsupported',
+    message: 'Home Screen widgets require the iOS or Android mobile app.',
+  };
+}
+
+export async function requestPinKeepItWidget(): Promise<boolean> {
+  const res = await requestPinKeepItWidgetDetailed();
+  return res.pinned;
+}
+
+export async function exportNativeCompositeMomentJpeg(
+  payload: Record<string, unknown>
+): Promise<NativeCompositeExportResult | null> {
+  const nativeBridge = getNativeBridge();
+  if (!nativeBridge?.exportCompositeMomentJpegAsync) {
+    return null;
+  }
+  try {
+    const raw = await nativeBridge.exportCompositeMomentJpegAsync(JSON.stringify(payload));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const fileUri = 'fileUri' in parsed && typeof parsed.fileUri === 'string' ? parsed.fileUri : undefined;
+      const savedToGallery =
+        'savedToGallery' in parsed && typeof parsed.savedToGallery === 'boolean'
+          ? parsed.savedToGallery
+          : undefined;
+      return { fileUri, savedToGallery };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export async function isKeepItWidgetPinned(): Promise<boolean> {

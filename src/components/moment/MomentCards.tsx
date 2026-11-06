@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -21,8 +22,11 @@ import Animated, {
 import {
   addMomentComment,
   buildSimulatedDualPhotos,
+  deleteMomentComment,
   deleteMomentPost,
   formatLateDuration,
+  getSnapOnceRemainingSeconds,
+  isSnapOnceExpiredForViewer,
   markSnapOnceMomentState,
   toggleMomentReaction,
   updateMomentDetails,
@@ -30,6 +34,7 @@ import {
 import {
   CURATED_MUSIC_TRACKS,
   getFilterPresetMeta,
+  KNOWN_DIRECTORY_PROFILES,
   MOMENT_FILTER_PRESETS,
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
@@ -48,8 +53,14 @@ import {
   TaggedPerson,
 } from '@/types/database';
 import {
+  getActiveMusicPreviewTrackId,
+  stopMusicPreview,
+  subscribeMusicPreviewState,
+  toggleMusicTrackPreview,
+} from '@/utils/audioPreview';
+import {
   buildMomentCompositeSvgDataUri,
-  downloadOrShareMomentUri,
+  exportAndShareCompositeMoment,
   STORY_THEME_PRESETS,
   StoryThemePreset,
 } from '@/utils/momentExport';
@@ -117,52 +128,63 @@ export function DualMomentCard({
     editableCaption ??
     Boolean(moment?.user_id && moment.user_id === effectiveUserId);
 
-  // Local optimistic state synced with `moment` prop updates
-  const [localCaption, setLocalCaption] = useState<string | null>(
-    propCaption !== undefined ? propCaption : (moment?.caption ?? null)
-  );
-  const [localFilterPreset, setLocalFilterPreset] = useState<MomentFilterPreset>(
-    moment?.filter_preset ?? 'normal'
-  );
-  const [localLocationLabel, setLocalLocationLabel] = useState<string | null>(
-    moment?.location_label ?? null
-  );
-  const [localMusicTrack, setLocalMusicTrack] = useState<MusicTrackAttachment | null>(
-    moment?.music_track ?? null
-  );
-  const [localOverlays, setLocalOverlays] = useState<PhotoOverlayItem[]>(
-    moment?.overlays ?? []
-  );
-  const [localSnapOnce, setLocalSnapOnce] = useState<boolean>(Boolean(moment?.snap_once));
-  const [localReactions, setLocalReactions] = useState<Record<string, string>>(
-    moment?.reactions ?? {}
-  );
-  const [localComments, setLocalComments] = useState<MomentCommentRecord[]>(
-    moment?.comments ?? []
-  );
+  const sessionPartner = useSessionStore((s) => s.partner);
+  const overlaySeqRef = useRef(0);
 
-  useEffect(() => {
-    setLocalCaption(propCaption !== undefined ? propCaption : (moment?.caption ?? null));
-    setLocalFilterPreset(moment?.filter_preset ?? 'normal');
-    setLocalLocationLabel(moment?.location_label ?? null);
-    setLocalMusicTrack(moment?.music_track ?? null);
-    setLocalOverlays(moment?.overlays ?? []);
-    setLocalSnapOnce(Boolean(moment?.snap_once));
-    setLocalReactions(moment?.reactions ?? {});
-    setLocalComments(moment?.comments ?? []);
-  }, [
-    moment?.id,
-    moment?.caption,
-    moment?.filter_preset,
-    moment?.location_label,
-    moment?.music_track,
-    moment?.overlays,
-    moment?.snap_once,
-    moment?.reactions,
-    moment?.comments,
-    propCaption,
-  ]);
+  // Local optimistic overrides keyed to moment revision so prop updates sync without setState-in-effect
+  const momentRevisionKey = [
+    moment?.id ?? 'standalone',
+    propCaption ?? moment?.caption ?? '',
+    moment?.filter_preset ?? 'normal',
+    moment?.location_label ?? '',
+    moment?.music_track?.id ?? '',
+    String(moment?.overlays?.length ?? 0),
+    String(Boolean(moment?.snap_once)),
+    JSON.stringify(moment?.reactions ?? {}),
+    String(moment?.comments?.length ?? 0),
+    String(moment?.tagged_users?.length ?? 0),
+  ].join('|');
 
+  const [optimisticRev, setOptimisticRev] = useState(momentRevisionKey);
+  const [optCaption, setOptCaption] = useState<string | null | undefined>(undefined);
+  const [optFilter, setOptFilter] = useState<MomentFilterPreset | undefined>(undefined);
+  const [optLocation, setOptLocation] = useState<string | null | undefined>(undefined);
+  const [optMusic, setOptMusic] = useState<MusicTrackAttachment | null | undefined>(undefined);
+  const [optOverlays, setOptOverlays] = useState<PhotoOverlayItem[] | undefined>(undefined);
+  const [optTaggedUsers, setOptTaggedUsers] = useState<TaggedPerson[] | undefined>(undefined);
+  const [optSnapOnce, setOptSnapOnce] = useState<boolean | undefined>(undefined);
+  const [optReactions, setOptReactions] = useState<Record<string, string> | undefined>(undefined);
+  const [optComments, setOptComments] = useState<MomentCommentRecord[] | undefined>(undefined);
+
+  const useOpt = optimisticRev === momentRevisionKey;
+
+  const localCaption: string | null = useOpt && optCaption !== undefined
+    ? optCaption
+    : (propCaption !== undefined ? propCaption : (moment?.caption ?? null));
+  const localFilterPreset: MomentFilterPreset = useOpt && optFilter !== undefined
+    ? optFilter
+    : (moment?.filter_preset ?? 'normal');
+  const localLocationLabel: string | null = useOpt && optLocation !== undefined
+    ? optLocation
+    : (moment?.location_label ?? null);
+  const localMusicTrack: MusicTrackAttachment | null = useOpt && optMusic !== undefined
+    ? optMusic
+    : (moment?.music_track ?? null);
+  const localOverlays: PhotoOverlayItem[] = useOpt && optOverlays !== undefined
+    ? optOverlays
+    : (moment?.overlays ?? []);
+  const localTaggedUsers: TaggedPerson[] = useOpt && optTaggedUsers !== undefined
+    ? optTaggedUsers
+    : (moment?.tagged_users ?? []);
+  const localSnapOnce: boolean = useOpt && optSnapOnce !== undefined
+    ? optSnapOnce
+    : Boolean(moment?.snap_once);
+  const localReactions: Record<string, string> = useOpt && optReactions !== undefined
+    ? optReactions
+    : (moment?.reactions ?? {});
+  const localComments: MomentCommentRecord[] = useOpt && optComments !== undefined
+    ? optComments
+    : (moment?.comments ?? []);
   // Partner Image Fix (Item #2): always guarantee non-empty dual photos once unlocked
   const fallbackPhotos = buildSimulatedDualPhotos({
     authorLabel: authorName,
@@ -192,8 +214,12 @@ export function DualMomentCard({
   const retakeCount = propRetakeCount ?? moment?.retake_count ?? 0;
   const mediaType: MomentMediaType = moment?.media_type ?? 'photo';
   const videoDurationSec = moment?.video_duration_seconds ?? 6;
-  const taggedUsers: TaggedPerson[] = moment?.tagged_users ?? [];
-
+  const videoUri: string | null = moment?.video_uri ?? null;
+  const isRealPlayableVideo = Boolean(
+    mediaType === 'video' &&
+      videoUri &&
+      !videoUri.startsWith('data:image/svg+xml')
+  );
   // Video loop playback state (Item #18)
   const [videoPlaying, setVideoPlaying] = useState(mediaType === 'video');
   const [videoProgressPct, setVideoProgressPct] = useState(0);
@@ -218,49 +244,89 @@ export function DualMomentCard({
     };
   }, [mediaType, videoPlaying, videoDurationSec]);
 
-  // Music preview state (Item #9)
-  const [musicPlaying, setMusicPlaying] = useState(false);
-
-  // Snap Once 15s disappearing mode state (Item #14)
-  const alreadyViewed = Boolean(
-    moment?.viewed_by_user_ids?.includes(effectiveUserId)
+  // Real audible Music Preview state synced with global single-track player
+  const [activeAudioTrackId, setActiveAudioTrackId] = useState<string | null>(() =>
+    getActiveMusicPreviewTrackId()
   );
-  const [snapOpened, setSnapOpened] = useState(false);
-  const [snapExpired, setSnapExpired] = useState(alreadyViewed);
-  const [snapSecondsLeft, setSnapSecondsLeft] = useState(15);
+  const musicPlaying = Boolean(localMusicTrack && activeAudioTrackId === localMusicTrack.id);
+
+  useEffect(() => {
+    const unsub = subscribeMusicPreviewState((nextId) => {
+      setActiveAudioTrackId(nextId);
+    });
+    return () => {
+      unsub();
+      if (localMusicTrack && getActiveMusicPreviewTrackId() === localMusicTrack.id) {
+        stopMusicPreview();
+      }
+    };
+  }, [localMusicTrack]);
+
+  // Authoritative Snap Once 15s disappearing mode state (resumes across tab switches)
+  const propSnapExpired = Boolean(
+    moment &&
+      localSnapOnce &&
+      !ownerFlag &&
+      isSnapOnceExpiredForViewer(
+        {
+          snap_once: localSnapOnce,
+          user_id: moment.user_id,
+          viewed_by_user_ids: moment.viewed_by_user_ids,
+          snap_opened_at_by_user: moment.snap_opened_at_by_user,
+          snap_duration_seconds: moment.snap_duration_seconds,
+        },
+        effectiveUserId
+      )
+  );
+
+  const [localExpiredFlag, setLocalExpiredFlag] = useState(false);
+  const snapExpired = propSnapExpired || localExpiredFlag;
+
+  const initialRemaining =
+    moment && localSnapOnce && !ownerFlag && !snapExpired
+      ? getSnapOnceRemainingSeconds(
+          {
+            snap_once: localSnapOnce,
+            user_id: moment.user_id,
+            viewed_by_user_ids: moment.viewed_by_user_ids,
+            snap_opened_at_by_user: moment.snap_opened_at_by_user,
+            snap_duration_seconds: moment.snap_duration_seconds,
+          },
+          effectiveUserId
+        )
+      : null;
+
+  const [snapOpened, setSnapOpened] = useState<boolean>(() =>
+    Boolean(initialRemaining !== null && initialRemaining > 0)
+  );
+  const [snapSecondsLeft, setSnapSecondsLeft] = useState<number>(() =>
+    initialRemaining !== null && initialRemaining > 0 ? initialRemaining : 15
+  );
   const snapTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    setSnapExpired(Boolean(moment?.viewed_by_user_ids?.includes(effectiveUserId)));
-  }, [moment?.id, moment?.viewed_by_user_ids, effectiveUserId]);
-
-  useEffect(() => {
-    return () => {
+    if (!localSnapOnce || ownerFlag || snapExpired) {
       clearInterval(snapTimerRef.current);
-    };
-  }, []);
+      if (propSnapExpired && moment?.id && !moment.viewed_by_user_ids?.includes(effectiveUserId)) {
+        void markSnapOnceMomentState({
+          momentId: moment.id,
+          coupleId: effectiveCoupleId,
+          viewerId: effectiveUserId,
+          expired: true,
+        }).then(() => {
+          void onUpdated?.();
+        });
+      }
+      return;
+    }
+    if (!snapOpened) return;
 
-  const handleOpenSnapOnce = () => {
-    if (snapOpened || snapExpired) return;
-    if (Platform.OS !== 'web') {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-    setSnapOpened(true);
-    setSnapSecondsLeft(15);
-    if (moment?.id) {
-      void markSnapOnceMomentState({
-        momentId: moment.id,
-        coupleId: effectiveCoupleId,
-        viewerId: effectiveUserId,
-        expired: false,
-      });
-    }
     clearInterval(snapTimerRef.current);
     snapTimerRef.current = setInterval(() => {
       setSnapSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(snapTimerRef.current);
-          setSnapExpired(true);
+          setLocalExpiredFlag(true);
           if (moment?.id) {
             void markSnapOnceMomentState({
               momentId: moment.id,
@@ -276,6 +342,55 @@ export function DualMomentCard({
         return prev - 1;
       });
     }, 1000) as unknown as number;
+
+    return () => {
+      clearInterval(snapTimerRef.current);
+    };
+  }, [
+    localSnapOnce,
+    ownerFlag,
+    snapExpired,
+    propSnapExpired,
+    snapOpened,
+    moment?.id,
+    moment?.viewed_by_user_ids,
+    effectiveCoupleId,
+    effectiveUserId,
+    onUpdated,
+  ]);
+
+  const handleOpenSnapOnce = () => {
+    if (snapOpened || snapExpired || ownerFlag) return;
+    if (Platform.OS !== 'web') {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    const rem =
+      moment
+        ? (getSnapOnceRemainingSeconds(
+            {
+              snap_once: localSnapOnce,
+              user_id: moment.user_id,
+              viewed_by_user_ids: moment.viewed_by_user_ids,
+              snap_opened_at_by_user: moment.snap_opened_at_by_user,
+              snap_duration_seconds: moment.snap_duration_seconds,
+            },
+            effectiveUserId
+          ) ?? 15)
+        : 15;
+    if (rem <= 0) {
+      setLocalExpiredFlag(true);
+      return;
+    }
+    setSnapSecondsLeft(rem);
+    setSnapOpened(true);
+    if (moment?.id) {
+      void markSnapOnceMomentState({
+        momentId: moment.id,
+        coupleId: effectiveCoupleId,
+        viewerId: effectiveUserId,
+        expired: false,
+      });
+    }
   };
 
   // Owner CRUD editor state (Item #11)
@@ -291,6 +406,8 @@ export function DualMomentCard({
   const [draftMusic, setDraftMusic] = useState<MusicTrackAttachment | null>(localMusicTrack);
   const [draftOverlays, setDraftOverlays] = useState<PhotoOverlayItem[]>(localOverlays);
   const [draftOverlayText, setDraftOverlayText] = useState('');
+  const [draftOverlayBgStyle, setDraftOverlayBgStyle] = useState<'glass' | 'solid' | 'neon'>('glass');
+  const [draftTaggedUsers, setDraftTaggedUsers] = useState<TaggedPerson[]>(localTaggedUsers);
   const [draftSnapOnce, setDraftSnapOnce] = useState(localSnapOnce);
 
   // Comments & Reactions state (Item #13)
@@ -328,20 +445,49 @@ export function DualMomentCard({
     setDraftMusic(localMusicTrack);
     setDraftOverlays(localOverlays);
     setDraftOverlayText('');
+    setDraftOverlayBgStyle('glass');
+    setDraftTaggedUsers(localTaggedUsers);
     setDraftSnapOnce(localSnapOnce);
     setConfirmingDelete(false);
     setCrudError(null);
     setEditing(true);
   };
 
+  const availableTagCandidates: TaggedPerson[] = [
+    ...(sessionPartner
+      ? [
+          {
+            userId: sessionPartner.id,
+            displayName: sessionPartner.display_name,
+            username:
+              sessionPartner.username ||
+              sessionPartner.display_name.toLowerCase().replace(/\s+/g, ''),
+          },
+        ]
+      : []),
+    ...KNOWN_DIRECTORY_PROFILES.map((p) => ({
+      userId: p.id,
+      displayName: p.display_name,
+      username: p.username ?? p.id,
+    })),
+  ];
+
+  const handleToggleDraftTag = (person: TaggedPerson) => {
+    setDraftTaggedUsers((prev) => {
+      const exists = prev.some((t) => t.userId === person.userId);
+      return exists ? prev.filter((t) => t.userId !== person.userId) : [...prev, person];
+    });
+  };
+
   const handleAddEmojiOverlay = (emoji: string) => {
-    const idx = draftOverlays.length;
+    overlaySeqRef.current += 1;
+    const seq = draftOverlays.length + overlaySeqRef.current;
     const nextItem: PhotoOverlayItem = {
-      id: `ov_${Date.now().toString(36)}_${idx}`,
+      id: `ov_ed_${seq}`,
       kind: 'emoji',
       content: emoji,
-      xPct: 24 + ((idx * 19) % 56),
-      yPct: 26 + ((idx * 23) % 48),
+      xPct: 24 + ((seq * 19) % 56),
+      yPct: 26 + ((seq * 23) % 48),
     };
     setDraftOverlays((prev) => [...prev, nextItem]);
   };
@@ -349,14 +495,15 @@ export function DualMomentCard({
   const handleAddTextOverlay = () => {
     const cleaned = draftOverlayText.trim();
     if (!cleaned) return;
-    const idx = draftOverlays.length;
+    overlaySeqRef.current += 1;
+    const seq = draftOverlays.length + overlaySeqRef.current;
     const nextItem: PhotoOverlayItem = {
-      id: `ov_${Date.now().toString(36)}_${idx}`,
+      id: `ov_ed_txt_${seq}`,
       kind: 'text',
       content: cleaned.slice(0, 36),
-      bgStyle: 'glass',
+      bgStyle: draftOverlayBgStyle,
       xPct: 50,
-      yPct: 42 + ((idx * 14) % 36),
+      yPct: 42 + ((seq * 14) % 36),
     };
     setDraftOverlays((prev) => [...prev, nextItem]);
     setDraftOverlayText('');
@@ -368,6 +515,7 @@ export function DualMomentCard({
     try {
       const nextCaptionTrimmed = draftCaption.trim() ? draftCaption.trim() : null;
       const nextLocTrimmed = draftLocation.trim() ? draftLocation.trim() : null;
+      const matchedLocPreset = QUICK_LOCATION_PRESETS.find((l) => l.label === nextLocTrimmed);
 
       if (moment?.id) {
         const updated = await updateMomentDetails({
@@ -376,32 +524,41 @@ export function DualMomentCard({
           caption: nextCaptionTrimmed,
           filterPreset: draftFilter,
           locationLabel: nextLocTrimmed,
+          lat: matchedLocPreset ? matchedLocPreset.lat : nextLocTrimmed === null ? null : undefined,
+          lng: matchedLocPreset ? matchedLocPreset.lng : nextLocTrimmed === null ? null : undefined,
           musicTrack: draftMusic,
+          taggedUsers: draftTaggedUsers,
           overlays: draftOverlays,
           snapOnce: draftSnapOnce,
         });
-        setLocalCaption(updated.caption);
-        setLocalFilterPreset(updated.filter_preset ?? 'normal');
-        setLocalLocationLabel(updated.location_label ?? null);
-        setLocalMusicTrack(updated.music_track ?? null);
-        setLocalOverlays(updated.overlays ?? []);
-        setLocalSnapOnce(Boolean(updated.snap_once));
+        setOptimisticRev(momentRevisionKey);
+        setOptCaption(updated.caption);
+        setOptFilter(updated.filter_preset ?? 'normal');
+        setOptLocation(updated.location_label ?? null);
+        setOptMusic(updated.music_track ?? null);
+        setOptTaggedUsers(updated.tagged_users ?? []);
+        setOptOverlays(updated.overlays ?? []);
+        setOptSnapOnce(Boolean(updated.snap_once));
         await onUpdated?.(updated);
       } else if (onSaveCaption) {
         await onSaveCaption(draftCaption.trim());
-        setLocalCaption(nextCaptionTrimmed);
-        setLocalFilterPreset(draftFilter);
-        setLocalLocationLabel(nextLocTrimmed);
-        setLocalMusicTrack(draftMusic);
-        setLocalOverlays(draftOverlays);
-        setLocalSnapOnce(draftSnapOnce);
+        setOptimisticRev(momentRevisionKey);
+        setOptCaption(nextCaptionTrimmed);
+        setOptFilter(draftFilter);
+        setOptLocation(nextLocTrimmed);
+        setOptMusic(draftMusic);
+        setOptTaggedUsers(draftTaggedUsers);
+        setOptOverlays(draftOverlays);
+        setOptSnapOnce(draftSnapOnce);
       } else {
-        setLocalCaption(nextCaptionTrimmed);
-        setLocalFilterPreset(draftFilter);
-        setLocalLocationLabel(nextLocTrimmed);
-        setLocalMusicTrack(draftMusic);
-        setLocalOverlays(draftOverlays);
-        setLocalSnapOnce(draftSnapOnce);
+        setOptimisticRev(momentRevisionKey);
+        setOptCaption(nextCaptionTrimmed);
+        setOptFilter(draftFilter);
+        setOptLocation(nextLocTrimmed);
+        setOptMusic(draftMusic);
+        setOptTaggedUsers(draftTaggedUsers);
+        setOptOverlays(draftOverlays);
+        setOptSnapOnce(draftSnapOnce);
       }
       setEditing(false);
     } catch (err) {
@@ -441,8 +598,8 @@ export function DualMomentCard({
     } else {
       nextReactions[effectiveUserId] = emoji;
     }
-    setLocalReactions(nextReactions);
-
+    setOptimisticRev(momentRevisionKey);
+    setOptReactions(nextReactions);
     if (moment?.id) {
       try {
         await toggleMomentReaction({
@@ -474,12 +631,14 @@ export function DualMomentCard({
           authorUsername: authorHandle,
           text: cleaned,
         });
-        setLocalComments((prev) => [...prev, created]);
+        setOptimisticRev(momentRevisionKey);
+        setOptComments([...localComments, created]);
         setCommentInput('');
         await onUpdated?.();
       } else {
+        overlaySeqRef.current += 1;
         const fallbackComment: MomentCommentRecord = {
-          id: `cmt_${Date.now().toString(36)}`,
+          id: `cmt_local_${overlaySeqRef.current}`,
           moment_id: 'local_moment',
           author_id: effectiveUserId,
           author_name: authorDisplay,
@@ -487,7 +646,8 @@ export function DualMomentCard({
           text: cleaned,
           created_at: new Date().toISOString(),
         };
-        setLocalComments((prev) => [...prev, fallbackComment]);
+        setOptimisticRev(momentRevisionKey);
+        setOptComments([...localComments, fallbackComment]);
         setCommentInput('');
       }
     } finally {
@@ -495,8 +655,45 @@ export function DualMomentCard({
     }
   };
 
+  const handleDeleteComment = async (commentId: string) => {
+    setOptimisticRev(momentRevisionKey);
+    setOptComments(localComments.filter((c) => c.id !== commentId));
+    if (moment?.id) {
+      try {
+        await deleteMomentComment({
+          momentId: moment.id,
+          commentId,
+          coupleId: effectiveCoupleId,
+          requesterId: effectiveUserId,
+        });
+        await onUpdated?.();
+      } catch {
+        // Keep UI responsive
+      }
+    }
+  };
+
+  const handleNativeVideoPreview = async () => {
+    if (!videoUri) return;
+    if (Platform.OS !== 'web' && videoUri.startsWith('file://')) {
+      try {
+        const vidFile = new FileSystem.File(videoUri);
+        const canPrev = await vidFile.canPreview().catch(() => false);
+        if (canPrev) {
+          await vidFile.preview({ title: `${authorName}’s KeepIt Video`, mimeType: 'video/mp4' });
+          return;
+        }
+      } catch {
+        // Fall back to inline toggle
+      }
+    }
+    setVideoPlaying((prev) => !prev);
+  };
+
   const handleSave3x4Photo = async () => {
-    const dataUri = buildMomentCompositeSvgDataUri({
+    if (localSnapOnce && !ownerFlag) return;
+    const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
+    const msg = await exportAndShareCompositeMoment({
       backUri: mainSource,
       frontUri: pipSource,
       authorName,
@@ -505,41 +702,55 @@ export function DualMomentCard({
       musicTitle: localMusicTrack
         ? `${localMusicTrack.title} · ${localMusicTrack.artist}`
         : null,
+      taggedUsers: localTaggedUsers,
       filterPreset: localFilterPreset,
       overlays: localOverlays,
       aspect: '3:4',
-    });
-    const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
-    const msg = await downloadOrShareMomentUri({
-      dataUri,
-      filename: `keepit-${safeAuthor}-3x4.svg`,
+      baseFilename: `keepit-${safeAuthor}-3x4`,
       title: `${authorName}’s KeepIt Moment`,
     });
     setActionBanner(msg);
   };
 
-  const storyDataUri = buildMomentCompositeSvgDataUri({
-    backUri: mainSource,
-    frontUri: pipSource,
-    authorName,
-    caption: localCaption,
-    locationLabel: localLocationLabel,
-    musicTitle: localMusicTrack
-      ? `${localMusicTrack.title} · ${localMusicTrack.artist}`
-      : null,
-    filterPreset: localFilterPreset,
-    overlays: localOverlays,
-    aspect: '9:16',
-    storyTheme,
-  });
+  const storyDataUri =
+    localSnapOnce && !ownerFlag
+      ? ''
+      : buildMomentCompositeSvgDataUri({
+          backUri: mainSource,
+          frontUri: pipSource,
+          authorName,
+          caption: localCaption,
+          locationLabel: localLocationLabel,
+          musicTitle: localMusicTrack
+            ? `${localMusicTrack.title} · ${localMusicTrack.artist}`
+            : null,
+          taggedUsers: localTaggedUsers,
+          filterPreset: localFilterPreset,
+          overlays: localOverlays,
+          aspect: '9:16',
+          storyTheme,
+        });
 
   const handleShare9x16Story = async () => {
+    if (localSnapOnce && !ownerFlag) return;
     setStorySharing(true);
     try {
       const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
-      const msg = await downloadOrShareMomentUri({
-        dataUri: storyDataUri,
-        filename: `keepit-story-${safeAuthor}-9x16.svg`,
+      const msg = await exportAndShareCompositeMoment({
+        backUri: mainSource,
+        frontUri: pipSource,
+        authorName,
+        caption: localCaption,
+        locationLabel: localLocationLabel,
+        musicTitle: localMusicTrack
+          ? `${localMusicTrack.title} · ${localMusicTrack.artist}`
+          : null,
+        taggedUsers: localTaggedUsers,
+        filterPreset: localFilterPreset,
+        overlays: localOverlays,
+        aspect: '9:16',
+        storyTheme,
+        baseFilename: `keepit-story-${safeAuthor}-9x16`,
         title: `${authorName}’s 9:16 KeepIt Story`,
       });
       setActionBanner(msg);
@@ -620,19 +831,36 @@ export function DualMomentCard({
           </Pressable>
         ) : (
           <>
-            <Image
-              source={{ uri: mainSource }}
-              contentFit="cover"
-              style={[
-                styles.fullImage,
-                Platform.OS === 'web' && filterMeta.webCssFilter !== 'none'
-                  ? ({ filter: filterMeta.webCssFilter } as never)
-                  : null,
-                mediaType === 'video' && videoPlaying
-                  ? { transform: [{ scale: 1.015 }] }
-                  : null,
-              ]}
-            />
+            {Platform.OS === 'web' && isRealPlayableVideo && videoUri ? (
+              React.createElement('video', {
+                src: videoUri,
+                autoPlay: videoPlaying,
+                loop: true,
+                muted: false,
+                playsInline: true,
+                controls: false,
+                style: {
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  filter: filterMeta.webCssFilter !== 'none' ? filterMeta.webCssFilter : undefined,
+                },
+              })
+            ) : (
+              <Image
+                source={{ uri: mainSource }}
+                contentFit="cover"
+                style={[
+                  styles.fullImage,
+                  Platform.OS === 'web' && filterMeta.webCssFilter !== 'none'
+                    ? ({ filter: filterMeta.webCssFilter } as never)
+                    : null,
+                  mediaType === 'video' && videoPlaying
+                    ? { transform: [{ scale: 1.015 }] }
+                    : null,
+                ]}
+              />
+            )}
 
             {/* Filter Preset Tint Overlay (Item #17) */}
             {filterMeta.tintOverlay !== 'transparent' ? (
@@ -737,7 +965,7 @@ export function DualMomentCard({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={videoPlaying ? 'Pause video loop' : 'Play video loop'}
-                  onPress={() => setVideoPlaying((prev) => !prev)}
+                  onPress={() => void handleNativeVideoPreview()}
                   style={[
                     styles.statusPill,
                     {
@@ -860,7 +1088,9 @@ export function DualMomentCard({
         </View>
 
         {/* Location, Music & Tagged People Badges (Item #7 & #9) */}
-        {localLocationLabel || localMusicTrack || taggedUsers.length > 0 ? (
+        {!isSnapLockedForViewer &&
+        !isSnapExpiredForViewer &&
+        (localLocationLabel || localMusicTrack || localTaggedUsers.length > 0) ? (
           <View style={styles.attachmentChipsWrap}>
             {localLocationLabel ? (
               <View
@@ -882,7 +1112,9 @@ export function DualMomentCard({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Toggle music preview ${localMusicTrack.title}`}
-                onPress={() => setMusicPlaying((prev) => !prev)}
+                onPress={() => {
+                  toggleMusicTrackPreview(localMusicTrack);
+                }}
                 style={[
                   styles.attachmentChip,
                   {
@@ -894,13 +1126,14 @@ export function DualMomentCard({
                   },
                 ]}>
                 <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  🎵 {localMusicTrack.title} · {localMusicTrack.artist}
-                  {musicPlaying ? '  ♫ Playing preview...' : ''}
+                  {musicPlaying ? '⏸ Stop · ' : '▶ '}🎵 {localMusicTrack.title} ·{' '}
+                  {localMusicTrack.artist}
+                  {musicPlaying ? '  ♫ Playing synth loop' : ''}
                 </Text>
               </Pressable>
             ) : null}
 
-            {taggedUsers.map((person) => (
+            {localTaggedUsers.map((person) => (
               <View
                 key={person.userId}
                 style={[
@@ -1122,6 +1355,43 @@ export function DualMomentCard({
               </ScrollView>
             </View>
 
+            {/* Tag People Editor */}
+            <View style={{ gap: 6 }}>
+              <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                Tagged People ({draftTaggedUsers.length})
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.horizontalPillsRow}>
+                {availableTagCandidates.map((person) => {
+                  const active = draftTaggedUsers.some((t) => t.userId === person.userId);
+                  return (
+                    <Pressable
+                      key={person.userId}
+                      accessibilityRole="button"
+                      onPress={() => handleToggleDraftTag(person)}
+                      style={[
+                        styles.OptionPill,
+                        {
+                          backgroundColor: active ? colors.accent : colors.surface,
+                          borderColor: active ? colors.accent : colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.optionPillText,
+                          { color: active ? colors.onAccent : colors.ink },
+                        ]}>
+                        🏷️ @{person.username} {active ? '✓' : '+'}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
             {/* On-Photo Emoji & Text Overlays Editor */}
             <View style={{ gap: 6 }}>
               <View style={styles.metaTopRow}>
@@ -1196,6 +1466,34 @@ export function DualMomentCard({
                     + Text
                   </Text>
                 </Pressable>
+              </View>
+
+              <View style={styles.horizontalPillsRow}>
+                {(['glass', 'solid', 'neon'] as const).map((st) => {
+                  const active = draftOverlayBgStyle === st;
+                  return (
+                    <Pressable
+                      key={st}
+                      accessibilityRole="button"
+                      onPress={() => setDraftOverlayBgStyle(st)}
+                      style={[
+                        styles.OptionPill,
+                        {
+                          backgroundColor: active ? colors.accent : colors.surface,
+                          borderColor: active ? colors.accent : colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.optionPillText,
+                          { color: active ? colors.onAccent : colors.ink },
+                        ]}>
+                        {st.toUpperCase()}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             </View>
 
@@ -1279,9 +1577,15 @@ export function DualMomentCard({
             <Text
               style={[
                 styles.captionText,
-                { color: localCaption ? colors.ink : colors.inkMuted },
+                { color: localCaption && !isSnapLockedForViewer && !isSnapExpiredForViewer ? colors.ink : colors.inkMuted },
               ]}>
-              {localCaption ? `“${localCaption}”` : 'No note added.'}
+              {isSnapExpiredForViewer
+                ? 'Snap Once expired · Caption & media removed.'
+                : isSnapLockedForViewer
+                  ? 'Unlock Snap Once above to view note.'
+                  : localCaption
+                    ? `“${localCaption}”`
+                    : 'No note added.'}
             </Text>
 
             <View style={styles.inlineButtonRow}>
@@ -1362,26 +1666,45 @@ export function DualMomentCard({
         <View style={styles.commentsSection}>
           {localComments.length > 0 ? (
             <View style={{ gap: 6 }}>
-              {localComments.map((cmt) => (
-                <View
-                  key={cmt.id}
-                  style={[
-                    styles.commentBubble,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radii.input,
-                    },
-                  ]}>
-                  <Text style={[styles.commentAuthor, { color: colors.ink }]}>
-                    {cmt.author_name}
-                    {cmt.author_username ? ` (@${cmt.author_username})` : ''}:{' '}
-                    <Text style={[styles.commentBody, { color: colors.ink }]}>
-                      {cmt.text}
+              {localComments.map((cmt) => {
+                const canDeleteCmt =
+                  cmt.author_id === effectiveUserId || ownerFlag;
+                return (
+                  <View
+                    key={cmt.id}
+                    style={[
+                      styles.commentBubble,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderColor: colors.border,
+                        borderRadius: radii.input,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                      },
+                    ]}>
+                    <Text style={[styles.commentAuthor, { color: colors.ink, flex: 1 }]}>
+                      {cmt.author_name}
+                      {cmt.author_username ? ` (@${cmt.author_username})` : ''}:{' '}
+                      <Text style={[styles.commentBody, { color: colors.ink }]}>
+                        {cmt.text}
+                      </Text>
                     </Text>
-                  </Text>
-                </View>
-              ))}
+                    {canDeleteCmt ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete comment"
+                        onPress={() => void handleDeleteComment(cmt.id)}
+                        style={{ paddingHorizontal: 6, paddingVertical: 2 }}>
+                        <Text style={{ color: colors.danger, fontSize: 12, fontWeight: '700' }}>
+                          ✕
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                );
+              })}
             </View>
           ) : null}
 
@@ -1432,42 +1755,44 @@ export function DualMomentCard({
         </View>
 
         {/* Download Post (Item #15) & Share to 9:16 Story (Item #19) */}
-        <View style={styles.exportActionBar}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Save 3:4 photo with KeepIt watermark"
-            onPress={() => void handleSave3x4Photo()}
-            style={[
-              styles.exportActionBtn,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.border,
-                borderRadius: radii.pill,
-              },
-            ]}>
-            <Text style={[styles.exportActionText, { color: colors.ink }]}>
-              ⬇ Save Photo
-            </Text>
-          </Pressable>
+        {/* Hide export/download actions for non-owner Snap Once Moments to enforce disappearing privacy */}
+        {!(localSnapOnce && !ownerFlag) ? (
+          <View style={styles.exportActionBar}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Save 3:4 photo with KeepIt watermark"
+              onPress={() => void handleSave3x4Photo()}
+              style={[
+                styles.exportActionBtn,
+                {
+                  backgroundColor: colors.surfaceElevated,
+                  borderColor: colors.border,
+                  borderRadius: radii.pill,
+                },
+              ]}>
+              <Text style={[styles.exportActionText, { color: colors.ink }]}>
+                ⬇ Save Photo
+              </Text>
+            </Pressable>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open 9:16 Story Share preview"
-            onPress={() => setStoryModalOpen(true)}
-            style={[
-              styles.exportActionBtn,
-              {
-                backgroundColor: colors.accentSoft,
-                borderColor: colors.accent,
-                borderRadius: radii.pill,
-              },
-            ]}>
-            <Text style={[styles.exportActionText, { color: colors.ink }]}>
-              📱 Share 9:16 Story
-            </Text>
-          </Pressable>
-        </View>
-
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open 9:16 Story Share preview"
+              onPress={() => setStoryModalOpen(true)}
+              style={[
+                styles.exportActionBtn,
+                {
+                  backgroundColor: colors.accentSoft,
+                  borderColor: colors.accent,
+                  borderRadius: radii.pill,
+                },
+              ]}>
+              <Text style={[styles.exportActionText, { color: colors.ink }]}>
+                📱 Share 9:16 Story
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
         {actionBanner ? (
           <InlineNotice message={actionBanner} tone="success" />
         ) : null}
