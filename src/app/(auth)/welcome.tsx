@@ -1,8 +1,9 @@
 import { useRouter } from 'expo-router';
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,57 +12,56 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { DualFrameMark, InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
+import {
+  DualFrameMark,
+  InlineNotice,
+  KeepItButton,
+  RevealOnAppear,
+} from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 
 export default function WelcomeScreen() {
   const router = useRouter();
   const { colors, radii, spacing } = useKeepItTheme();
-  const sendEmailOtp = useSessionStore((s) => s.sendEmailOtp);
-  const verifyEmailOtpAndProfile = useSessionStore((s) => s.verifyEmailOtpAndProfile);
 
-  const [step, setStep] = useState<'email' | 'verify'>('email');
+  const signUpWithPassword = useSessionStore((s) => s.signUpWithPassword);
+  const signInWithPassword = useSessionStore((s) => s.signInWithPassword);
+
+  const [mode, setMode] = useState<'signup' | 'signin'>('signup');
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const displayNameRef = useRef('');
-  const emailRef = useRef('');
-  const otpRef = useRef('');
-  const [submittedEmail, setSubmittedEmail] = useState('');
-
-  const handleRequestCode = async () => {
-    setError(null);
-    const trimmedName = displayNameRef.current.trim();
-    if (trimmedName.length < 1 || trimmedName.length > 40) {
-      setError('Enter the first name your partner calls you (1–40 characters).');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await sendEmailOtp(emailRef.current);
-      setSubmittedEmail(emailRef.current.trim().toLowerCase());
-      setStep('verify');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send verification code.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerify = async () => {
+  const handleSubmit = async () => {
     setError(null);
     setLoading(true);
     try {
-      await verifyEmailOtpAndProfile({
-        email: submittedEmail,
-        otp: otpRef.current,
-        displayName: displayNameRef.current,
-      });
-      router.replace('/(auth)/pair');
+      if (mode === 'signup') {
+        await signUpWithPassword({
+          displayName,
+          email,
+          password,
+          confirmPassword,
+        });
+      } else {
+        await signInWithPassword({
+          email,
+          password,
+        });
+      }
+
+      const nextCouple = useSessionStore.getState().couple;
+      if (nextCouple?.state === 'active') {
+        router.replace('/(tabs)');
+      } else {
+        router.replace('/(auth)/pair');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verification failed.');
+      setError(err instanceof Error ? err.message : 'Authentication failed.');
     } finally {
       setLoading(false);
     }
@@ -90,30 +90,100 @@ export default function WelcomeScreen() {
           </RevealOnAppear>
 
           <RevealOnAppear revealKey="welcome-card">
-          <View
-            style={[
-              styles.card,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderRadius: radii.card,
-                padding: spacing.xl,
-                gap: spacing.lg,
-              },
-            ]}>
-            {step === 'email' ? (
-              <>
+            <View
+              style={[
+                styles.card,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  borderRadius: radii.group,
+                  padding: spacing.xl,
+                  gap: spacing.lg,
+                },
+              ]}>
+              {/* Mode Switcher: Create Account | Sign In */}
+              <View
+                accessibilityRole="tablist"
+                style={[
+                  styles.modeTrack,
+                  {
+                    backgroundColor: colors.canvas,
+                    borderColor: colors.border,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityLabel="Create Account tab"
+                  accessibilityState={{ selected: mode === 'signup' }}
+                  onPress={() => {
+                    setError(null);
+                    setMode('signup');
+                  }}
+                  style={[
+                    styles.modeSegment,
+                    {
+                      backgroundColor:
+                        mode === 'signup' ? colors.surfaceElevated : 'transparent',
+                      borderRadius: radii.input - 2,
+                    },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.modeText,
+                      {
+                        color: mode === 'signup' ? colors.ink : colors.inkMuted,
+                        fontWeight: mode === 'signup' ? '700' : '600',
+                      },
+                    ]}>
+                    Create Account
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityLabel="Sign In tab"
+                  accessibilityState={{ selected: mode === 'signin' }}
+                  onPress={() => {
+                    setError(null);
+                    setMode('signin');
+                  }}
+                  style={[
+                    styles.modeSegment,
+                    {
+                      backgroundColor:
+                        mode === 'signin' ? colors.surfaceElevated : 'transparent',
+                      borderRadius: radii.input - 2,
+                    },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.modeText,
+                      {
+                        color: mode === 'signin' ? colors.ink : colors.inkMuted,
+                        fontWeight: mode === 'signin' ? '700' : '600',
+                      },
+                    ]}>
+                    Sign In
+                  </Text>
+                </Pressable>
+              </View>
+
+              {mode === 'signup' ? (
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.ink }]}>Your first name</Text>
                   <TextInput
                     key="input-first-name"
                     accessibilityLabel="Your first name"
+                    autoCapitalize="words"
                     autoCorrect={false}
                     maxLength={40}
+                    value={displayName}
                     placeholder="Your Name"
-                    placeholderTextColor={colors.inkMuted}
+                    placeholderTextColor={colors.placeholder}
                     onChangeText={(val) => {
-                      displayNameRef.current = val;
+                      setError(null);
+                      setDisplayName(val);
                     }}
                     style={[
                       styles.input,
@@ -126,98 +196,104 @@ export default function WelcomeScreen() {
                     ]}
                   />
                 </View>
+              ) : null}
 
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { color: colors.ink }]}>Email address</Text>
-                  <TextInput
-                    key="input-email-address"
-                    accessibilityLabel="Email address"
-                    autoComplete="email"
-                    autoCorrect={false}
-                    keyboardType="email-address"
-                    placeholder="email@example.com"
-                    placeholderTextColor={colors.inkMuted}
-                    onChangeText={(val) => {
-                      emailRef.current = val;
-                    }}
-                    onSubmitEditing={() => void handleRequestCode()}
-                    style={[
-                      styles.input,
-                      {
-                        backgroundColor: colors.surfaceElevated,
-                        borderColor: colors.border,
-                        color: colors.ink,
-                        borderRadius: radii.input,
-                      },
-                    ]}
-                  />
-                </View>
-
-                {error ? <InlineNotice message={error} tone="error" /> : null}
-
-                <KeepItButton
-                  label="Send 6-Digit Sign-In Code"
-                  loading={loading}
-                  onPress={() => void handleRequestCode()}
-                />
-              </>
-            ) : (
-              <>
-                <View style={{ gap: 4 }}>
-                  <Text style={[styles.stepTitle, { color: colors.ink }]}>Check your email</Text>
-                  <Text style={[styles.stepBody, { color: colors.inkMuted }]}>
-                    Code sent to {submittedEmail}
-                  </Text>
-                </View>
-
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { color: colors.ink }]}>6-digit code</Text>
-                  <TextInput
-                    key="input-otp-code"
-                    accessibilityLabel="6-digit verification code"
-                    autoFocus
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    placeholder="000000"
-                    placeholderTextColor={colors.inkMuted}
-                    onChangeText={(val) => {
-                      otpRef.current = val;
-                    }}
-                    onSubmitEditing={() => void handleVerify()}
-                    style={[
-                      styles.input,
-                      styles.codeInput,
-                      {
-                        backgroundColor: colors.surfaceElevated,
-                        borderColor: colors.border,
-                        color: colors.ink,
-                        borderRadius: radii.input,
-                      },
-                    ]}
-                  />
-                </View>
-
-                {error ? <InlineNotice message={error} tone="error" /> : null}
-
-                <KeepItButton
-                  label="Verify & Continue to Pairing"
-                  loading={loading}
-                  onPress={() => void handleVerify()}
-                />
-
-                <KeepItButton
-                  label="Use a Different Email"
-                  variant="ghost"
-                  disabled={loading}
-                  onPress={() => {
-                    otpRef.current = '';
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.ink }]}>Email</Text>
+                <TextInput
+                  key="input-email"
+                  accessibilityLabel="Email address"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  value={email}
+                  placeholder="email@example.com"
+                  placeholderTextColor={colors.placeholder}
+                  onChangeText={(val) => {
                     setError(null);
-                    setStep('email');
+                    setEmail(val);
                   }}
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.border,
+                      color: colors.ink,
+                      borderRadius: radii.input,
+                    },
+                  ]}
                 />
-              </>
-            )}
-          </View>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.ink }]}>Password</Text>
+                <TextInput
+                  key="input-password"
+                  accessibilityLabel="Password"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  value={password}
+                  placeholder="At least 6 characters"
+                  placeholderTextColor={colors.placeholder}
+                  onChangeText={(val) => {
+                    setError(null);
+                    setPassword(val);
+                  }}
+                  onSubmitEditing={() => {
+                    if (mode === 'signin') void handleSubmit();
+                  }}
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.border,
+                      color: colors.ink,
+                      borderRadius: radii.input,
+                    },
+                  ]}
+                />
+              </View>
+
+              {mode === 'signup' ? (
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { color: colors.ink }]}>Confirm password</Text>
+                  <TextInput
+                    key="input-confirm-password"
+                    accessibilityLabel="Confirm password"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    value={confirmPassword}
+                    placeholder="Re-enter password"
+                    placeholderTextColor={colors.placeholder}
+                    onChangeText={(val) => {
+                      setError(null);
+                      setConfirmPassword(val);
+                    }}
+                    onSubmitEditing={() => void handleSubmit()}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderColor: colors.border,
+                        color: colors.ink,
+                        borderRadius: radii.input,
+                      },
+                    ]}
+                  />
+                </View>
+              ) : null}
+
+              {error ? <InlineNotice message={error} tone="error" /> : null}
+
+              <KeepItButton
+                label={mode === 'signup' ? 'Create Account' : 'Sign In'}
+                loading={loading}
+                onPress={() => void handleSubmit()}
+              />
+            </View>
           </RevealOnAppear>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -261,6 +337,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderCurve: 'continuous',
   },
+  modeTrack: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    padding: 3,
+    gap: 4,
+    borderCurve: 'continuous',
+  },
+  modeSegment: {
+    flex: 1,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderCurve: 'continuous',
+  },
+  modeText: {
+    fontSize: 14,
+    letterSpacing: -0.2,
+  },
   fieldGroup: {
     gap: 8,
   },
@@ -275,27 +369,5 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     borderCurve: 'continuous',
-  },
-  codeInput: {
-    fontSize: 22,
-    fontWeight: '700',
-    letterSpacing: 6,
-    textAlign: 'center',
-    fontVariant: ['tabular-nums'],
-  },
-  stepTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-  stepBody: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  footerNote: {
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    paddingHorizontal: 16,
   },
 });
