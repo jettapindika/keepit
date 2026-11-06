@@ -119,7 +119,7 @@ export default function StatusSheetScreen() {
   const partnerName = partner?.display_name ?? 'your partner';
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.sheetSurface }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
@@ -227,7 +227,7 @@ export default function StatusSheetScreen() {
                 accessibilityLabel="Status emoji"
                 maxLength={4}
                 value={emoji}
-                placeholder="✨"
+                placeholder="☕"
                 placeholderTextColor={colors.inkMuted}
                 onChangeText={(val) => {
                   setError(null);

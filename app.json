@@ -8,11 +8,17 @@
     "scheme": "keepit",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.keepit.couples",
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSCameraUsageDescription": "KeepIt uses your front and back cameras together to capture your daily Moment.",
+        "NSLocationWhenInUseUsageDescription": "KeepIt shares your location with your partner only when you opt into Live or On-Moment sharing."
+      }
     },
     "android": {
+      "package": "com.keepit.couples",
       "adaptiveIcon": {
-        "backgroundColor": "#FAF7F2",
+        "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -28,11 +34,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FAF7F2",
+          "backgroundColor": "#000000",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      "./plugins/withKeepItWidgets"
     ],
     "experiments": {
       "typedRoutes": true,

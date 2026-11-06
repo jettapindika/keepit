@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { isSupabaseConfigured } from '@/api/supabase';
-import { DualFrameMark, InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { DualFrameMark, InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 
@@ -80,14 +80,17 @@ export default function WelcomeScreen() {
             styles.scrollContent,
             { paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl },
           ]}>
-          <View style={styles.heroBlock}>
-            <DualFrameMark size={60} />
-            <Text style={[styles.wordmark, { color: colors.ink }]}>KeepIt</Text>
-            <Text style={[styles.tagline, { color: colors.inkMuted }]}>
-              Keep every moment, together.
-            </Text>
-          </View>
+          <RevealOnAppear revealKey="welcome-hero">
+            <View style={styles.heroBlock}>
+              <DualFrameMark size={62} />
+              <Text style={[styles.wordmark, { color: colors.ink }]}>KeepIt</Text>
+              <Text style={[styles.tagline, { color: colors.inkMuted }]}>
+                Keep every moment, together.
+              </Text>
+            </View>
+          </RevealOnAppear>
 
+          <RevealOnAppear revealKey="welcome-card">
           <View
             style={[
               styles.card,
@@ -218,7 +221,7 @@ export default function WelcomeScreen() {
               </>
             )}
           </View>
-
+          </RevealOnAppear>
           <Text style={[styles.footerNote, { color: colors.inkMuted }]}>
             Made strictly for two. No public feed, no follower counts, no contact scraping.
           </Text>
@@ -248,14 +251,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   wordmark: {
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: '700',
-    letterSpacing: -0.8,
+    letterSpacing: -1.1,
     marginTop: 4,
   },
   tagline: {
     fontSize: 17,
-    lineHeight: 24,
+    fontWeight: '600',
+    letterSpacing: -0.4,
+    lineHeight: 23,
     textAlign: 'center',
   },
   card: {

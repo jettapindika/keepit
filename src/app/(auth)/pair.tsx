@@ -23,7 +23,7 @@ import {
   simulateSandboxPartnerJoin,
 } from '@/api/pairing';
 import { isSupabaseConfigured } from '@/api/supabase';
-import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { CoupleRecord } from '@/types/database';
@@ -189,18 +189,21 @@ export default function PairScreen() {
             styles.scrollContent,
             { paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl },
           ]}>
-          <View style={styles.headerBlock}>
-            <Text style={[styles.greeting, { color: colors.inkMuted }]}>
-              Signed in as {user?.display_name ?? 'You'}
-            </Text>
-            <Text style={[styles.title, { color: colors.ink }]}>Pair with your partner</Text>
-            <Text style={[styles.subtitle, { color: colors.inkMuted }]}>
-              Share your 6-character invite link or enter your partner’s code. A KeepIt space holds
-              two people and closes once connected.
-            </Text>
-          </View>
+          <RevealOnAppear revealKey="pair-header">
+            <View style={styles.headerBlock}>
+              <Text style={[styles.greeting, { color: colors.inkMuted }]}>
+                Signed in as {user?.display_name ?? 'You'}
+              </Text>
+              <Text style={[styles.title, { color: colors.ink }]}>Pair with your partner</Text>
+              <Text style={[styles.subtitle, { color: colors.inkMuted }]}>
+                Share your 6-character invite link or enter your partner’s code. A KeepIt space holds
+                two people and closes once connected.
+              </Text>
+            </View>
+          </RevealOnAppear>
 
           {/* Card 1: Share your code */}
+          <RevealOnAppear revealKey="pair-card-share">
           <View
             style={[
               styles.card,
@@ -268,8 +271,10 @@ export default function PairScreen() {
               />
             </View>
           </View>
+          </RevealOnAppear>
 
           {/* Card 2: Enter partner's code */}
+          <RevealOnAppear revealKey="pair-card-join">
           <View
             style={[
               styles.card,
@@ -327,7 +332,7 @@ export default function PairScreen() {
               />
             ) : null}
           </View>
-
+          </RevealOnAppear>
           <KeepItButton
             label="Sign Out"
             variant="ghost"
@@ -363,12 +368,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   title: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '700',
-    letterSpacing: -0.6,
+    letterSpacing: -1.0,
   },
   subtitle: {
     fontSize: 15,
+    fontWeight: '500',
+    letterSpacing: -0.25,
     lineHeight: 22,
   },
   card: {

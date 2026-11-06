@@ -1,56 +1,50 @@
-# Welcome to your Expo app 👋
+# KeepIt
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**Keep every moment, together.**
 
-## Get started
+KeepIt is a private, BeReal-style mobile app built strictly for couples (`2` partners per space), crafted with Expo Router (React Native + TypeScript), Supabase (Postgres RLS, Realtime, Private Storage, Edge Functions), native iOS WidgetKit + Android Jetpack Glance widgets, and a dark-first visual and spring-motion system adapted from [`realidkroo/Mochy-Music`](https://github.com/realidkroo/Mochy-Music).
 
-1. Install dependencies
+## Core Features
 
-   ```bash
-   npm install
-   ```
+1. **Couple Pairing (`(auth)/welcome` & `(auth)/pair`):**
+   - Passwordless 6-digit Email OTP sign-in.
+   - Concurrency-safe 6-character invite code (`create_or_refresh_invite`, `redeem_invite_code`) and `keepit://pair?code=XXXXXX` deep link preserved across sign-in.
+   - Hard database constraint of 2 partners per couple (`distinct_partners`, `active_requires_two`, `trg_single_couple_membership`).
+2. **Daily Moment (`(tabs)/index` & `camera`):**
+   - Synchronized random daily notification within overlapping waking hours (`schedule-daily-prompts` Edge Function).
+   - 2-minute live countdown (`useMomentCountdown`), back + front dual-camera capture, up to 2 retakes during the 2-minute window, optional 100-char caption, and automatic late flag (`is_late`).
+   - Server-enforced reciprocal lock (`get_today_moment_bundle` & `sign-moment-urls`): your partner's photos stay locked until you post your own.
+3. **Status Share (`status-sheet` & `StatusHeaderCard`):**
+   - Emoji + short text (`<= 40` chars) with quick presets (`In class`, `On my way`, `Low battery`, `Coffee run`, `Deep work`, `Winding down`) and custom status.
+   - Auto-expiry (`1h`, `3h`, `Till tonight` in poster's local timezone) synced via Supabase Realtime.
+4. **Home Screen Widgets (`modules/keepit-widget-bridge`, `targets/ios-widget`, `targets/android-widget`):**
+   - Native iOS WidgetKit (`systemSmall` & `systemMedium`) reading App Group `group.com.keepit.shared`.
+   - Native Android Jetpack Glance AppWidget reading `SharedPreferences` (`keepit_widget_prefs`).
+   - Live in-app interactive widget preview (`Small 2x2` & `Medium 4x2`) and automatic snapshot sync hook (`useWidgetSync`).
+5. **Consent-First Map & Location (`(tabs)/map`):**
+   - Ghost mode (off) by default (`lat/lng = null`).
+   - Three privacy modes: `Live`, `On Moment`, and `Ghost`.
+   - Postgres trigger (`trg_location_privacy`) + `dispatch-push` notify your partner automatically every time location sharing turns on or off.
+6. **Couple Extras & Privacy (`(tabs)/memories` & `(tabs)/settings`):**
+   - Shared daily streak counter, `"Together"` side-by-side daily Moment collage, rate-limited partner Nudge/Poke, interactive Calendar archive, and Monthly Memory Recap story deck.
+   - Motion controls (`AppMotion` speed `0.5x`..`2x` + Reduce Motion), Theme selector (`Dark` / `Light` / `System`), one-tap **Unpair**, and **Delete Account & All Data**.
 
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Quick Start
 
 ```bash
-npm run reset-project
+npm install
+npx expo start
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+### Optional Supabase Backend Setup
 
-### Other setup steps
+Without environment variables, KeepIt runs out of the box in **Local Sandbox Mode** (backed by `AsyncStorage` with partner simulators on Pair, Home, Map, and Memories). To connect a live Supabase project:
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+1. Apply migrations in `supabase/migrations/0001_initial_schema.sql` through `0004_map_and_extras.sql`.
+2. Deploy Edge Functions in `supabase/functions/` (`schedule-daily-prompts`, `sign-moment-urls`, `dispatch-push`, `delete-couple-or-user`).
+3. Create `.env`:
+   ```env
+   EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   ```
+4. For native widgets on physical devices/simulators, run `npx expo prebuild` and build via `npx expo run:ios` / `npx expo run:android` or EAS Build.

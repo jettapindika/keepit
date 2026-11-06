@@ -10,6 +10,8 @@ import Animated, {
 
 import { formatLateDuration } from '@/api/moments';
 import { KeepItButton } from '@/components/ui/Primitives';
+import { useSessionStore } from '@/store/sessionStore';
+import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 
 interface DualMomentCardProps {
@@ -44,6 +46,8 @@ export function DualMomentCard({
   onRetake,
 }: DualMomentCardProps) {
   const { colors, radii, spacing } = useKeepItTheme();
+  const motionEnabled = useSessionStore((s) => s.motionEnabled);
+  const motionSpeed = useSessionStore((s) => s.motionSpeed);
   const [swapped, setSwapped] = useState(false);
   const [editing, setEditing] = useState(false);
   const [savingCaption, setSavingCaption] = useState(false);
@@ -61,8 +65,10 @@ export function DualMomentCard({
     if (Platform.OS !== 'web') {
       void Haptics.selectionAsync();
     }
-    pipScale.set(0.92);
-    pipScale.set(withSpring(1, { duration: 350, dampingRatio: 0.88 }));
+    if (motionEnabled) {
+      pipScale.set(0.86);
+      pipScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+    }
     setSwapped((prev) => !prev);
   };
 

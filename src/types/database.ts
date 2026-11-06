@@ -122,3 +122,64 @@ export interface CoupleStatusBundle {
   mine: StatusRecord | null;
   partner: StatusRecord | null;
 }
+
+export interface LocationShareRecord {
+  user_id: string;
+  couple_id: string;
+  mode: LocationMode;
+  lat: number | null;
+  lng: number | null;
+  accuracy_m: number | null;
+  location_updated_at: string | null;
+  mode_changed_at: string;
+}
+
+export interface CoupleEventRecord {
+  id: string;
+  couple_id?: string;
+  actor_id: string;
+  event_type: 'location_mode_changed' | 'nudge' | 'moment_posted';
+  payload: {
+    previous_mode?: LocationMode;
+    new_mode?: LocationMode;
+    note?: string;
+    prompt_id?: string;
+    is_late?: boolean;
+    retake_count?: number;
+  };
+  created_at: string;
+}
+
+export interface CoupleLocationBundle {
+  mine: LocationShareRecord | null;
+  partner: LocationShareRecord | null;
+  events: CoupleEventRecord[];
+}
+
+export interface MemoryDayRecord {
+  prompt_id: string;
+  prompt_date: string;
+  mine: MomentRecord | null;
+  partner: MomentRecord | null;
+}
+
+export interface MonthMemoriesBundle {
+  days: MemoryDayRecord[];
+  streak: StreakRecord | null;
+}
+
+export interface WidgetSnapshotPayload {
+  coupleId: string;
+  partnerName: string;
+  statusEmoji: string | null;
+  statusText: string | null;
+  statusExpiresAt: string | null;
+  momentPhotoUri: string | null;
+  momentFrontPhotoUri: string | null;
+  momentCaption: string | null;
+  momentPostedAt: string | null;
+  momentLocked: boolean;
+  streakCount: number;
+  deepLinkUrl: string;
+  updatedAt: string;
+}

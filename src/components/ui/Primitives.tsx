@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -11,16 +11,160 @@ import {
   ViewStyle,
 } from 'react-native';
 import Animated, {
-  Easing,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
+import { useSessionStore } from '@/store/sessionStore';
+import { MOCHY_REVEAL_EASING, MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-const PRESS_EASING = Easing.bezier(0.23, 1, 0.32, 1);
+
+// Seen-key registry matching Mochy-Music's RevealSeenState (RevealOnAppear.kt:64)
+const seenRevealKeys = new Set<string>();
+let burstStartedAt = 0;
+let burstCount = 0;
+
+function nextCascadeDelayMs(cascade: boolean): number {
+  if (!cascade) return 0;
+  const now = Date.now();
+  if (now - burstStartedAt > 120) {
+    burstStartedAt = now;
+    burstCount = 0;
+  }
+  const step = Math.min(burstCount, 4);
+  burstCount += 1;
+  return step * 35;
+}
+
+/**
+ * Mochy-Music `RevealOnAppear` port (`RevealOnAppear.kt:139`):
+ * Fades (0 -> 1) and slides up 20pt over 520ms with CubicBezier(0.2, 0, 0, 1) once per key,
+ * staggering simultaneous mounts by 60ms steps.
+ */
+export function RevealOnAppear({
+  revealKey,
+  cascade = true,
+  delayMs = 0,
+  style,
+  children,
+}: {
+  revealKey: string;
+  cascade?: boolean;
+  delayMs?: number;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  const motionEnabled = useSessionStore((s) => s.motionEnabled);
+  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const alreadySeen = seenRevealKeys.has(revealKey);
+
+  const progress = useSharedValue(alreadySeen || !motionEnabled ? 1 : 0.85);
+
+  useEffect(() => {
+    if (seenRevealKeys.has(revealKey)) {
+      progress.set(1);
+      return;
+    }
+    seenRevealKeys.add(revealKey);
+    if (!motionEnabled) {
+      progress.set(1);
+      return;
+    }
+    const waitMs = Math.round(
+      (delayMs + nextCascadeDelayMs(cascade)) / Math.max(0.25, motionSpeed)
+    );
+    const cfg = mochyTiming(220, MOCHY_REVEAL_EASING, motionEnabled, motionSpeed);
+    progress.set(withTiming(1, cfg));
+  }, [revealKey, cascade, delayMs, motionEnabled, motionSpeed, progress]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const p = progress.get();
+    return {
+      opacity: p,
+      transform: [{ translateY: (1 - p) * 10 }],
+    };
+  });
+
+  return <Animated.View style={[style, animatedStyle]}>{children}</Animated.View>;
+}
+
+/**
+ * Mochy-Music `OnbCard` / `pressBounce` tappable card (`OnboardingDesign.kt:236` + `TouchFeedback.kt:115`)
+ */
+export function MochyCard({
+  onPress,
+  accessibilityLabel,
+  style,
+  children,
+}: {
+  onPress?: () => void;
+  accessibilityLabel?: string;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  const { colors, radii } = useKeepItTheme();
+  const motionEnabled = useSessionStore((s) => s.motionEnabled);
+  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.get() }],
+  }));
+
+  if (!onPress) {
+    return (
+      <View
+        style={[
+          styles.cardBase,
+          {
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
+            borderRadius: radii.card,
+          },
+          style,
+        ]}>
+        {children}
+      </View>
+    );
+  }
+
+  return (
+    <AnimatedPressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPressIn={() => {
+        if (!motionEnabled) return;
+        scale.set(withSpring(0.985, MOCHY_SPRINGS.pressIn(motionSpeed)));
+      }}
+      onPressOut={() => {
+        if (!motionEnabled) return;
+        scale.set(withSpring(1, MOCHY_SPRINGS.pressRelease(motionSpeed)));
+      }}
+      onPress={() => {
+        if (Platform.OS !== 'web') {
+          void Haptics.selectionAsync();
+        }
+        onPress();
+      }}
+      style={[
+        styles.cardBase,
+        {
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+          borderRadius: radii.card,
+        },
+        animatedStyle,
+        style,
+      ]}>
+      {children}
+    </AnimatedPressable>
+  );
+}
 
 interface ButtonProps {
   label: string;
@@ -32,6 +176,9 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
 }
 
+/**
+ * Mochy-Music `OnbButton` + `pressBounce` pill button (`TouchFeedback.kt:115-144`)
+ */
 export function KeepItButton({
   label,
   onPress,
@@ -42,6 +189,8 @@ export function KeepItButton({
   style,
 }: ButtonProps) {
   const { colors, radii } = useKeepItTheme();
+  const motionEnabled = useSessionStore((s) => s.motionEnabled);
+  const motionSpeed = useSessionStore((s) => s.motionSpeed);
   const scale = useSharedValue(1);
   const isDisabled = disabled || loading;
 
@@ -50,12 +199,16 @@ export function KeepItButton({
   }));
 
   const handlePressIn = () => {
-    if (isDisabled) return;
-    scale.set(withTiming(0.97, { duration: 120, easing: PRESS_EASING }));
+    if (isDisabled || !motionEnabled) return;
+    scale.set(withSpring(0.96, MOCHY_SPRINGS.pressIn(motionSpeed)));
   };
 
   const handlePressOut = () => {
-    scale.set(withTiming(1, { duration: 150, easing: PRESS_EASING }));
+    if (!motionEnabled) {
+      scale.set(1);
+      return;
+    }
+    scale.set(withSpring(1, MOCHY_SPRINGS.pressRelease(motionSpeed)));
   };
 
   const handlePress = () => {
@@ -103,7 +256,7 @@ export function KeepItButton({
           borderRadius: radii.pill,
           borderColor,
           borderWidth: variant === 'secondary' || variant === 'danger' ? 1 : 0,
-          opacity: isDisabled ? 0.52 : 1,
+          opacity: isDisabled ? 0.45 : 1,
         },
         animatedStyle,
         style,
@@ -111,7 +264,9 @@ export function KeepItButton({
       {loading ? (
         <ActivityIndicator size="small" color={textByVariant} />
       ) : (
-        <Text style={[styles.buttonText, { color: textByVariant }]}>{label}</Text>
+        <Text numberOfLines={1} style={[styles.buttonText, { color: textByVariant }]}>
+          {label}
+        </Text>
       )}
     </AnimatedPressable>
   );
@@ -129,7 +284,7 @@ export function InlineNotice({
   const palette = {
     error: { bg: colors.dangerSoft, border: colors.danger, fg: colors.danger },
     info: { bg: colors.surface, border: colors.border, fg: colors.inkMuted },
-    success: { bg: colors.accentSoft, border: colors.accent, fg: colors.ink },
+    success: { bg: colors.accentSoft, border: colors.border, fg: colors.ink },
   }[tone];
 
   return (
@@ -148,6 +303,9 @@ export function InlineNotice({
   );
 }
 
+/**
+ * KeepIt dual-lens squircle motif styled in Mochy-Music's high-contrast `PageBadge` aesthetic
+ */
 export function DualFrameMark({ size = 56 }: { size?: number }) {
   const { colors } = useKeepItTheme();
   const pipW = Math.round(size * 0.42);
@@ -158,13 +316,13 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
       accessible={false}
       style={{
         width: size,
-        height: Math.round(size * 1.18),
-        borderRadius: Math.round(size * 0.32),
+        height: Math.round(size * 1.16),
+        borderRadius: Math.round(size * 0.34),
         borderCurve: 'continuous',
         backgroundColor: colors.surface,
         borderWidth: 1.5,
         borderColor: colors.border,
-        padding: Math.round(size * 0.12),
+        padding: Math.round(size * 0.13),
         justifyContent: 'space-between',
       }}>
       <View
@@ -173,9 +331,7 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
           height: pipH,
           borderRadius: Math.round(size * 0.18),
           borderCurve: 'continuous',
-          backgroundColor: colors.accentSoft,
-          borderWidth: 1.5,
-          borderColor: colors.accent,
+          backgroundColor: colors.badgeBg,
         }}
       />
       <View
@@ -184,7 +340,7 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
           width: 8,
           height: 8,
           borderRadius: 4,
-          backgroundColor: colors.accent,
+          backgroundColor: colors.ink,
         }}
       />
     </View>
@@ -192,19 +348,23 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
 }
 
 const styles = StyleSheet.create({
+  cardBase: {
+    borderWidth: 1,
+    borderCurve: 'continuous',
+  },
   buttonBase: {
     minHeight: 50,
     paddingHorizontal: 22,
-    paddingVertical: 13,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     borderCurve: 'continuous',
   },
   buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: -0.2,
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.35,
   },
   notice: {
     borderWidth: 1,
@@ -215,6 +375,7 @@ const styles = StyleSheet.create({
   noticeText: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: '500',
+    fontWeight: '600',
+    letterSpacing: -0.2,
   },
 });

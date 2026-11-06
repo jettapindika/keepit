@@ -5,6 +5,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  fetchRecentNudges,
+  sendPartnerNudge,
+  simulateSandboxPartnerNudge,
+} from '@/api/extras';
+import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
   simulateSandboxPartnerMoment,
@@ -17,12 +22,23 @@ import {
   STATUS_PRESETS,
 } from '@/api/statuses';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { DualMomentCard, LockedMomentCard } from '@/components/moment/MomentCards';
 import { StatusHeaderCard } from '@/components/status/StatusHeaderCard';
-import { DualFrameMark, InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import {
+  DualFrameMark,
+  InlineNotice,
+  KeepItButton,
+  RevealOnAppear,
+} from '@/components/ui/Primitives';
+import { WidgetPreviewCard } from '@/components/widget/WidgetPreviewCard';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
+import { useWidgetSync } from '@/hooks/useWidgetSync';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
+import { MomentRecord } from '@/types/database';
+
+type HomeViewTab = 'partner' | 'mine' | 'together';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -33,13 +49,16 @@ export default function HomeScreen() {
   const partner = useSessionStore((s) => s.partner);
   const couple = useSessionStore((s) => s.couple);
 
-  const [activeTab, setActiveTab] = useState<'partner' | 'mine'>('partner');
+  const [activeTab, setActiveTab] = useState<HomeViewTab>('partner');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [nudging, setNudging] = useState(false);
+  const [nudgeFeedback, setNudgeFeedback] = useState<string | null>(null);
 
   const partnerName = partner?.display_name ?? 'Your partner';
   const partnerId =
     couple && user
-      ? (couple.user_a_id === user.id ? couple.user_b_id : couple.user_a_id) ?? 'sandbox_partner_maya'
+      ? (couple.user_a_id === user.id ? couple.user_b_id : couple.user_a_id) ??
+        'sandbox_partner_maya'
       : 'sandbox_partner_maya';
 
   const bundleQuery = useQuery({
@@ -63,13 +82,19 @@ export default function HomeScreen() {
     refetchInterval: 30_000,
   });
 
-  // Realtime subscription to public.moments and public.statuses
+  const nudgesQuery = useQuery({
+    queryKey: ['couple-nudges', couple?.id],
+    enabled: Boolean(couple?.id),
+    queryFn: () => fetchRecentNudges({ coupleId: couple!.id }),
+  });
+
+  // Realtime subscription to moments, statuses, and couple_events (nudges)
   useEffect(() => {
     const client = supabase;
     if (!couple?.id || !isSupabaseConfigured || !client) return;
 
     const channel = client
-      .channel(`moments:${couple.id}`)
+      .channel(`home:${couple.id}`)
       .on(
         'postgres_changes',
         {
@@ -80,6 +105,7 @@ export default function HomeScreen() {
         },
         () => {
           void queryClient.invalidateQueries({ queryKey: ['today-moment', couple.id] });
+          void queryClient.invalidateQueries({ queryKey: ['month-memories', couple.id] });
         }
       )
       .on(
@@ -94,6 +120,18 @@ export default function HomeScreen() {
           void queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] });
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'couple_events',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['couple-nudges', couple.id] });
+        }
+      )
       .subscribe();
 
     return () => {
@@ -104,11 +142,19 @@ export default function HomeScreen() {
   const bundle = bundleQuery.data;
   const countdown = useMomentCountdown(bundle?.prompt.trigger_at);
 
+  const widgetSync = useWidgetSync({
+    partnerName,
+    coupleId: couple?.id,
+    momentBundle: bundle,
+    statusBundle: statusQuery.data,
+  });
+
   const myMoment = bundle?.mine ?? null;
   const partnerMoment = bundle?.partner ?? null;
+  const bothUnlocked = Boolean(myMoment && partnerMoment && !partnerMoment.locked);
   const streakCount = bundle?.streak?.current_count ?? 0;
 
-  // Auto-select the most relevant view tab when data arrives
+  // Auto-select the best view tab as Moments arrive
   useEffect(() => {
     if (myMoment && !partnerMoment) {
       setActiveTab('mine');
@@ -144,9 +190,52 @@ export default function HomeScreen() {
     }
   };
 
+  const handleSendNudge = async () => {
+    if (!couple || !user) return;
+    setNudging(true);
+    setNudgeFeedback(null);
+    try {
+      await sendPartnerNudge({
+        coupleId: couple.id,
+        userId: user.id,
+        note: `Thinking of you, ${partnerName}`,
+      });
+      setNudgeFeedback(`Sent a nudge to ${partnerName}.`);
+      await queryClient.invalidateQueries({ queryKey: ['couple-nudges', couple.id] });
+    } catch (err) {
+      setNudgeFeedback(err instanceof Error ? err.message : 'Could not send nudge.');
+    } finally {
+      setNudging(false);
+    }
+  };
+
   const canRetakeMine = Boolean(
     myMoment && myMoment.retake_count < 2 && countdown.phase === 'live'
   );
+
+  const unlockedPartnerAsRecord: MomentRecord | null =
+    bothUnlocked && partnerMoment && couple && bundle
+      ? {
+          id: partnerMoment.id,
+          couple_id: couple.id,
+          prompt_id: bundle.prompt.id,
+          user_id: partnerMoment.user_id,
+          back_photo_path: partnerMoment.back_photo_path ?? '',
+          front_photo_path: partnerMoment.front_photo_path ?? '',
+          back_blurhash: partnerMoment.back_blurhash || DEFAULT_WARM_BLURHASH,
+          collage_photo_path: null,
+          caption: partnerMoment.caption,
+          captured_at: partnerMoment.captured_at,
+          posted_at: partnerMoment.posted_at,
+          late_by_seconds: partnerMoment.late_by_seconds,
+          is_late: partnerMoment.is_late,
+          retake_count: partnerMoment.retake_count,
+          lat: null,
+          lng: null,
+          back_photo_url: partnerMoment.back_photo_url ?? partnerMoment.back_photo_path,
+          front_photo_url: partnerMoment.front_photo_url ?? partnerMoment.front_photo_path,
+        }
+      : null;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
@@ -154,107 +243,119 @@ export default function HomeScreen() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={[
           styles.content,
-          { paddingHorizontal: spacing.xl, paddingVertical: spacing.xl },
+          {
+            paddingHorizontal: spacing.xl,
+            paddingTop: spacing.xl,
+            paddingBottom: 118,
+          },
         ]}>
         {/* Top Header */}
-        <View style={styles.topRow}>
-          <View>
-            <Text style={[styles.wordmark, { color: colors.ink }]}>KeepIt</Text>
-            <Text style={[styles.subHeader, { color: colors.inkMuted }]}>
-              {user?.display_name ?? 'You'} & {partnerName}
-            </Text>
-          </View>
+        <RevealOnAppear revealKey="home-header">
+          <View style={styles.topRow}>
+            <View>
+              <Text style={[styles.wordmark, { color: colors.ink }]}>KeepIt</Text>
+              <Text style={[styles.subHeader, { color: colors.inkMuted }]}>
+                {user?.display_name ?? 'You'} & {partnerName}
+              </Text>
+            </View>
 
-          <View
-            style={[
-              styles.streakBadge,
-              {
-                borderColor: colors.accent,
-                backgroundColor: colors.accentSoft,
-                borderRadius: radii.pill,
-              },
-            ]}>
-            <Text style={[styles.streakText, { color: colors.accent }]}>
-              {streakCount}d streak
-            </Text>
+            <View
+              style={[
+                styles.streakBadge,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.surfaceElevated,
+                  borderRadius: radii.pill,
+                },
+              ]}>
+              <Text style={[styles.streakText, { color: colors.ink }]}>
+                {streakCount}d streak
+              </Text>
+            </View>
           </View>
-        </View>
+        </RevealOnAppear>
 
-        {/* Partner & Self Ephemeral Status Card */}
-        <StatusHeaderCard
-          partnerName={partnerName}
-          partnerStatus={statusQuery.data?.partner ?? null}
-          myStatus={statusQuery.data?.mine ?? null}
-          onOpenStatusSheet={() => router.push('/status-sheet')}
-        />
+        {/* Partner & Self Ephemeral Status + Nudge Card */}
+        <RevealOnAppear revealKey="home-status">
+          <StatusHeaderCard
+            partnerName={partnerName}
+            partnerStatus={statusQuery.data?.partner ?? null}
+            myStatus={statusQuery.data?.mine ?? null}
+            latestNudge={nudgesQuery.data?.[0] ?? null}
+            currentUserId={user?.id}
+            nudging={nudging}
+            nudgeFeedback={nudgeFeedback}
+            onSendNudge={() => void handleSendNudge()}
+            onOpenStatusSheet={() => router.push('/status-sheet')}
+          />
+        </RevealOnAppear>
+
+        {/* Live 2-Minute Prompt Banner (when user hasn't posted yet) */}
         {bundle?.prompt && !myMoment ? (
-          <View
-            style={[
-              styles.promptBanner,
-              {
-                backgroundColor:
-                  countdown.phase === 'live' ? colors.accentSoft : colors.surface,
-                borderColor:
-                  countdown.phase === 'live'
-                    ? colors.accent
-                    : countdown.phase === 'late'
-                      ? colors.warning
-                      : colors.border,
-                borderRadius: radii.card,
-                padding: spacing.lg,
-              },
-            ]}>
-            {countdown.phase === 'upcoming' ? (
-              <>
-                <Text style={[styles.bannerTitle, { color: colors.ink }]}>
-                  Today’s window hasn’t opened yet
-                </Text>
-                <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
-                  Both phones will ring at the same random moment today ({countdown.formattedTimer}{' '}
-                  until window).
-                </Text>
-              </>
-            ) : (
-              <>
-                <View style={styles.bannerTopRow}>
+          <RevealOnAppear revealKey="home-prompt-banner">
+            <View
+              style={[
+                styles.promptBanner,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor:
+                    countdown.phase === 'late' ? colors.warning : colors.border,
+                  borderRadius: radii.group,
+                  padding: spacing.lg,
+                },
+              ]}>
+              {countdown.phase === 'upcoming' ? (
+                <>
                   <Text style={[styles.bannerTitle, { color: colors.ink }]}>
+                    Today’s window hasn’t opened yet
+                  </Text>
+                  <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
+                    Both phones will ring at the same random moment today (
+                    {countdown.formattedTimer} until window).
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <View style={styles.bannerTopRow}>
+                    <Text style={[styles.bannerTitle, { color: colors.ink }]}>
+                      {countdown.phase === 'live'
+                        ? 'Time for today’s Moment'
+                        : 'Today’s window is open (Late)'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.bannerTimer,
+                        {
+                          color:
+                            countdown.phase === 'live' ? colors.ink : colors.warning,
+                        },
+                      ]}>
+                      {countdown.formattedTimer}
+                    </Text>
+                  </View>
+                  <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
                     {countdown.phase === 'live'
-                      ? 'Time for today’s Moment'
-                      : 'Today’s window is open (Late)'}
+                      ? 'Capture your front and back photo within 2 minutes.'
+                      : `The 2-minute window passed, but you can still post (${countdown.formattedTimer}) to unlock ${partnerName}’s Moment.`}
                   </Text>
-                  <Text
-                    style={[
-                      styles.bannerTimer,
-                      {
-                        color:
-                          countdown.phase === 'live' ? colors.accent : colors.warning,
-                      },
-                    ]}>
-                    {countdown.formattedTimer}
-                  </Text>
-                </View>
-                <Text style={[styles.bannerBody, { color: colors.inkMuted }]}>
-                  {countdown.phase === 'live'
-                    ? 'Capture your front and back photo within 2 minutes.'
-                    : `The 2-minute window passed, but you can still post (${countdown.formattedTimer}) to unlock ${partnerName}’s Moment.`}
-                </Text>
-                <KeepItButton
-                  label={
-                    countdown.phase === 'live'
-                      ? `Capture Today’s Moment (${countdown.formattedTimer})`
-                      : 'Post Late Moment'
-                  }
-                  onPress={openCameraModal}
-                />
-              </>
-            )}
-          </View>
+                  <KeepItButton
+                    label={
+                      countdown.phase === 'live'
+                        ? `Capture Today’s Moment (${countdown.formattedTimer})`
+                        : 'Post Late Moment'
+                    }
+                    onPress={openCameraModal}
+                  />
+                </>
+              )}
+            </View>
+          </RevealOnAppear>
         ) : null}
 
         {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
 
-        {/* Switcher between Partner & Yours when at least one Moment exists */}
-        {(myMoment || partnerMoment) ? (
+        {/* Switcher: Partner / Yours / Together (when both posted) */}
+        {myMoment || partnerMoment ? (
           <View
             accessibilityRole="tablist"
             style={[
@@ -285,7 +386,7 @@ export default function HomeScreen() {
                     fontWeight: activeTab === 'partner' ? '700' : '500',
                   },
                 ]}>
-                {partnerName}’s Moment
+                {partnerName}
               </Text>
             </Pressable>
 
@@ -312,11 +413,47 @@ export default function HomeScreen() {
                 Your Moment
               </Text>
             </Pressable>
+
+            {bothUnlocked ? (
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeTab === 'together' }}
+                onPress={() => setActiveTab('together')}
+                style={[
+                  styles.switcherTab,
+                  {
+                    backgroundColor:
+                      activeTab === 'together' ? colors.surfaceElevated : 'transparent',
+                    borderRadius: radii.input - 2,
+                  },
+                ]}>
+                <Text
+                  style={[
+                    styles.switcherText,
+                    {
+                      color: activeTab === 'together' ? colors.ink : colors.inkMuted,
+                      fontWeight: activeTab === 'together' ? '700' : '500',
+                    },
+                  ]}>
+                  Together
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
         {/* Main Focal Area */}
-        {activeTab === 'partner' ? (
+        {activeTab === 'together' && bothUnlocked && myMoment && unlockedPartnerAsRecord ? (
+          <TogetherCollageCard
+            promptDate={bundle!.prompt.prompt_date}
+            myMoment={myMoment}
+            partnerMoment={unlockedPartnerAsRecord}
+            myName={user?.display_name ?? 'You'}
+            partnerName={partnerName}
+            streakCount={streakCount}
+            revealKey={`home-together-${bundle!.prompt.id}`}
+          />
+        ) : activeTab === 'partner' ? (
           partnerMoment ? (
             partnerMoment.locked ? (
               <LockedMomentCard
@@ -346,7 +483,7 @@ export default function HomeScreen() {
                 {
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
-                  borderRadius: radii.card,
+                  borderRadius: radii.group,
                   padding: spacing.xl,
                 },
               ]}>
@@ -384,7 +521,7 @@ export default function HomeScreen() {
               {
                 backgroundColor: colors.surface,
                 borderColor: colors.border,
-                borderRadius: radii.card,
+                borderRadius: radii.group,
                 padding: spacing.xl,
               },
             ]}>
@@ -401,6 +538,15 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Native iOS WidgetKit & Android Glance Live Preview + Sync */}
+        <WidgetPreviewCard
+          snapshot={widgetSync.snapshot}
+          lastSyncedAt={widgetSync.lastSyncedAt}
+          onPressCaptureLocked={openCameraModal}
+          onPressOpenApp={() => setActiveTab('partner')}
+          onPressSyncNow={widgetSync.forceSync}
+        />
+
         {/* Sandbox Simulator Controls (only when Supabase URL is unset) */}
         {!isSupabaseConfigured && couple && bundle?.prompt ? (
           <View
@@ -409,7 +555,7 @@ export default function HomeScreen() {
               {
                 backgroundColor: colors.surface,
                 borderColor: colors.border,
-                borderRadius: radii.card,
+                borderRadius: radii.group,
                 padding: spacing.lg,
               },
             ]}>
@@ -447,19 +593,36 @@ export default function HomeScreen() {
                 style={styles.flex}
               />
             </View>
-            <KeepItButton
-              label={`Simulate ${partnerName} Status (📚 In class)`}
-              variant="secondary"
-              onPress={() => {
-                void simulateSandboxPartnerStatus({
-                  coupleId: couple.id,
-                  partnerId,
-                  preset: STATUS_PRESETS[0],
-                }).then(() =>
-                  queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] })
-                );
-              }}
-            />
+            <View style={styles.sandboxRow}>
+              <KeepItButton
+                label={`${partnerName} Status (In class)`}
+                variant="secondary"
+                onPress={() => {
+                  void simulateSandboxPartnerStatus({
+                    coupleId: couple.id,
+                    partnerId,
+                    preset: STATUS_PRESETS[0],
+                  }).then(() =>
+                    queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] })
+                  );
+                }}
+                style={styles.flex}
+              />
+              <KeepItButton
+                label={`${partnerName} Nudges You`}
+                variant="secondary"
+                onPress={() => {
+                  void simulateSandboxPartnerNudge({
+                    coupleId: couple.id,
+                    partnerId,
+                    partnerName,
+                  }).then(() =>
+                    queryClient.invalidateQueries({ queryKey: ['couple-nudges', couple.id] })
+                  );
+                }}
+                style={styles.flex}
+              />
+            </View>
           </View>
         ) : null}
       </ScrollView>
@@ -475,7 +638,7 @@ const styles = StyleSheet.create({
     maxWidth: 480,
     width: '100%',
     alignSelf: 'center',
-    gap: 20,
+    gap: 18,
   },
   topRow: {
     flexDirection: 'row',
@@ -483,17 +646,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   wordmark: {
-    fontSize: 26,
+    fontSize: 30,
     fontWeight: '700',
-    letterSpacing: -0.6,
+    letterSpacing: -0.9,
   },
   subHeader: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
+    letterSpacing: -0.2,
   },
   streakBadge: {
     borderWidth: 1,
-    paddingHorizontal: 12,
+    paddingHorizontal: 13,
     paddingVertical: 6,
     borderCurve: 'continuous',
   },
@@ -503,7 +667,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   promptBanner: {
-    borderWidth: 1.5,
+    borderWidth: 1,
     gap: 10,
     borderCurve: 'continuous',
   },
@@ -511,14 +675,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
   },
   bannerTitle: {
+    flex: 1,
     fontSize: 17,
     fontWeight: '700',
-    letterSpacing: -0.2,
+    letterSpacing: -0.35,
   },
   bannerTimer: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
@@ -541,7 +707,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   switcherText: {
-    fontSize: 14,
+    fontSize: 13,
+    letterSpacing: -0.2,
   },
   emptyCard: {
     borderWidth: 1,
@@ -552,6 +719,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 19,
     fontWeight: '700',
+    letterSpacing: -0.4,
     textAlign: 'center',
     marginTop: 4,
   },
@@ -568,6 +736,7 @@ const styles = StyleSheet.create({
   sandboxHeader: {
     fontSize: 12,
     fontWeight: '700',
+    letterSpacing: -0.2,
   },
   sandboxRow: {
     flexDirection: 'row',

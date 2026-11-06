@@ -3,6 +3,7 @@ import { create } from 'zustand';
 
 import { fetchPairingSnapshot, upsertUserProfile } from '@/api/pairing';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { AnimationSpeed } from '@/theme/motion';
 import { ThemeMode } from '@/theme/tokens';
 import { CoupleRecord, UserProfile } from '@/types/database';
 
@@ -12,6 +13,8 @@ interface PersistedSessionSlice {
   user: UserProfile | null;
   email: string | null;
   themePreference: ThemeMode;
+  motionEnabled: boolean;
+  motionSpeed: AnimationSpeed;
 }
 
 interface SessionState {
@@ -21,6 +24,8 @@ interface SessionState {
   couple: CoupleRecord | null;
   partner: UserProfile | null;
   themePreference: ThemeMode;
+  motionEnabled: boolean;
+  motionSpeed: AnimationSpeed;
   pendingInviteCode: string | null;
   hydrate: () => Promise<void>;
   sendEmailOtp: (email: string) => Promise<void>;
@@ -32,8 +37,11 @@ interface SessionState {
   setPairing: (couple: CoupleRecord | null, partner: UserProfile | null) => void;
   refreshPairing: () => Promise<void>;
   setThemePreference: (mode: ThemeMode) => Promise<void>;
+  setMotionEnabled: (enabled: boolean) => Promise<void>;
+  setMotionSpeed: (speed: AnimationSpeed) => Promise<void>;
   setPendingInviteCode: (code: string | null) => void;
   signOut: () => Promise<void>;
+  wipeLocalAccount: () => Promise<void>;
 }
 
 async function persistSessionSlice(slice: PersistedSessionSlice): Promise<void> {
@@ -46,16 +54,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   email: null,
   couple: null,
   partner: null,
-  themePreference: 'system',
+  // Mochy-Music ships dark-first by default while keeping a working Light/System toggle
+  themePreference: 'dark',
+  motionEnabled: true,
+  motionSpeed: 1,
   pendingInviteCode: null,
 
   hydrate: async () => {
     try {
       const raw = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
-      const saved: PersistedSessionSlice | null = raw ? JSON.parse(raw) : null;
+      const saved: Partial<PersistedSessionSlice> | null = raw ? JSON.parse(raw) : null;
 
       if (saved?.themePreference) {
         set({ themePreference: saved.themePreference });
+      }
+      if (typeof saved?.motionEnabled === 'boolean') {
+        set({ motionEnabled: saved.motionEnabled });
+      }
+      if (saved?.motionSpeed) {
+        set({ motionSpeed: saved.motionSpeed });
       }
 
       if (isSupabaseConfigured && supabase) {
@@ -90,7 +107,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const pairing = await fetchPairingSnapshot(saved.user.id);
         set({
           user: saved.user,
-          email: saved.email,
+          email: saved.email ?? null,
           couple: pairing.couple,
           partner: pairing.partner,
           hydrated: true,
@@ -98,7 +115,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return;
       }
     } catch {
-      // Fall through to clean unauthenticated state on storage corruption
+      // Clean fallback on corrupted storage
     }
 
     set({ hydrated: true });
@@ -155,6 +172,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       user: profile,
       email: cleanedEmail,
       themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
     });
 
     set({
@@ -182,6 +201,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       user: get().user,
       email: get().email,
       themePreference: mode,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
+    });
+  },
+
+  setMotionEnabled: async (enabled: boolean) => {
+    set({ motionEnabled: enabled });
+    await persistSessionSlice({
+      user: get().user,
+      email: get().email,
+      themePreference: get().themePreference,
+      motionEnabled: enabled,
+      motionSpeed: get().motionSpeed,
+    });
+  },
+
+  setMotionSpeed: async (speed: AnimationSpeed) => {
+    set({ motionSpeed: speed });
+    await persistSessionSlice({
+      user: get().user,
+      email: get().email,
+      themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: speed,
     });
   },
 
@@ -193,11 +236,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (isSupabaseConfigured && supabase) {
       await supabase.auth.signOut();
     }
+    await persistSessionSlice({
+      user: null,
+      email: null,
+      themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
+    });
+    set({
+      user: null,
+      email: null,
+      couple: null,
+      partner: null,
+    });
+  },
+
+  wipeLocalAccount: async () => {
     const themePreference = get().themePreference;
+    const motionEnabled = get().motionEnabled;
+    const motionSpeed = get().motionSpeed;
+    const keysToWipe = [
+      SESSION_STORAGE_KEY,
+      'keepit.local_db.v1',
+      'keepit.local_moments.v1',
+      'keepit.local_statuses.v1',
+      'keepit.local_locations.v1',
+      'keepit.local_events.v1',
+      'keepit.widget_snapshot.v1',
+    ];
+    await Promise.all(keysToWipe.map((k) => AsyncStorage.removeItem(k)));
     await persistSessionSlice({
       user: null,
       email: null,
       themePreference,
+      motionEnabled,
+      motionSpeed,
     });
     set({
       user: null,

@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["KeepItWidgetBridgeModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.keepitwidgetbridge.KeepItWidgetBridgeModule"]
+  }
+}
