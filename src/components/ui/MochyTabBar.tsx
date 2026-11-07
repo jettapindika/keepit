@@ -26,11 +26,11 @@ export interface MochyTabBarProps {
   };
 }
 
-const tabOrder = ['index', 'map', 'messages', 'profile'] as const;
+const tabOrder = ['index', 'map', 'memories', 'profile'] as const;
 const icons = {
   index: { ios: 'house', android: 'home', web: 'home' },
   map: { ios: 'map', android: 'map', web: 'map' },
-  messages: { ios: 'bubble.left.and.bubble.right', android: 'chat_bubble', web: 'chat_bubble' },
+  memories: { ios: 'photo.on.rectangle.angled', android: 'photo_library', web: 'photo_library' },
   profile: { ios: 'person.crop.circle', android: 'person', web: 'person' },
 } as const;
 

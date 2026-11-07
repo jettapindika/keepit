@@ -20,9 +20,9 @@ export default function TabsLayout() {
       }}>
       <Tabs.Screen name="index" options={{ title: 'Home' }} />
       <Tabs.Screen name="map" options={{ title: 'Map' }} />
-      <Tabs.Screen name="messages" options={{ title: 'Chat' }} />
-      <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
       <Tabs.Screen name="memories" options={{ title: 'Memories' }} />
+      <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
+      <Tabs.Screen name="messages" options={{ title: 'Chat' }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
     </Tabs>
   );

@@ -354,6 +354,8 @@ export default function MessagesScreen() {
                   ? `Chat and 15s Snaps with ${activePeer.displayName}`
                   : 'Pair with a partner or add friends to start chatting'
               }
+              onBack={() => router.navigate('/(tabs)')}
+              backLabel="Back to Home"
               action={
                 <AppPressable
                   accessibilityRole="button"

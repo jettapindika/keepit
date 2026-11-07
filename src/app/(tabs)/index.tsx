@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -292,7 +293,29 @@ export default function HomeScreen() {
         <PageHeader
           title="Today"
           subtitle={isPartnerPaired ? `${user?.display_name ?? 'You'} & ${partnerName}` : 'Your daily life, from both sides of the camera.'}
-          action={<Pressable accessibilityRole="button" accessibilityLabel="Open memories calendar" onPress={() => router.navigate('/(tabs)/memories')} style={[styles.quickNavPill, { backgroundColor: colors.surface, borderRadius: radii.input }]}><Text style={[styles.quickNavText, { color: colors.ink }]}>Memories</Text></Pressable>}
+          action={
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open Messages"
+              accessibilityHint="Open chat and 15-second Snaps"
+              accessibilityShowsLargeContentViewer
+              accessibilityLargeContentTitle="Messages"
+              onPress={() => router.navigate('/(tabs)/messages')}
+              style={[
+                styles.chatIconButton,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.controlBorder,
+                  borderRadius: radii.input,
+                },
+              ]}>
+              <SymbolView
+                name={{ ios: 'bubble.left.and.bubble.right', android: 'chat_bubble', web: 'chat_bubble' }}
+                tintColor={colors.ink}
+                size={21}
+              />
+            </Pressable>
+          }
         />
         <View style={styles.quickCameraChipsRow}>
           <Pressable accessibilityRole="button" accessibilityLabel="Open settings" onPress={() => router.navigate('/(tabs)/settings')} style={[styles.cameraModeChip, { backgroundColor: colors.surface, borderRadius: radii.input }]}><Text style={[styles.cameraModeChipText, { color: colors.ink }]}>Settings</Text></Pressable>
@@ -680,18 +703,13 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     gap: 24,
   },
-  quickNavPill: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  chatIconButton: {
+    width: 44,
+    height: 44,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
-  },
-  quickNavText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
   },
   quotaCard: {
     gap: 12,
