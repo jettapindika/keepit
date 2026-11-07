@@ -22,9 +22,11 @@ import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 
 export function KeepItAuthForm({
   initialMode,
+  initialNotice = null,
   onBack,
 }: {
   initialMode: 'signup' | 'signin';
+  initialNotice?: string | null;
   onBack: () => void;
 }) {
   const { colors, radii, isDark } = useKeepItTheme();
@@ -37,7 +39,7 @@ export function KeepItAuthForm({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(initialNotice);
   const submitting = useRef(false);
   const mounted = useRef(true);
   const emailInput = useRef<React.ComponentRef<typeof TextInput>>(null);

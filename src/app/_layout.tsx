@@ -145,6 +145,10 @@ function NavigationGuard() {
     }
 
     if (!user) {
+      const inAuthCallback = segmentList[0] === 'auth-callback';
+      if (inAuthCallback) {
+        return;
+      }
       if (!inAuthGroup || authLeaf !== 'welcome') {
         router.replace('/(auth)/welcome');
       }
@@ -160,7 +164,7 @@ function NavigationGuard() {
       return;
     }
 
-    if (inAuthGroup && authLeaf === 'welcome') {
+    if ((inAuthGroup && authLeaf === 'welcome') || segmentList[0] === 'auth-callback') {
       router.replace('/(tabs)');
     }
   }, [
@@ -192,7 +196,9 @@ export default function RootLayout() {
         url.includes('access_token=') ||
         url.includes('refresh_token=') ||
         url.includes('token_hash=') ||
+        url.includes('token=') ||
         url.includes('auth-callback') ||
+        url.includes('/auth/v1/verify') ||
         url.includes('type=signup') ||
         url.includes('type=recovery') ||
         url.includes('type=magiclink') ||
@@ -267,6 +273,7 @@ export default function RootLayout() {
             }}>
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="auth-callback" />
             <Stack.Screen
               name="camera"
               options={{

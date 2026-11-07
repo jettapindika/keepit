@@ -2,7 +2,7 @@
   "expo": {
     "name": "KeepIt",
     "slug": "keepit",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "keepit",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.keepit.couples",
-      "versionCode": 5,
+      "versionCode": 6,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",

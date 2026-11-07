@@ -1,49 +1,34 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-import { buildSimulatedDualPhotos, DEFAULT_WARM_BLURHASH, todayLocalDateString } from '@/api/moments';
+import {
+  buildSimulatedDualPhotos,
+  DEFAULT_WARM_BLURHASH,
+  readLocalMoments,
+  todayLocalDateString,
+  writeLocalMoments,
+} from '@/api/moments';
 import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
+import { safeGetStorageItem, safeSetStorageItem } from '@/utils/safeAsyncStorage';
 import {
   CoupleEventRecord,
-  DailyPromptRecord,
   MemoryDayRecord,
   MomentRecord,
   MonthMemoriesBundle,
   PROMPT_WINDOW_SECONDS,
-  StreakRecord,
 } from '@/types/database';
 import { enrichStreakWithRecentChain, getUnlockedMilestones } from '@/utils/streakEngine';
 
 const LOCAL_EVENTS_KEY = 'keepit.local_events.v1';
-const LOCAL_MOMENTS_KEY = 'keepit.local_moments.v1';
 const NUDGE_COOLDOWN_MS = 30_000;
 const NUDGE_COOLDOWN_MESSAGE = 'Wait a few seconds before nudging again.';
-
-interface LocalMomentsState {
-  prompts: Record<string, DailyPromptRecord>;
-  moments: Record<string, MomentRecord>;
-  streaks: Record<string, StreakRecord>;
-}
-
 async function readLocalEvents(): Promise<CoupleEventRecord[]> {
-  const raw = await AsyncStorage.getItem(LOCAL_EVENTS_KEY);
+  const raw = await safeGetStorageItem(LOCAL_EVENTS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) ? (parsed as CoupleEventRecord[]) : [];
   } catch {
     return [];
-  }
-}
-
-async function readLocalMoments(): Promise<LocalMomentsState> {
-  const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-  if (!raw) return { prompts: {}, moments: {}, streaks: {} };
-  try {
-    return JSON.parse(raw) as LocalMomentsState;
-  } catch {
-    return { prompts: {}, moments: {}, streaks: {} };
   }
 }
 
@@ -111,7 +96,7 @@ export async function sendPartnerNudge(params: {
   };
 
   const nextEvents = [record, ...events].slice(0, 60);
-  await AsyncStorage.setItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
+  await safeSetStorageItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
   void broadcastCoupleSync(params.coupleId, { kind: 'nudge_sent', event: record });
   return record;
 }
@@ -169,7 +154,7 @@ export async function simulateSandboxPartnerNudge(params: {
   };
 
   const nextEvents = [record, ...events].slice(0, 60);
-  await AsyncStorage.setItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
+  await safeSetStorageItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
   return record;
 }
 
@@ -526,7 +511,7 @@ export async function seedSandboxSampleMemories(params: {
     unlocked_milestones: getUnlockedMilestones(nextLongest, existingStreak?.unlocked_milestones),
   };
 
-  await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+  await writeLocalMoments(state);
 }
 
 export async function deleteAccountAndAllData(params: { userId: string }): Promise<void> {

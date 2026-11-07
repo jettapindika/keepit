@@ -5,8 +5,12 @@
 // - Curated Music Tracks & Location Presets for Moments
 // - Filter preset definitions (Warm Film, Polaroid, Noir, Cyber Neon, Golden Hour, VHS Retro, Dreamy)
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
+import {
+  MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
+  safeGetStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 import {
   broadcastCoupleSync,
   buildDirectMessageSyncChannelTopic,
@@ -209,7 +213,7 @@ export function buildFriendCode(userId: string, displayName: string): string {
 }
 
 async function readLocalFriends(): Promise<FriendRecord[]> {
-  const raw = await AsyncStorage.getItem(LOCAL_FRIENDS_KEY);
+  const raw = await safeGetStorageItem(LOCAL_FRIENDS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -220,15 +224,19 @@ async function readLocalFriends(): Promise<FriendRecord[]> {
 }
 
 async function writeLocalFriends(list: FriendRecord[]): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
+  await safeSetStorageItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
 }
 
 async function readLocalDbUsers(): Promise<Record<string, UserProfile>> {
-  const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
-  const parsed: { users: Record<string, UserProfile>; couples: Record<string, unknown> } = rawDb
-    ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
-    : { users: {}, couples: {} };
-  return parsed.users ?? {};
+  const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
+  try {
+    const parsed: { users: Record<string, UserProfile>; couples: Record<string, unknown> } = rawDb
+      ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
+      : { users: {}, couples: {} };
+    return parsed.users ?? {};
+  } catch {
+    return {};
+  }
 }
 export async function fetchFriendsCircle(params: {
   userId: string;
@@ -425,7 +433,7 @@ export async function removeFriend(params: {
 
 // Direct Messages (DMs)
 async function readLocalMessages(): Promise<DirectMessageRecord[]> {
-  const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+  const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -436,7 +444,18 @@ async function readLocalMessages(): Promise<DirectMessageRecord[]> {
 }
 
 async function writeLocalMessages(list: DirectMessageRecord[]): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(list));
+  for (const m of list) {
+    if (m?.media_uri?.startsWith('data:') && m.media_uri.length > 90_000) {
+      m.media_uri = await spillDataUriToFileIfLarge(m.media_uri, `dm-${m.id}`);
+    }
+  }
+  let trimmed = list.slice(-300);
+  let serialized = JSON.stringify(trimmed);
+  while (serialized.length > MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS && trimmed.length > 10) {
+    trimmed = trimmed.slice(-Math.max(10, Math.floor(trimmed.length / 2)));
+    serialized = JSON.stringify(trimmed);
+  }
+  await safeSetStorageItem(LOCAL_MESSAGES_KEY, serialized);
 }
 
 export function buildConversationId(userA: string, userB: string): string {

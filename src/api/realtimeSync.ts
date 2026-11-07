@@ -2,11 +2,12 @@
 // Cross-device Supabase Realtime Broadcast + Presence sync bus for paired couples & friends.
 // Reuses the active subscribed couple channel so broadcastCoupleSync never unsubscribes the listener!
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
+import { readLocalMoments, writeLocalMoments } from '@/api/moments';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
+import { safeGetStorageItem, safeSetStorageItem } from '@/utils/safeAsyncStorage';
 import {
   CoupleEventRecord,
   DirectMessageRecord,
@@ -15,12 +16,10 @@ import {
   MomentCommentRecord,
   MomentRecord,
   StatusRecord,
-  StreakRecord,
   UserProfile,
 } from '@/types/database';
 import { advanceStreakOnDualPost } from '@/utils/streakEngine';
 
-const LOCAL_MOMENTS_KEY = 'keepit.local_moments.v1';
 const LOCAL_STATUS_KEY = 'keepit.local_statuses.v1';
 const LOCAL_LOCATIONS_KEY = 'keepit.local_locations.v1';
 const LOCAL_EVENTS_KEY = 'keepit.local_events.v1';
@@ -132,14 +131,7 @@ export async function broadcastCoupleSync(
 
 export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promise<void> {
   if (packet.kind === 'moment_upsert') {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-    const state = raw
-      ? (JSON.parse(raw) as {
-          prompts: Record<string, unknown>;
-          moments: Record<string, MomentRecord>;
-          streaks: Record<string, StreakRecord>;
-        })
-      : { prompts: {}, moments: {}, streaks: {} };
+    const state = await readLocalMoments();
 
     const m = packet.moment;
     state.moments[m.id] = m;
@@ -160,35 +152,23 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         bothOnTime,
       });
     }
-    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    await writeLocalMoments(state);
     return;
   }
 
   if (packet.kind === 'moment_delete') {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-    if (!raw) return;
-    const state = JSON.parse(raw) as {
-      prompts: Record<string, unknown>;
-      moments: Record<string, MomentRecord>;
-      streaks: Record<string, unknown>;
-    };
+    const state = await readLocalMoments();
     for (const [k, rec] of Object.entries(state.moments)) {
       if (rec.id === packet.momentId) {
         delete state.moments[k];
       }
     }
-    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    await writeLocalMoments(state);
     return;
   }
 
   if (packet.kind === 'moment_comment') {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-    if (!raw) return;
-    const state = JSON.parse(raw) as {
-      prompts: Record<string, unknown>;
-      moments: Record<string, MomentRecord>;
-      streaks: Record<string, unknown>;
-    };
+    const state = await readLocalMoments();
     for (const [k, rec] of Object.entries(state.moments)) {
       if (rec.id === packet.momentId) {
         const existingComments = rec.comments ?? [];
@@ -200,17 +180,11 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         }
       }
     }
-    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    await writeLocalMoments(state);
     return;
   }
   if (packet.kind === 'moment_comment_delete') {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-    if (!raw) return;
-    const state = JSON.parse(raw) as {
-      prompts: Record<string, unknown>;
-      moments: Record<string, MomentRecord>;
-      streaks: Record<string, unknown>;
-    };
+    const state = await readLocalMoments();
     for (const [k, rec] of Object.entries(state.moments)) {
       if (rec.id === packet.momentId) {
         state.moments[k] = {
@@ -219,18 +193,12 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         };
       }
     }
-    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    await writeLocalMoments(state);
     return;
   }
 
   if (packet.kind === 'moment_reaction') {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-    if (!raw) return;
-    const state = JSON.parse(raw) as {
-      prompts: Record<string, unknown>;
-      moments: Record<string, MomentRecord>;
-      streaks: Record<string, unknown>;
-    };
+    const state = await readLocalMoments();
     for (const [k, rec] of Object.entries(state.moments)) {
       if (rec.id === packet.momentId) {
         const nextReactions = { ...(rec.reactions ?? {}) };
@@ -245,18 +213,12 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         };
       }
     }
-    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    await writeLocalMoments(state);
     return;
   }
 
   if (packet.kind === 'moment_snap_viewed') {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
-    if (!raw) return;
-    const state = JSON.parse(raw) as {
-      prompts: Record<string, unknown>;
-      moments: Record<string, MomentRecord>;
-      streaks: Record<string, unknown>;
-    };
+    const state = await readLocalMoments();
     for (const [k, rec] of Object.entries(state.moments)) {
       if (rec.id === packet.momentId) {
         if (rec.user_id === packet.viewerId) continue;
@@ -289,37 +251,37 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         };
       }
     }
-    await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+    await writeLocalMoments(state);
     return;
   }
 
   if (packet.kind === 'status_upsert') {
-    const raw = await AsyncStorage.getItem(LOCAL_STATUS_KEY);
+    const raw = await safeGetStorageItem(LOCAL_STATUS_KEY);
     const map = raw ? (JSON.parse(raw) as Record<string, StatusRecord>) : {};
     map[packet.status.user_id] = packet.status;
-    await AsyncStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(map));
+    await safeSetStorageItem(LOCAL_STATUS_KEY, JSON.stringify(map));
     return;
   }
 
   if (packet.kind === 'status_clear') {
-    const raw = await AsyncStorage.getItem(LOCAL_STATUS_KEY);
+    const raw = await safeGetStorageItem(LOCAL_STATUS_KEY);
     const map = raw ? (JSON.parse(raw) as Record<string, StatusRecord>) : {};
     delete map[packet.userId];
-    await AsyncStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(map));
+    await safeSetStorageItem(LOCAL_STATUS_KEY, JSON.stringify(map));
     return;
   }
 
   if (packet.kind === 'location_upsert') {
-    const raw = await AsyncStorage.getItem(LOCAL_LOCATIONS_KEY);
+    const raw = await safeGetStorageItem(LOCAL_LOCATIONS_KEY);
     const map = raw ? (JSON.parse(raw) as Record<string, LocationShareRecord>) : {};
     const loc = packet.location;
     map[`${loc.couple_id}:${loc.user_id}`] = loc;
-    await AsyncStorage.setItem(LOCAL_LOCATIONS_KEY, JSON.stringify(map));
+    await safeSetStorageItem(LOCAL_LOCATIONS_KEY, JSON.stringify(map));
 
     if (packet.event) {
-      const rawEvents = await AsyncStorage.getItem(LOCAL_EVENTS_KEY);
+      const rawEvents = await safeGetStorageItem(LOCAL_EVENTS_KEY);
       const events = rawEvents ? (JSON.parse(rawEvents) as CoupleEventRecord[]) : [];
-      await AsyncStorage.setItem(
+      await safeSetStorageItem(
         LOCAL_EVENTS_KEY,
         JSON.stringify([packet.event, ...events].slice(0, 60))
       );
@@ -328,9 +290,9 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
   }
 
   if (packet.kind === 'nudge_sent') {
-    const rawEvents = await AsyncStorage.getItem(LOCAL_EVENTS_KEY);
+    const rawEvents = await safeGetStorageItem(LOCAL_EVENTS_KEY);
     const events = rawEvents ? (JSON.parse(rawEvents) as CoupleEventRecord[]) : [];
-    await AsyncStorage.setItem(
+    await safeSetStorageItem(
       LOCAL_EVENTS_KEY,
       JSON.stringify([packet.event, ...events].slice(0, 60))
     );
@@ -338,7 +300,7 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
   }
 
   if (packet.kind === 'dm_upsert') {
-    const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+    const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
     const list = raw ? (JSON.parse(raw) as DirectMessageRecord[]) : [];
     const idx = list.findIndex((m) => m.id === packet.message.id);
     if (idx >= 0) {
@@ -346,12 +308,12 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     } else {
       list.push(packet.message);
     }
-    await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(list.slice(-300)));
+    await safeSetStorageItem(LOCAL_MESSAGES_KEY, JSON.stringify(list.slice(-300)));
     return;
   }
 
   if (packet.kind === 'dm_reaction') {
-    const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+    const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
     if (!raw) return;
     const list = JSON.parse(raw) as DirectMessageRecord[];
     const next = list.map((m) => {
@@ -367,12 +329,12 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         reactions: nextReactions,
       };
     });
-    await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
+    await safeSetStorageItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
     return;
   }
 
   if (packet.kind === 'dm_snap_viewed') {
-    const raw = await AsyncStorage.getItem(LOCAL_MESSAGES_KEY);
+    const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
     if (!raw) return;
     const list = JSON.parse(raw) as DirectMessageRecord[];
     const next = list.map((m) => {
@@ -396,26 +358,26 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
         media_uri: isExpired ? null : m.media_uri,
       };
     });
-    await AsyncStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
+    await safeSetStorageItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
     return;
   }
 
   if (packet.kind === 'profile_upsert') {
-    const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
+    const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
     const db = rawDb
       ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
       : { users: {}, couples: {} };
     db.users[packet.profile.id] = packet.profile;
-    await AsyncStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
+    await safeSetStorageItem(LOCAL_DB_KEY, JSON.stringify(db));
     return;
   }
 
   if (packet.kind === 'friend_added') {
-    const raw = await AsyncStorage.getItem(LOCAL_FRIENDS_KEY);
+    const raw = await safeGetStorageItem(LOCAL_FRIENDS_KEY);
     const list = raw ? (JSON.parse(raw) as FriendRecord[]) : [];
     if (!list.some((f) => f.id === packet.friend.id)) {
       list.push(packet.friend);
-      await AsyncStorage.setItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
+      await safeSetStorageItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
     }
   }
 }

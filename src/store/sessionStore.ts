@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import { fetchPairingSnapshot, upsertUserProfile } from '@/api/pairing';
@@ -6,10 +5,18 @@ import { getAuthRedirectUrl, isSupabaseConfigured, supabase } from '@/api/supaba
 import { AnimationSpeed } from '@/theme/motion';
 import { ThemeMode } from '@/theme/tokens';
 import { CoupleRecord, UserProfile } from '@/types/database';
+import {
+  safeClearAllStorage,
+  safeGetStorageItem,
+  safeRemoveStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 
 const SESSION_STORAGE_KEY = 'keepit.session.v1';
 const LEGACY_LOCAL_ACCOUNTS_KEY = 'keepit.local_accounts.v1';
-
+export const STORAGE_SCHEMA_EPOCH_KEY = 'keepit.storage_epoch.v1';
+export const CURRENT_STORAGE_SCHEMA_EPOCH = '0.4.2-reset-1';
 function buildSoloFallbackCouple(userId: string, createdAt?: string): CoupleRecord {
   return {
     id: `solo_${userId}`,
@@ -60,6 +67,9 @@ export function extractAuthRedirectParams(rawUrl: string): Record<string, string
   }
   if (hashIdx !== -1) {
     collectParams(rawUrl.slice(hashIdx + 1));
+  }
+  if (!out.token_hash && out.token) {
+    out.token_hash = out.token;
   }
   return out;
 }
@@ -118,7 +128,31 @@ interface SessionState {
 }
 
 async function persistSessionSlice(slice: PersistedSessionSlice): Promise<void> {
-  await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(slice));
+  let effectiveUser = slice.user;
+  if (effectiveUser) {
+    const nextAvatar =
+      effectiveUser.avatar_path?.startsWith('data:') && effectiveUser.avatar_path.length > 90_000
+        ? await spillDataUriToFileIfLarge(effectiveUser.avatar_path, `session-avatar-${effectiveUser.id}`)
+        : effectiveUser.avatar_path;
+    const nextBanner =
+      effectiveUser.banner_path?.startsWith('data:') && effectiveUser.banner_path.length > 90_000
+        ? await spillDataUriToFileIfLarge(effectiveUser.banner_path, `session-banner-${effectiveUser.id}`)
+        : effectiveUser.banner_path;
+    if (nextAvatar !== effectiveUser.avatar_path || nextBanner !== effectiveUser.banner_path) {
+      effectiveUser = {
+        ...effectiveUser,
+        avatar_path: nextAvatar,
+        banner_path: nextBanner,
+      };
+    }
+  }
+  await safeSetStorageItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      ...slice,
+      user: effectiveUser,
+    })
+  );
 }
 
 async function clearAccountSpecificCacheKeys(): Promise<void> {
@@ -134,12 +168,12 @@ async function clearAccountSpecificCacheKeys(): Promise<void> {
     'keepit.widget_snapshot.v1',
     'keepit.widget_pinned.v1',
   ];
-  await Promise.all(cacheKeys.map((k) => AsyncStorage.removeItem(k).catch(() => {})));
+  await Promise.all(cacheKeys.map((k) => safeRemoveStorageItem(k)));
 }
 
 async function resetLocalDbForFreshUser(userId: string): Promise<void> {
   try {
-    const rawDb = await AsyncStorage.getItem('keepit.local_db.v1');
+    const rawDb = await safeGetStorageItem('keepit.local_db.v1');
     if (!rawDb) return;
     const parsed = JSON.parse(rawDb) as {
       users?: Record<string, UserProfile>;
@@ -159,7 +193,7 @@ async function resetLocalDbForFreshUser(userId: string): Promise<void> {
       }
     }
     if (mutated) {
-      await AsyncStorage.setItem('keepit.local_db.v1', JSON.stringify(parsed));
+      await safeSetStorageItem('keepit.local_db.v1', JSON.stringify(parsed));
     }
   } catch {
     // Ignore malformed local db
@@ -179,10 +213,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   hydrate: async () => {
     try {
-      await AsyncStorage.removeItem(LEGACY_LOCAL_ACCOUNTS_KEY).catch(() => {});
-      const raw = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
+      await safeRemoveStorageItem(LEGACY_LOCAL_ACCOUNTS_KEY);
+      const storedEpoch = await safeGetStorageItem(STORAGE_SCHEMA_EPOCH_KEY);
+      if (storedEpoch !== CURRENT_STORAGE_SCHEMA_EPOCH) {
+        await safeClearAllStorage();
+        await clearAccountSpecificCacheKeys();
+        await Promise.all([
+          safeRemoveStorageItem(SESSION_STORAGE_KEY),
+          safeRemoveStorageItem('keepit.local_db.v1'),
+        ]);
+        if (isSupabaseConfigured && supabase) {
+          await supabase.auth.signOut().catch(() => {});
+        }
+        await safeSetStorageItem(STORAGE_SCHEMA_EPOCH_KEY, CURRENT_STORAGE_SCHEMA_EPOCH);
+      }
+      const raw = await safeGetStorageItem(SESSION_STORAGE_KEY);
       const saved: Partial<PersistedSessionSlice> | null = raw ? JSON.parse(raw) : null;
-
       if (saved?.themePreference) {
         set({ themePreference: saved.themePreference });
       }
@@ -297,8 +343,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const params = extractAuthRedirectParams(url);
     const accessToken = params.access_token;
     const refreshToken = params.refresh_token;
-    const tokenHash = params.token_hash;
-    const otpType = params.type;
+    const tokenHash = params.token_hash || params.token;
+    const otpType = (params.type || 'signup') as
+      | 'signup'
+      | 'email'
+      | 'recovery'
+      | 'invite'
+      | 'magiclink';
     const authCode = params.code;
 
     let sessionUser: SupabaseAuthUserLike | null = null;
@@ -313,10 +364,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } else if (tokenHash && otpType) {
       const { data, error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
-        type: otpType as 'signup' | 'email' | 'recovery' | 'invite' | 'magiclink',
+        type: otpType,
       });
-      if (error || !data?.session?.user) return false;
-      sessionUser = data.session.user;
+      if (!error && data?.session?.user) {
+        sessionUser = data.session.user;
+      } else if (
+        url.startsWith('http') &&
+        url.includes('/auth/v1/verify') &&
+        typeof globalThis.fetch === 'function'
+      ) {
+        // Fallback if a custom-template link passed an legacy verification URL directly
+        try {
+          const verifyRes = await globalThis.fetch(url, { redirect: 'manual' });
+          const redirectLoc = verifyRes.headers?.get?.('location') ?? verifyRes.url ?? '';
+          const locParams = extractAuthRedirectParams(redirectLoc);
+          if (locParams.access_token && locParams.refresh_token) {
+            const { data: sessData, error: sessErr } = await supabase.auth.setSession({
+              access_token: locParams.access_token,
+              refresh_token: locParams.refresh_token,
+            });
+            if (!sessErr && sessData?.session?.user) {
+              sessionUser = sessData.session.user;
+            }
+          } else if (locParams.code && locParams.code.length > 12) {
+            const { data: codeData, error: codeErr } =
+              await supabase.auth.exchangeCodeForSession(locParams.code);
+            if (!codeErr && codeData?.session?.user) {
+              sessionUser = codeData.session.user;
+            }
+          }
+        } catch {
+          // Ignore network fallback failure
+        }
+      }
+      if (!sessionUser) return false;
     } else if (authCode && authCode.length > 12) {
       const { data, error } = await supabase.auth.exchangeCodeForSession(authCode);
       if (error || !data?.session?.user) return false;
@@ -509,7 +590,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (prevUserId && prevUserId !== userId) {
       await clearAccountSpecificCacheKeys();
     } else {
-      await AsyncStorage.removeItem(LEGACY_LOCAL_ACCOUNTS_KEY).catch(() => {});
+      await safeRemoveStorageItem(LEGACY_LOCAL_ACCOUNTS_KEY);
     }
 
     const profile = await upsertUserProfile({
@@ -648,8 +729,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const motionSpeed = get().motionSpeed;
     await clearAccountSpecificCacheKeys();
     await Promise.all([
-      AsyncStorage.removeItem(SESSION_STORAGE_KEY).catch(() => {}),
-      AsyncStorage.removeItem('keepit.local_db.v1').catch(() => {}),
+      safeRemoveStorageItem(SESSION_STORAGE_KEY),
+      safeRemoveStorageItem('keepit.local_db.v1'),
     ]);
     await persistSessionSlice({
       user: null,

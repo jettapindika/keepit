@@ -1,8 +1,12 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { buildInviteChannelTopic, broadcastCoupleSync } from '@/api/realtimeSync';
 import { buildDefaultUsername, buildFriendCode } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
+import {
+  MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
+  safeGetStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 import {
   CoupleRecord,
   PairingError,
@@ -71,19 +75,41 @@ function mapRpcError(err: unknown): PairingError {
 }
 
 async function readLocalDb(): Promise<LocalDbState> {
-  const raw = await AsyncStorage.getItem(LOCAL_DB_KEY);
+  const raw = await safeGetStorageItem(LOCAL_DB_KEY);
   if (!raw) {
     return { users: {}, couples: {} };
   }
   try {
-    return JSON.parse(raw) as LocalDbState;
+    const parsed = JSON.parse(raw) as LocalDbState;
+    return {
+      users: parsed?.users ?? {},
+      couples: parsed?.couples ?? {},
+    };
   } catch {
     return { users: {}, couples: {} };
   }
 }
 
 async function writeLocalDb(db: LocalDbState): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
+  for (const u of Object.values(db.users)) {
+    if (!u) continue;
+    if (u.avatar_path?.startsWith('data:') && u.avatar_path.length > 90_000) {
+      u.avatar_path = await spillDataUriToFileIfLarge(u.avatar_path, `avatar-${u.id}`);
+    }
+    if (u.banner_path?.startsWith('data:') && u.banner_path.length > 90_000) {
+      u.banner_path = await spillDataUriToFileIfLarge(u.banner_path, `banner-${u.id}`);
+    }
+  }
+  let serialized = JSON.stringify(db);
+  if (serialized.length > MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS) {
+    for (const u of Object.values(db.users)) {
+      if (!u) continue;
+      if (u.banner_path?.startsWith('data:')) u.banner_path = null;
+      if (u.avatar_path?.startsWith('data:') && u.avatar_path.length > 30_000) u.avatar_path = null;
+    }
+    serialized = JSON.stringify(db);
+  }
+  await safeSetStorageItem(LOCAL_DB_KEY, serialized);
 }
 
 function generateLocalCode(existingCodes: Set<string>): string {

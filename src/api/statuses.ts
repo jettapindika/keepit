@@ -1,7 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
+import { safeGetStorageItem, safeSetStorageItem } from '@/utils/safeAsyncStorage';
 import {
   CoupleStatusBundle,
   StatusDurationPreset,
@@ -61,7 +60,7 @@ export function formatStatusRemaining(expiresAtIso: string): string {
 }
 
 async function readLocalStatuses(): Promise<Record<string, StatusRecord>> {
-  const raw = await AsyncStorage.getItem(LOCAL_STATUS_KEY);
+  const raw = await safeGetStorageItem(LOCAL_STATUS_KEY);
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, StatusRecord>;
@@ -71,7 +70,7 @@ async function readLocalStatuses(): Promise<Record<string, StatusRecord>> {
 }
 
 async function writeLocalStatuses(map: Record<string, StatusRecord>): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(map));
+  await safeSetStorageItem(LOCAL_STATUS_KEY, JSON.stringify(map));
 }
 
 export async function fetchCoupleStatuses(params: {

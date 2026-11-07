@@ -3,6 +3,12 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
 
 import { WidgetSnapshotPayload } from '@/types/database';
+import {
+  safeGetStorageItem,
+  safeRemoveStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 
 export const WIDGET_SNAPSHOT_STORAGE_KEY = 'keepit.widget_snapshot.v1';
 export const WIDGET_PINNED_STORAGE_KEY = 'keepit.widget_pinned.v1';
@@ -61,10 +67,31 @@ export async function syncWidgetSnapshot(payload: WidgetSnapshotPayload): Promis
         momentPhotoUri: null,
         momentFrontPhotoUri: null,
       }
-    : payload;
+    : { ...payload };
+
+  if (Platform.OS !== 'web' && !sanitizedPayload.momentLocked) {
+    if (
+      sanitizedPayload.momentPhotoUri?.startsWith('data:') &&
+      sanitizedPayload.momentPhotoUri.length > 90_000
+    ) {
+      sanitizedPayload.momentPhotoUri = await spillDataUriToFileIfLarge(
+        sanitizedPayload.momentPhotoUri,
+        'widget-back'
+      );
+    }
+    if (
+      sanitizedPayload.momentFrontPhotoUri?.startsWith('data:') &&
+      sanitizedPayload.momentFrontPhotoUri.length > 90_000
+    ) {
+      sanitizedPayload.momentFrontPhotoUri = await spillDataUriToFileIfLarge(
+        sanitizedPayload.momentFrontPhotoUri,
+        'widget-front'
+      );
+    }
+  }
 
   const serialized = JSON.stringify(sanitizedPayload);
-  await AsyncStorage.setItem(WIDGET_SNAPSHOT_STORAGE_KEY, serialized);
+  await safeSetStorageItem(WIDGET_SNAPSHOT_STORAGE_KEY, serialized);
 
   const nativeBridge = getNativeBridge();
   if (nativeBridge) {
@@ -81,7 +108,7 @@ export async function syncWidgetSnapshot(payload: WidgetSnapshotPayload): Promis
  * home screen timelines so signed-out or unpaired devices never display stale couple data.
  */
 export async function clearWidgetSnapshot(): Promise<void> {
-  await AsyncStorage.removeItem(WIDGET_SNAPSHOT_STORAGE_KEY);
+  await safeRemoveStorageItem(WIDGET_SNAPSHOT_STORAGE_KEY);
 
   const nativeBridge = getNativeBridge();
   if (nativeBridge) {
@@ -99,7 +126,7 @@ export async function clearWidgetSnapshot(): Promise<void> {
  */
 export async function getLastSyncedWidgetSnapshot(): Promise<WidgetSnapshotPayload | null> {
   try {
-    const stored = await AsyncStorage.getItem(WIDGET_SNAPSHOT_STORAGE_KEY);
+    const stored = await safeGetStorageItem(WIDGET_SNAPSHOT_STORAGE_KEY);
     if (stored) {
       const parsed: unknown = JSON.parse(stored);
       if (isValidWidgetSnapshot(parsed)) {

@@ -52,8 +52,10 @@ import { buildWidgetSnapshotPayload } from '@/hooks/useWidgetSync';
 import { computeCountdownSnapshot } from '@/hooks/useMomentCountdown';
 import { getAuthRedirectUrl } from '@/api/supabase';
 import {
+  CURRENT_STORAGE_SCHEMA_EPOCH,
   extractAuthRedirectParams,
   isEmailConfirmedUser,
+  STORAGE_SCHEMA_EPOCH_KEY,
   useSessionStore,
 } from '@/store/sessionStore';
 import {
@@ -77,6 +79,12 @@ import {
 } from '@/utils/streakEngine';
 import { requestPinKeepItWidgetDetailed } from '../modules/keepit-widget-bridge';
 
+import {
+  MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
+  safeGetStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 
 async function resetAllState() {
   const storeWithClear = AsyncStorage as unknown as {
@@ -288,14 +296,19 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
   it('never stores plaintext passwords in AsyncStorage and wipes messages/friends on signOut & wipeLocalAccount', async () => {
     const dumpFn = (AsyncStorage as unknown as { __dump: () => Record<string, string> }).__dump;
 
-    // Seed legacy plaintext password store to verify hydration purges it
+    // Seed legacy plaintext password store and pre-0.4.2 local db to verify hydration epoch reset purges both
     await AsyncStorage.setItem(
       'keepit.local_accounts.v1',
       JSON.stringify({ 'test@example.com': { password: 'SuperSecretPassword123!' } })
     );
+    await AsyncStorage.setItem(
+      'keepit.local_db.v1',
+      JSON.stringify({ users: { stale_user: { id: 'stale_user', display_name: 'Stale' } }, couples: {} })
+    );
     await useSessionStore.getState().hydrate();
     assert.equal(await AsyncStorage.getItem('keepit.local_accounts.v1'), null);
-
+    assert.equal(await AsyncStorage.getItem('keepit.local_db.v1'), null);
+    assert.equal(await AsyncStorage.getItem(STORAGE_SCHEMA_EPOCH_KEY), CURRENT_STORAGE_SCHEMA_EPOCH);
     // Inspect all storage keys after profile creation & messaging
     const profile = await upsertUserProfile({
       userId: 'user_sec_1',
@@ -405,6 +418,20 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
     assert.equal(deepLinkParams.token_hash, 'pkce_hash_999');
     assert.equal(deepLinkParams.access_token, 'deep_acc');
     assert.equal(deepLinkParams.refresh_token, 'deep_ref');
+    const verifyUrlParams = extractAuthRedirectParams(
+      'https://dozgfwhoqtyzqhkpkzeb.supabase.co/auth/v1/verify?token=2d6247002b83abbd1c3d9a3315b023f8e31d71e50049c1c76a512737&type=signup&redirect_to=keepit://auth-callback'
+    );
+    assert.equal(
+      verifyUrlParams.token,
+      '2d6247002b83abbd1c3d9a3315b023f8e31d71e50049c1c76a512737'
+    );
+    assert.equal(
+      verifyUrlParams.token_hash,
+      '2d6247002b83abbd1c3d9a3315b023f8e31d71e50049c1c76a512737',
+      'Legacy verify links using ?token= must normalize to token_hash for OTP verification'
+    );
+    assert.equal(verifyUrlParams.type, 'signup');
+    assert.equal(verifyUrlParams.redirect_to, 'keepit://auth-callback');
 
     assert.equal(isEmailConfirmedUser(null), false);
     assert.equal(isEmailConfirmedUser({ id: 'u1', email_confirmed_at: null }), false);
@@ -1177,6 +1204,57 @@ describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Ch
       assert.equal(videoMoment.video_duration_seconds, 12);
       assert.equal(videoMoment.back_photo_url, largeFile.uri);
       assert.ok(videoMoment.front_photo_url?.startsWith('data:image/jpeg;base64,'));
+    } finally {
+      Platform.OS = 'web';
+    }
+  });
+
+  it('spills oversized native base64 data URIs to files and caps AsyncStorage rows below CursorWindow limit', async () => {
+    Platform.OS = 'android';
+    try {
+      const bigB64 = btoa('A'.repeat(100_000)); // ~133 KB base64 (> 90 KB inline threshold)
+      const bigDataUri = `data:image/jpeg;base64,${bigB64}`;
+
+      const spilledUri = await spillDataUriToFileIfLarge(bigDataUri, 'cursor-test');
+      assert.ok(
+        spilledUri && spilledUri.startsWith('file://'),
+        'Oversized native data:image URI must spill to a file:// URI to prevent CursorWindow overflow'
+      );
+
+      // Profile update with oversized data URI must store compact file:// path in AsyncStorage
+      const profile = await upsertUserProfile({
+        userId: 'user_cursor_safe',
+        displayName: 'Cursor Safe',
+        avatarPath: bigDataUri,
+        bannerPath: bigDataUri,
+      });
+      assert.ok(profile.avatar_path?.startsWith('file://'));
+      assert.ok(profile.banner_path?.startsWith('file://'));
+
+      const rawLocalDb = await safeGetStorageItem('keepit.local_db.v1');
+      assert.ok(rawLocalDb && rawLocalDb.length < MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS);
+
+      // Moment submission with oversized data URI must spill to file:// and deduplicate keys in AsyncStorage
+      const coupleId = 'couple_cursor_safe';
+      const today = todayLocalDateString();
+      await submitDailyMoment({
+        coupleId,
+        promptId: `prompt_${coupleId}_${today}`,
+        userId: 'user_cursor_safe',
+        backUri: bigDataUri,
+        frontUri: bigDataUri,
+      });
+      const rawMoments = await safeGetStorageItem('keepit.local_moments.v1');
+      assert.ok(rawMoments && rawMoments.length < 20_000, 'Moments JSON in AsyncStorage must remain compact');
+
+      // Guard safeSetStorageItem against raw oversized JSON strings
+      const hugePayload = JSON.stringify({
+        id: '1',
+        photo: `data:image/jpeg;base64,${'B'.repeat(800_000)}`,
+      });
+      await safeSetStorageItem('keepit.cursor_guard_test', hugePayload);
+      const guardedRead = await safeGetStorageItem('keepit.cursor_guard_test');
+      assert.ok(guardedRead && guardedRead.length < MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS);
     } finally {
       Platform.OS = 'web';
     }

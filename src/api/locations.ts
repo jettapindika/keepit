@@ -1,9 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { fetchFriendsCircle } from '@/api/social';
 import { useSessionStore } from '@/store/sessionStore';
+import { safeGetStorageItem, safeSetStorageItem } from '@/utils/safeAsyncStorage';
 import {
   CoupleEventRecord,
   CoupleLocationBundle,
@@ -69,7 +68,7 @@ interface LocalMomentsSnapshot {
 }
 
 async function readLocalLocations(): Promise<Record<string, LocationShareRecord>> {
-  const raw = await AsyncStorage.getItem(LOCAL_LOCATIONS_KEY);
+  const raw = await safeGetStorageItem(LOCAL_LOCATIONS_KEY);
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -83,7 +82,7 @@ async function readLocalLocations(): Promise<Record<string, LocationShareRecord>
 }
 
 async function readLocalEvents(): Promise<CoupleEventRecord[]> {
-  const raw = await AsyncStorage.getItem(LOCAL_EVENTS_KEY);
+  const raw = await safeGetStorageItem(LOCAL_EVENTS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -115,7 +114,7 @@ async function appendLocationModeEvent(params: {
     created_at: params.createdAtIso,
   };
   const nextEvents = [record, ...events].slice(0, 60);
-  await AsyncStorage.setItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
+  await safeSetStorageItem(LOCAL_EVENTS_KEY, JSON.stringify(nextEvents));
   return record;
 }
 
@@ -131,7 +130,7 @@ async function resolveSandboxPartnerId(
     if (other) return other;
   }
 
-  const rawDb = await AsyncStorage.getItem(LOCAL_DB_KEY);
+  const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
   if (rawDb) {
     try {
       const db = JSON.parse(rawDb) as LocalDbSnapshot;
@@ -155,7 +154,7 @@ async function findLatestSandboxMomentCoords(
   coupleId: string,
   userId: string
 ): Promise<{ lat: number; lng: number; postedAt: string; placeName?: string | null } | null> {
-  const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+  const raw = await safeGetStorageItem(LOCAL_MOMENTS_KEY);
   if (!raw) return null;
   try {
     const state = JSON.parse(raw) as LocalMomentsSnapshot;
@@ -370,7 +369,7 @@ export async function fetchCoupleLocations(params: {
   }
 
   if (mutated) {
-    await AsyncStorage.setItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
+    await safeSetStorageItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
   }
 
   const allEvents = await readLocalEvents();
@@ -525,7 +524,7 @@ export async function updateMyLocationShare(params: {
       previousMode !== params.mode ? nowIso : (existing?.mode_changed_at ?? nowIso),
   };
 
-  await AsyncStorage.setItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
+  await safeSetStorageItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
 
   let modeEvent: CoupleEventRecord | undefined;
   if (previousMode !== params.mode || params.placeName !== undefined) {
@@ -612,7 +611,7 @@ export async function simulateSandboxPartnerLocation(params: {
     location_updated_at: nextUpdatedAt,
     mode_changed_at: nowIso,
   };
-  await AsyncStorage.setItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
+  await safeSetStorageItem(LOCAL_LOCATIONS_KEY, JSON.stringify(locationsMap));
 
   await appendLocationModeEvent({
     coupleId: params.coupleId,

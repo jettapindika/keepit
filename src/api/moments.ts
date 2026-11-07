@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
@@ -6,6 +5,13 @@ import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { fetchFriendsCircle, getFilterPresetMeta } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { formatMomentWatermarkTimestamp, KEEPIT_WATERMARK_SVG_PATH_D } from '@/utils/momentExport';
+import {
+  MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
+  safeGetStorageItem,
+  safeRemoveStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   DailyPromptRecord,
@@ -161,12 +167,12 @@ export async function ensureCrossDeviceShareableUri(uri: string): Promise<string
     try {
       const file = new FileSystem.File(uri);
       const byteSize = typeof file.size === 'number' ? file.size : 0;
-      if (byteSize > 180_000) {
+      if (byteSize > 90_000) {
         return uri;
       }
       const base64 = await file.base64();
-      // Keep base64 payload bounded (< 240 KB) so Android SQLite CursorWindow (2 MB) and Realtime Broadcast never overflow
-      if (base64 && base64.length > 0 && base64.length <= 240_000) {
+      // Keep base64 payload bounded (< 120 KB) so Android SQLite CursorWindow (2 MB) and Realtime Broadcast never overflow
+      if (base64 && base64.length > 0 && base64.length <= 120_000) {
         return `data:image/jpeg;base64,${base64}`;
       }
     } catch {
@@ -176,9 +182,9 @@ export async function ensureCrossDeviceShareableUri(uri: string): Promise<string
   return uri;
 }
 
-async function readLocalMoments(): Promise<LocalMomentsState> {
+export async function readLocalMoments(): Promise<LocalMomentsState> {
   try {
-    const raw = await AsyncStorage.getItem(LOCAL_MOMENTS_KEY);
+    const raw = await safeGetStorageItem(LOCAL_MOMENTS_KEY);
     if (!raw) return { prompts: {}, moments: {}, streaks: {} };
     const parsed = JSON.parse(raw) as LocalMomentsState;
     return {
@@ -187,25 +193,82 @@ async function readLocalMoments(): Promise<LocalMomentsState> {
       streaks: parsed?.streaks ?? {},
     };
   } catch {
-    await AsyncStorage.removeItem(LOCAL_MOMENTS_KEY).catch(() => {});
+    await safeRemoveStorageItem(LOCAL_MOMENTS_KEY);
     return { prompts: {}, moments: {}, streaks: {} };
   }
 }
 
-async function writeLocalMoments(state: LocalMomentsState): Promise<void> {
-  const serialized = JSON.stringify(state);
-  // Guard against Android SQLite 2MB CursorWindow limit (~1.4MB safe ceiling)
-  if (serialized.length > 1_400_000) {
+export async function writeLocalMoments(state: LocalMomentsState): Promise<void> {
+  if (Platform.OS !== 'web') {
+    for (const m of Object.values(state.moments)) {
+      if (!m) continue;
+      if (m.back_photo_path?.startsWith('data:') && m.back_photo_path.length > 90_000) {
+        const spilled = await spillDataUriToFileIfLarge(m.back_photo_path, `m-back-${m.id}`);
+        if (spilled) {
+          m.back_photo_path = spilled;
+          if (m.back_photo_url?.startsWith('data:')) m.back_photo_url = spilled;
+        }
+      }
+      if (m.front_photo_path?.startsWith('data:') && m.front_photo_path.length > 90_000) {
+        const spilled = await spillDataUriToFileIfLarge(m.front_photo_path, `m-front-${m.id}`);
+        if (spilled) {
+          m.front_photo_path = spilled;
+          if (m.front_photo_url?.startsWith('data:')) m.front_photo_url = spilled;
+        }
+      }
+    }
+  }
+
+  // Avoid storing identical huge data: strings twice (in both *_photo_path and *_photo_url) inside JSON
+  for (const m of Object.values(state.moments)) {
+    if (!m) continue;
+    if (
+      m.back_photo_url &&
+      m.back_photo_url === m.back_photo_path &&
+      m.back_photo_url.startsWith('data:') &&
+      m.back_photo_url.length > 4_000
+    ) {
+      delete m.back_photo_url;
+    }
+    if (
+      m.front_photo_url &&
+      m.front_photo_url === m.front_photo_path &&
+      m.front_photo_url.startsWith('data:') &&
+      m.front_photo_url.length > 4_000
+    ) {
+      delete m.front_photo_url;
+    }
+  }
+
+  // Prune redundant legacy `${promptId}:${userId}` keys when the canonical `moment.id` key is present
+  const canonicalIds = new Set<string>();
+  for (const [k, m] of Object.entries(state.moments)) {
+    if (m?.id && k === m.id) {
+      canonicalIds.add(m.id);
+    }
+  }
+  for (const [k, m] of Object.entries(state.moments)) {
+    if (m?.id && k !== m.id && canonicalIds.has(m.id)) {
+      delete state.moments[k];
+    }
+  }
+
+  let serialized = JSON.stringify(state);
+  // Guard against Android SQLite 2MB CursorWindow limit (~750KB safe ceiling)
+  let keepCount = Math.min(20, Object.keys(state.moments).length);
+  while (serialized.length > MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS && keepCount > 1) {
+    keepCount = Math.max(1, Math.floor(keepCount / 2));
     const sorted = Object.entries(state.moments).sort(([, a], [, b]) =>
       a.posted_at < b.posted_at ? 1 : -1
     );
     const trimmedMoments: Record<string, MomentRecord> = {};
-    for (const [k, v] of sorted.slice(0, 12)) {
+    for (const [k, v] of sorted.slice(0, keepCount)) {
       trimmedMoments[k] = v;
     }
     state.moments = trimmedMoments;
+    serialized = JSON.stringify(state);
   }
-  await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
+  await safeSetStorageItem(LOCAL_MOMENTS_KEY, serialized);
 }
 
 export function todayLocalDateString(date = new Date()): string {
@@ -1045,7 +1108,11 @@ export async function submitDailyMoment(params: {
     kind: 'moment_upsert',
     moment: broadcastMoment,
   });
-  return record;
+  return {
+    ...record,
+    back_photo_url: record.back_photo_url || record.back_photo_path,
+    front_photo_url: record.front_photo_url || record.front_photo_path,
+  };
 }
 
 export async function updateMomentDetails(params: {
@@ -1433,7 +1500,13 @@ export async function fetchUserMomentsFeed(params: {
 }): Promise<MomentRecord[]> {
   const state = await readLocalMoments();
   const all = deduplicateMoments(Object.values(state.moments));
-  return all.filter((m) => m.user_id === params.userId);
+  return all
+    .filter((m) => m.user_id === params.userId)
+    .map((m) => ({
+      ...m,
+      back_photo_url: m.back_photo_url || m.back_photo_path,
+      front_photo_url: m.front_photo_url || m.front_photo_path,
+    }));
 }
 
 // Sandbox testing helpers (only shown when EXPO_PUBLIC_SUPABASE_URL is unset)

@@ -152,9 +152,15 @@ async function pickNativeImageFile(kind: ProfileImageKind): Promise<PickedProfil
       if (!fileObj?.uri) return null;
 
       const mimeType = fileObj.type && fileObj.type.startsWith('image/') ? fileObj.type : 'image/jpeg';
-      if (typeof fileObj.base64 === 'function') {
+      const byteSize =
+        'size' in fileObj && typeof (fileObj as { size?: unknown }).size === 'number'
+          ? ((fileObj as { size: number }).size ?? 0)
+          : 0;
+      // Only inline small images (<60 KB) as base64; keep larger native picks as file:// / content:// URIs
+      // so Android SQLite CursorWindow (2 MB limit) never overflows when saving profile in AsyncStorage.
+      if (typeof fileObj.base64 === 'function' && byteSize > 0 && byteSize <= 60_000) {
         const b64 = await fileObj.base64();
-        if (b64) {
+        if (b64 && b64.length <= 82_000) {
           return {
             uri: `data:${mimeType};base64,${b64}`,
             mimeType,

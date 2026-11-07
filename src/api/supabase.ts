@@ -1,9 +1,13 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
 import 'react-native-url-polyfill/auto';
 
+import {
+  safeGetStorageItem,
+  safeRemoveStorageItem,
+  safeSetStorageItem,
+} from '@/utils/safeAsyncStorage';
 export const SUPABASE_URL =
   process.env.EXPO_PUBLIC_SUPABASE_URL ?? 'https://dozgfwhoqtyzqhkpkzeb.supabase.co';
 
@@ -29,7 +33,11 @@ export function getAuthRedirectUrl(): string {
 export const supabase = isSupabaseConfigured
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
-        storage: AsyncStorage,
+        storage: {
+          getItem: (key: string) => safeGetStorageItem(key),
+          setItem: (key: string, value: string) => safeSetStorageItem(key, value),
+          removeItem: (key: string) => safeRemoveStorageItem(key),
+        },
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: Platform.OS === 'web',
