@@ -35,7 +35,7 @@ import {
   MOMENT_FILTER_PRESETS,
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
-import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
 import { AppPressable, AppSwitch as Switch, AppTextInput, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
@@ -51,7 +51,7 @@ import {
   PostVisibility,
   TaggedPerson,
 } from '@/types/database';
-import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
+import { embedKeepItWatermarkOnImageUri, formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 
 type CaptureStage =
   | 'ready'
@@ -345,8 +345,13 @@ export default function CameraModalScreen() {
           return;
         }
 
-        const resolvedBack = firstLens === 'back' ? firstUri : secondShotUri;
-        const resolvedFront = firstLens === 'front' ? firstUri : secondShotUri;
+        const rawBack = firstLens === 'back' ? firstUri : secondShotUri;
+        const rawFront = firstLens === 'front' ? firstUri : secondShotUri;
+        const captureLabel = formatMomentWatermarkTimestamp(captureTimestamp);
+        const [resolvedBack, resolvedFront] = await Promise.all([
+          embedKeepItWatermarkOnImageUri(rawBack, captureLabel),
+          embedKeepItWatermarkOnImageUri(rawFront, captureLabel),
+        ]);
         setBackUri(resolvedBack);
         setFrontUri(resolvedFront);
         setCapturedAtIso(captureTimestamp);
@@ -990,9 +995,9 @@ export default function CameraModalScreen() {
                   />
                 ) : null}
 
-                {/* Permanent #keepit + Timestamp Bottom-Left Watermark on Photo */}
+                {/* Permanent #keepit SVG + Timestamp Bottom-Left Watermark on Photo */}
                 <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
-                  <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+                  <KeepItWatermarkLogo width={76} color="#FFFFFF" />
                   <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
               </View>
@@ -1305,9 +1310,9 @@ export default function CameraModalScreen() {
                   ) : null}
                 </View>
 
-                {/* Mandatory Bottom-Left #keepit + Timestamp Watermark on Photo (Item #8) */}
+                {/* Mandatory Bottom-Left #keepit SVG + Timestamp Watermark on Photo (Item #8) */}
                 <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
-                  <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+                  <KeepItWatermarkLogo width={76} color="#FFFFFF" />
                   <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
               </View>
@@ -2107,11 +2112,12 @@ const styles = StyleSheet.create({
     bottom: 14,
     left: 16,
     maxWidth: '48%',
-    padding: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: '#0A0708',
+    backgroundColor: 'rgba(10, 7, 8, 0.72)',
     alignItems: 'flex-start',
-    gap: 1,
+    gap: 4,
   },
   keepItWatermarkTitle: {
     color: '#FFFFFF',

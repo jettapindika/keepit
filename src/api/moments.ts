@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { broadcastCoupleSync } from '@/api/realtimeSync';
 import { fetchFriendsCircle, getFilterPresetMeta } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
+import { formatMomentWatermarkTimestamp, KEEPIT_WATERMARK_SVG_PATH_D } from '@/utils/momentExport';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   DailyPromptRecord,
@@ -56,7 +57,7 @@ export function buildSimulatedDualPhotos(params: {
   const accent = params.accentHex ?? filterMeta.svgTintHex ?? '#D95D39';
   const safeAuthor = params.authorLabel.replace(/&/g, 'and').replace(/[<>"']/g, '');
   const safeScene = params.sceneLabel.replace(/&/g, 'and').replace(/[<>"']/g, '');
-  const timeStamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStamp = formatMomentWatermarkTimestamp(new Date().toISOString());
   const shotBadge = params.shotNumber && params.shotNumber > 1 ? ` · #${params.shotNumber}` : '';
   const modeLabel = params.mediaType === 'video' ? 'VIDEO LOOP' : 'DUAL LENS';
 
@@ -102,6 +103,11 @@ export function buildSimulatedDualPhotos(params: {
       <text x="96" y="582" font-family="system-ui, sans-serif" font-size="25" font-weight="600" fill="#F4F4F5">
         ${safeAuthor} · ${modeLabel} · ${filterMeta.label} · ${timeStamp}
       </text>
+      <g transform="translate(42, 1084) scale(3.52)">
+        <title>#keepit</title>
+        <path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="#FFFFFF"/>
+      </g>
+      <text x="42" y="1154" text-anchor="start" font-family="system-ui, sans-serif" font-size="22" font-weight="700" fill="#FFFFFF" opacity="0.92">${timeStamp}</text>
     </svg>
   `;
 
@@ -116,6 +122,11 @@ export function buildSimulatedDualPhotos(params: {
       <text x="300" y="728" text-anchor="middle" font-family="system-ui, sans-serif" font-size="28" font-weight="700" fill="#FAF7F2">
         ${safeAuthor} · Selfie
       </text>
+      <g transform="translate(28, 708) scale(2.35)">
+        <title>#keepit</title>
+        <path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="#FFFFFF"/>
+      </g>
+      <text x="28" y="756" text-anchor="start" font-family="system-ui, sans-serif" font-size="15" font-weight="700" fill="#FFFFFF" opacity="0.92">${timeStamp}</text>
     </svg>
   `;
 

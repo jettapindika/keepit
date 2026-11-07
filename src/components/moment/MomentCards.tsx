@@ -36,7 +36,7 @@ import {
   MOMENT_FILTER_PRESETS,
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
-import { DualFrameMark, InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { DualFrameMark, InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
 import { AppPressable as Pressable, AppSwitch as Switch, AppTextInput as TextInput, SectionHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { useAppMotion } from '@/hooks/useAppMotion';
@@ -1071,9 +1071,9 @@ export function DualMomentCard({
               </View>
             ) : null}
 
-            {/* BeReal-Style Bottom-Left On-Photo Watermark (#keepit + timestamp below) */}
+            {/* BeReal-Style Bottom-Left On-Photo Watermark (#keepit SVG + timestamp below) */}
             <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
-              <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+              <KeepItWatermarkLogo width={76} color="#FFFFFF" />
               <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
             </View>
           </>
@@ -2094,11 +2094,12 @@ const styles = StyleSheet.create({
     bottom: 14,
     left: 16,
     alignItems: 'flex-start',
-    gap: 1,
+    gap: 4,
     zIndex: 6,
-    backgroundColor: 'rgba(10, 7, 8, 0.9)',
+    backgroundColor: 'rgba(10, 7, 8, 0.72)',
     borderRadius: 10,
-    padding: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
   },
   keepItWatermarkTitle: {
     color: '#FFFFFF',

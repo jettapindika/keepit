@@ -59,6 +59,7 @@ import {
 import {
   buildMomentCompositeSvgDataUri,
   exportAndShareCompositeMoment,
+  KEEPIT_WATERMARK_SVG_PATH_D,
 } from '@/utils/momentExport';
 import {
   advanceStreakOnDualPost,
@@ -833,6 +834,10 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       'Exported file must include #keepit watermark'
     );
     assert.ok(
+      savedContent.includes(KEEPIT_WATERMARK_SVG_PATH_D),
+      'Exported file must embed the exact #keepit SVG vector path'
+    );
+    assert.ok(
       savedContent.includes('Nov 6 · 02:30 PM'),
       'Exported file must include watermark timestamp'
     );
@@ -848,8 +853,8 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       })
     );
     assert.ok(svg3x4.includes('#keepit'));
+    assert.ok(svg3x4.includes(KEEPIT_WATERMARK_SVG_PATH_D));
     assert.ok(svg3x4.includes('Nov 6 · 02:30 PM'));
-
     const svg9x16 = decodeURIComponent(
       buildMomentCompositeSvgDataUri({
         backUri: 'data:image/jpeg;base64,AAA',
@@ -863,6 +868,7 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       })
     );
     assert.ok(svg9x16.includes('#keepit'));
+    assert.ok(svg9x16.includes(KEEPIT_WATERMARK_SVG_PATH_D));
     assert.ok(svg9x16.includes('Nov 6 · 02:30 PM'));
     assert.ok(svg9x16.includes('@sora.frames'));
     assert.ok(svg9x16.includes('neon vibe'));

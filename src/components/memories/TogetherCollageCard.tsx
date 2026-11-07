@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { formatLateDuration, isMomentPromptCheckIn } from '@/api/moments';
-import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, KeepItWatermarkLogo, RevealOnAppear } from '@/components/ui/Primitives';
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
@@ -43,6 +43,7 @@ function CollageHalfPane({ moment, authorName }: { moment: MomentRecord; authorN
         <Image key={main} source={{ uri: main }} contentFit="cover" transition={0} style={StyleSheet.absoluteFill} onLoadStart={() => setLoading(true)} onLoad={() => setLoading(false)} onError={() => { setFailed((value) => ({ ...value, [main]: true })); setLoading(false); }} />
         {loading ? <View style={[styles.imageState, { backgroundColor: colors.canvas }]}><ActivityIndicator color={colors.ink} /><Text style={[styles.secondary, { color: colors.inkMuted }]}>Loading photo…</Text></View> : null}
         {pip && !failed[pip] ? <View style={[styles.pip, { borderColor: colors.canvas, borderRadius: radii.input }]}><Image source={{ uri: pip }} contentFit="cover" style={StyleSheet.absoluteFill} onError={() => setFailed((value) => ({ ...value, [pip]: true }))} /></View> : null}
+        <View pointerEvents="none" style={styles.photoWatermark}><KeepItWatermarkLogo width={50} color="#FFFFFF" /><Text numberOfLines={1} style={styles.photoWatermarkTime}>{formatMomentWatermarkTimestamp(moment.posted_at)}</Text></View>
       </>}
       <View pointerEvents="none" style={styles.lensLabel}><Text style={styles.lensText}>{swapped ? 'Front camera' : 'Back camera'}</Text></View>
     </AppPressable>
@@ -92,6 +93,7 @@ export function TogetherCollageCard({ promptDate, myMoment, partnerMoment, myNam
       <View style={styles.panes}><CollageHalfPane key={partnerMoment.id} moment={partnerMoment} authorName={partnerName} /><CollageHalfPane key={myMoment.id} moment={myMoment} authorName={myName} /></View>
       <View style={styles.watermarkRow}>
         <View style={styles.watermark}>
+          <KeepItWatermarkLogo width={68} color={colors.ink} />
           <Text style={[styles.author, { color: colors.ink, fontFamily: type.fontMono }]}>{activeStamp.watermarkText}</Text>
           <Text style={[styles.secondary, { color: colors.inkMuted }]}>{formatMomentWatermarkTimestamp(myMoment.posted_at || partnerMoment.posted_at)}</Text>
         </View>
@@ -132,10 +134,12 @@ const styles = StyleSheet.create({
   photo: { width: '100%', aspectRatio: 0.65, minWidth: 0, borderWidth: 1, overflow: 'hidden' },
   imageState: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', padding: 8, gap: 8 },
   pip: { position: 'absolute', width: '36%', aspectRatio: 0.75, right: 8, bottom: 38, overflow: 'hidden', borderWidth: 2 },
+  photoWatermark: { position: 'absolute', bottom: 34, left: 6, backgroundColor: 'rgba(10, 7, 8, 0.78)', borderRadius: 7, paddingHorizontal: 6, paddingVertical: 4, alignItems: 'flex-start', gap: 1.5 },
+  photoWatermarkTime: { color: '#FFFFFF', fontSize: 9.5, lineHeight: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
   lensLabel: { position: 'absolute', bottom: 8, left: 6, right: 6, backgroundColor: '#0A0708', borderRadius: 5, paddingHorizontal: 4, paddingVertical: 3, alignItems: 'center' },
   lensText: { color: '#FFFFFF', fontSize: 11, lineHeight: 16, fontWeight: '600' },
   watermarkRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 },
-  watermark: { flex: 1, minWidth: 160, gap: 2 },
+  watermark: { flex: 1, minWidth: 160, gap: 4 },
   stampSwitch: { minHeight: 44, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
   stampSwitchText: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
   saveActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
