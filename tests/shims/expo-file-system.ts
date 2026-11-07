@@ -12,6 +12,10 @@ export class File {
     this.uri = parts.join('/').replace(/([^:]\/)\/+/g, '$1');
   }
 
+  get size(): number {
+    const bytes = fileBytesMap.get(this.uri);
+    return bytes ? bytes.byteLength : 0;
+  }
   static async downloadFileAsync(url: string, destination: File): Promise<File> {
     fileBytesMap.set(destination.uri, new TextEncoder().encode(url));
     return destination;

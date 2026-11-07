@@ -4,6 +4,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, usePreventRemove, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -116,9 +117,9 @@ export default function CameraModalScreen() {
     params.initialMode === 'video' ? 'video' : 'photo'
   );
   const [filterPreset, setFilterPreset] = useState<MomentFilterPreset>('normal');
+  const [showFilterTray, setShowFilterTray] = useState(false);
   const [stage, setStage] = useState<CaptureStage>('ready');
   const [cameraReady, setCameraReady] = useState(false);
-  const [activeCameraMode, setActiveCameraMode] = useState<'picture' | 'video'>('picture');
   const recordingOriginRef = useRef<'back' | 'front'>('back');
   const finalizeRecordingRef = useRef(false);
   const elapsedRecordingRef = useRef(0);
@@ -226,6 +227,15 @@ export default function CameraModalScreen() {
     setFacing(nextLens);
   };
 
+  const handleSelectMediaType = (nextMode: MomentMediaType) => {
+    if (stage !== 'ready' || nextMode === mediaType) return;
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync();
+    }
+    setError(null);
+    setCameraReady(false);
+    setMediaType(nextMode);
+  };
   /**
    * Fixes Bug #1 ("when start from front camera its not working (only opposite is working)"):
    * Captures the CURRENT active lens first (`facing` - whether 'front' or 'back'),
@@ -276,19 +286,17 @@ export default function CameraModalScreen() {
         if (!isMountedRef.current || !cameraRef.current) return;
 
         setStage('capturing_first');
+        const pictureOptions =
+          Platform.OS === 'web'
+            ? { quality: 0.55, base64: true }
+            : { quality: 0.55 };
         let firstShot = await cameraRef.current
-          .takePictureAsync({
-            quality: 0.55,
-            base64: true,
-          })
+          .takePictureAsync(pictureOptions)
           .catch(() => null);
         if (!firstShot?.uri && isMountedRef.current && cameraRef.current) {
           await waitMs(450);
           firstShot = await cameraRef.current
-            .takePictureAsync({
-              quality: 0.55,
-              base64: true,
-            })
+            .takePictureAsync(pictureOptions)
             .catch(() => null);
         }
         if (!isMountedRef.current) return;
@@ -308,35 +316,28 @@ export default function CameraModalScreen() {
 
         setStage('capturing_second');
         let secondShot = await cameraRef.current
-          .takePictureAsync({
-            quality: 0.55,
-            base64: true,
-          })
+          .takePictureAsync(pictureOptions)
           .catch(() => null);
 
         // Retry once if the opposite camera HAL was still settling
         if (!secondShot?.uri && isMountedRef.current && cameraRef.current) {
           await waitMs(550);
           secondShot = await cameraRef.current
-            .takePictureAsync({
-              quality: 0.55,
-              base64: true,
-            })
+            .takePictureAsync(pictureOptions)
             .catch(() => null);
         }
         if (!isMountedRef.current) return;
 
         const firstUri = firstShot?.uri?.startsWith('data:')
           ? firstShot.uri
-          : firstShot?.base64 && firstShot.base64.length <= 240_000
+          : Platform.OS === 'web' && firstShot?.base64 && firstShot.base64.length <= 240_000
             ? firstShot.base64.startsWith('data:') ? firstShot.base64 : `data:image/jpeg;base64,${firstShot.base64}`
             : firstShot?.uri;
         const secondShotUri = secondShot?.uri?.startsWith('data:')
           ? secondShot.uri
-          : secondShot?.base64 && secondShot.base64.length <= 240_000
+          : Platform.OS === 'web' && secondShot?.base64 && secondShot.base64.length <= 240_000
             ? secondShot.base64.startsWith('data:') ? secondShot.base64 : `data:image/jpeg;base64,${secondShot.base64}`
             : secondShot?.uri;
-
         if (!firstUri || !secondShotUri) {
           if (isMountedRef.current) {
             setStage('ready');
@@ -392,7 +393,7 @@ export default function CameraModalScreen() {
       try {
         const recResult = await Promise.race([
           activeRecordingPromiseRef.current,
-          waitMs(1800).then(() => undefined),
+          waitMs(3500).then(() => undefined),
         ]);
         if (recResult?.uri) {
           recordedHardwareUri = recResult.uri;
@@ -407,35 +408,54 @@ export default function CameraModalScreen() {
 
     if (!recordedHardwareUri) {
       finalizeRecordingRef.current = false;
-      setActiveCameraMode('picture');
       setStage('ready');
       setError('The video could not be saved. Check camera and microphone access, then record again.');
       return;
     }
 
     try {
+      const primaryLens = recordingOriginRef.current;
+      const companionLens: 'back' | 'front' = primaryLens === 'front' ? 'back' : 'front';
       setStage('switching_lens');
       setCameraReady(false);
       const { promise, resolve } = Promise.withResolvers<void>();
       cameraReadyResolverRef.current = resolve;
       setTimeout(resolve, 1200);
-      const companionLens = recordingOriginRef.current === 'front' ? 'back' : 'front';
-      setActiveCameraMode('picture');
       setFacing(companionLens);
       await promise;
       await waitMs(480);
       if (!isMountedRef.current || !cameraRef.current) return;
       setStage('capturing_second');
-      const companion = await cameraRef.current.takePictureAsync({ quality: 0.65 });
+      let companion = await cameraRef.current
+        .takePictureAsync({ quality: 0.55 })
+        .catch(() => null);
+      if (!companion?.uri && isMountedRef.current && cameraRef.current) {
+        await waitMs(500);
+        companion = await cameraRef.current
+          .takePictureAsync({ quality: 0.55 })
+          .catch(() => null);
+      }
       if (!companion?.uri) throw new Error('Companion photo was not saved.');
-      if (companionLens === 'front') setFrontUri(companion.uri);
-      else setBackUri(companion.uri);
+
+      const captureLabel = formatMomentWatermarkTimestamp(capturedAtIso);
+      const watermarkedCompanion = await embedKeepItWatermarkOnImageUri(
+        companion.uri,
+        captureLabel
+      );
+      if (companionLens === 'front') {
+        setFrontUri(watermarkedCompanion);
+        setBackUri((prev) => prev || watermarkedCompanion);
+      } else {
+        setBackUri(watermarkedCompanion);
+        setFrontUri((prev) => prev || watermarkedCompanion);
+      }
       setVideoDurationSec(finalDuration);
       setVideoUri(recordedHardwareUri);
+      setPipSwapped(false);
       setStage('preview');
     } catch {
       setStage('ready');
-      setError('The companion camera photo could not be saved. Record again to capture both sides.');
+      setError('The companion camera frame could not be saved. Record again to capture both sides.');
     } finally {
       finalizeRecordingRef.current = false;
     }
@@ -449,10 +469,10 @@ export default function CameraModalScreen() {
       return;
     }
     if (Platform.OS === 'web') {
-      setError('Video capture is not available in the browser yet. Choose Dual Photo to use the browser camera.');
+      setError('Video capture is not available in the browser yet. Switch to Photo mode to use the browser camera.');
       return;
     }
-    if (!permission?.granted || !cameraRef.current || !cameraReady) {
+    if (!permission?.granted || !cameraRef.current) {
       setError('Video capture requires camera access. Allow access, then try again.');
       return;
     }
@@ -467,42 +487,60 @@ export default function CameraModalScreen() {
     }
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setCaptureOriginLens(facing);
-    recordingOriginRef.current = facing;
+    const startLens = facing;
+    setCaptureOriginLens(startLens);
+    recordingOriginRef.current = startLens;
     setCapturedAtIso(new Date().toISOString());
     elapsedRecordingRef.current = 0;
     setRecordingSec(0);
-    setStage('capturing_first');
+    setShowFilterTray(false);
+
     try {
-      const stillThumb = await cameraRef.current.takePictureAsync({ quality: 0.65 });
-      if (!stillThumb?.uri) throw new Error('First camera frame was not saved.');
-      if (!isMountedRef.current) return;
-      if (facing === 'front') setFrontUri(stillThumb.uri);
-      else setBackUri(stillThumb.uri);
-      const { promise, resolve } = Promise.withResolvers<void>();
-      cameraReadyResolverRef.current = resolve;
-      setTimeout(resolve, 1200);
-      setCameraReady(false);
-      setActiveCameraMode('video');
-      await promise;
-      await waitMs(480);
+      if (!cameraReady) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        cameraReadyResolverRef.current = resolve;
+        setTimeout(resolve, 900);
+        await promise;
+      }
       if (!isMountedRef.current || !cameraRef.current) return;
+
+      // Capture a lightweight poster frame before starting the video stream if supported;
+      // if the video session rejects still capture, finalizeVideoCapture falls back cleanly.
+      const posterShot = await cameraRef.current
+        .takePictureAsync({ quality: 0.5 })
+        .catch(() => null);
+      if (!isMountedRef.current || !cameraRef.current) return;
+      if (posterShot?.uri) {
+        const watermarkedPoster = await embedKeepItWatermarkOnImageUri(
+          posterShot.uri,
+          formatMomentWatermarkTimestamp(new Date().toISOString())
+        );
+        if (startLens === 'front') setFrontUri(watermarkedPoster);
+        else setBackUri(watermarkedPoster);
+      } else {
+        if (startLens === 'front') setFrontUri(null);
+        else setBackUri(null);
+      }
+
       setStage('recording_video');
-      activeRecordingPromiseRef.current = cameraRef.current.recordAsync({ maxDuration: 15 });
-      void activeRecordingPromiseRef.current.catch(() => {
-        if (!isMountedRef.current) return;
+      const recPromise = cameraRef.current.recordAsync({ maxDuration: 15 });
+      activeRecordingPromiseRef.current = recPromise;
+      void recPromise.catch(() => {
+        if (!isMountedRef.current || finalizeRecordingRef.current) return;
         clearInterval(recordingTimerRef.current);
-        setActiveCameraMode('picture');
+        recordingTimerRef.current = undefined;
+        activeRecordingPromiseRef.current = null;
         setStage('ready');
         setError('Video recording failed. Record again to capture both sides.');
       });
       recordingTimerRef.current = setInterval(() => {
         elapsedRecordingRef.current += 1;
         setRecordingSec(elapsedRecordingRef.current);
-        if (elapsedRecordingRef.current >= 15) void finalizeVideoCapture(15);
+        if (elapsedRecordingRef.current >= 15) {
+          void finalizeVideoCapture(15);
+        }
       }, 1000) as unknown as number;
     } catch {
-      setActiveCameraMode('picture');
       setStage('ready');
       setError('Video recording could not start. Check camera access and try again.');
     }
@@ -753,128 +791,121 @@ export default function CameraModalScreen() {
     return () => globalThis.removeEventListener('keydown', onKey);
   });
 
+  const filterActive = filterPreset !== 'normal' || showFilterTray;
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={[
-            styles.content,
-            { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 132 },
-          ]}>
-          <PageHeader
-            title={stage === 'preview' ? 'Review Moment' : 'Capture Moment'}
-            subtitle={stage === 'preview' ? 'Check both sides before publishing.' : 'A two-sided Moment, captured together.'}
-            onBack={handleClose}
-            backLabel={submitting ? 'Publishing…' : 'Close'}
-            backDisabled={submitting || (stage !== 'ready' && stage !== 'preview' && stage !== 'recording_video')}
-            action={stage !== 'preview' ? (
-              <AppPressable
+        {stage !== 'preview' ? (
+          <View style={styles.captureViewport}>
+            {/* Top Icon Bar: Close Icon | Status Pill | Flash Icon */}
+            <View style={styles.captureTopBar}>
+              <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Toggle flash, currently ${flash}`}
-                accessibilityState={{ checked: flash === 'on' }}
-                disabled={stage !== 'ready'}
-                onPress={() => setFlash((prev) => (prev === 'off' ? 'on' : 'off'))}
-                style={styles.headerControl}>
-                <Text style={[styles.topButtonText, { color: colors.ink }]}>Flash {flash === 'on' ? 'on' : 'off'}</Text>
-              </AppPressable>
-            ) : null}
-          />
-          <View style={styles.statusRow}>
-            <View style={[styles.timerPill, { borderColor: stage === 'recording_video' ? colors.danger : colors.controlBorder, backgroundColor: colors.surface, borderRadius: radii.input }]}>
-              <Text style={[styles.timerText, { color: stage === 'recording_video' ? colors.danger : colors.ink }]}>
-                {stage === 'recording_video'
-                  ? `REC 00:${String(recordingSec).padStart(2, '0')} / 00:15`
-                  : `Post ${activeSlotNumber}/${MAX_DAILY_MOMENTS_PER_DAY} · ${headerTimingSuffix}`}
-              </Text>
-            </View>
-            <Text style={[styles.statusCopy, { color: colors.inkMuted }]}> 
-              {shotsRemainingToday} capture{shotsRemainingToday === 1 ? '' : 's'} left today
-            </Text>
-          </View>
-          {bundleQuery.isError ? <View style={{ gap: 8 }}><InlineNotice message="Today's capture allowance could not load. Retry before publishing." tone="error" /><KeepItButton label="Retry daily allowance" variant="secondary" onPress={() => void bundleQuery.refetch()} /></View> : null}
+                accessibilityLabel={submitting ? 'Publishing…' : 'Close camera'}
+                disabled={submitting || (stage !== 'ready' && stage !== 'recording_video')}
+                onPress={handleClose}
+                style={[
+                  styles.iconCircleBtn,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                  },
+                ]}>
+                <SymbolView
+                  name={{ ios: 'xmark', android: 'close', web: 'close' }}
+                  tintColor={colors.ink}
+                  size={20}
+                  fallback={<Text style={[styles.iconFallbackText, { color: colors.ink }]}>✕</Text>}
+                />
+              </Pressable>
 
-          {/* Photo / Video Mode Switcher + Starting Lens Indicator */}
-          {stage !== 'preview' ? (
-            <View style={styles.modeSwitchRow}>
               <View
                 style={[
-                  styles.segmentedPill,
-                  { backgroundColor: colors.surface, borderColor: colors.border },
+                  styles.timerPill,
+                  {
+                    borderColor:
+                      stage === 'recording_video' ? colors.danger : colors.border,
+                    backgroundColor: colors.surface,
+                    borderRadius: radii.pill,
+                  },
                 ]}>
-                <Pressable
-                  accessibilityRole="tab"
-                  accessibilityLabel="Photo mode"
-                  accessibilityState={{ selected: mediaType === 'photo' }}
-                  disabled={stage !== 'ready'}
-                  onPress={() => setMediaType('photo')}
+                <Text
                   style={[
-                    styles.modeTab,
+                    styles.timerText,
                     {
-                      backgroundColor:
-                        mediaType === 'photo' ? colors.surfaceElevated : 'transparent',
+                      color:
+                        stage === 'recording_video' ? colors.danger : colors.ink,
                     },
                   ]}>
-                  <Text
-                    style={[
-                      styles.modeTabText,
-                      { color: mediaType === 'photo' ? colors.ink : colors.inkMuted },
-                    ]}>
-                    Dual Photo
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="tab"
-                  accessibilityLabel="Video mode"
-                  accessibilityState={{ selected: mediaType === 'video' }}
-                  disabled={stage !== 'ready'}
-                  onPress={() => setMediaType('video')}
-                  style={[
-                    styles.modeTab,
-                    {
-                      backgroundColor:
-                        mediaType === 'video' ? colors.surfaceElevated : 'transparent',
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      styles.modeTabText,
-                      { color: mediaType === 'video' ? colors.ink : colors.inkMuted },
-                    ]}>
-                    Dual Video (15s)
-                  </Text>
-                </Pressable>
+                  {stage === 'recording_video'
+                    ? `REC 00:${String(recordingSec).padStart(2, '0')} / 00:15`
+                    : `${activeSlotNumber}/${MAX_DAILY_MOMENTS_PER_DAY} · ${headerTimingSuffix}`}
+                </Text>
               </View>
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Flip starting camera lens, currently ${facing}`}
+                accessibilityLabel={`Toggle flash, currently ${flash}`}
+                accessibilityState={{ checked: flash === 'on' }}
                 disabled={stage !== 'ready'}
-                onPress={() => handleSwitchLens(facing === 'back' ? 'front' : 'back')}
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    void Haptics.selectionAsync();
+                  }
+                  setFlash((prev) => (prev === 'off' ? 'on' : 'off'));
+                }}
                 style={[
-                  styles.lensPill,
+                  styles.iconCircleBtn,
                   {
-                    backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.border,
-                    borderRadius: radii.input,
+                    backgroundColor:
+                      flash === 'on' ? colors.accent : colors.surface,
+                    borderColor:
+                      flash === 'on' ? colors.accent : colors.border,
                   },
                 ]}>
-                <Text style={[styles.lensPillText, { color: colors.ink }]}>
-                  Start: {facing === 'front' ? 'Front Selfie' : 'Back Camera'} ↻
-                </Text>
+                <SymbolView
+                  name={
+                    flash === 'on'
+                      ? { ios: 'bolt.fill', android: 'flash_on', web: 'flash_on' }
+                      : { ios: 'bolt.slash.fill', android: 'flash_off', web: 'flash_off' }
+                  }
+                  tintColor={flash === 'on' ? colors.onAccent : colors.ink}
+                  size={20}
+                  fallback={
+                    <Text
+                      style={[
+                        styles.iconFallbackText,
+                        { color: flash === 'on' ? colors.onAccent : colors.ink },
+                      ]}>
+                      ⚡
+                    </Text>
+                  }
+                />
               </Pressable>
             </View>
-          ) : null}
 
-          {stage !== 'preview' ? (
-            <>
-              {/* Live 3:4 Viewfinder with Live Filter Tint & #KeepIt Watermark */}
+            {bundleQuery.isError ? (
+              <View style={styles.compactNoticeWrap}>
+                <InlineNotice
+                  message="Today's capture allowance could not load. Retry before publishing."
+                  tone="error"
+                />
+                <KeepItButton
+                  label="Retry daily allowance"
+                  variant="secondary"
+                  onPress={() => void bundleQuery.refetch()}
+                />
+              </View>
+            ) : null}
+
+            {/* Flexible 3:4 Viewfinder Stage */}
+            <View style={styles.viewfinderStage}>
               <View
                 style={[
-                  styles.viewfinderFrame,
+                  styles.captureViewfinderFrame,
                   {
                     backgroundColor: colors.surface,
                     borderColor: activeFilterMeta.borderAccent || colors.border,
@@ -883,49 +914,65 @@ export default function CameraModalScreen() {
                 ]}>
                 {permission?.granted ? (
                   <CameraView
-                    key={`cam-${facing}-${activeCameraMode}`}
                     ref={cameraRef}
                     style={styles.full}
                     facing={facing}
                     flash={facing === 'front' ? 'off' : flash}
                     mute={!micPermission?.granted}
-                    mode={activeCameraMode}
+                    mode={mediaType === 'video' ? 'video' : 'picture'}
                     onCameraReady={handleCameraReady}
                     onMountError={(event) => {
                       setCameraReady(false);
-                      setError(`Camera could not open: ${event.message}. Check camera permission and try switching lenses.`);
+                      setError(
+                        `Camera could not open: ${event.message}. Check camera permission and try switching lenses.`
+                      );
                     }}
                   />
                 ) : (
                   <View style={styles.simulatedViewfinder}>
-
                     <Text style={[styles.viewfinderTitle, { color: colors.ink }]}>
                       {permission ? 'Camera access needed' : 'Checking camera access…'}
                     </Text>
                     <Text style={[styles.viewfinderSub, { color: colors.inkMuted }]}>
                       {Platform.OS === 'web'
-                        ? 'Allow this site to use your cameras. Dual Photo needs access to both front and back lenses.'
+                        ? 'Allow this site to use your cameras. Dual capture needs access to both front and back lenses.'
                         : 'Allow camera access to capture a real Moment. You can close this screen without granting access.'}
                     </Text>
 
                     {permission && !permission.granted ? (
                       <View style={styles.permissionPrimerBox}>
-                        <Text style={[styles.permissionPrimerText, { color: colors.inkMuted }]}> 
+                        <Text style={[styles.permissionPrimerText, { color: colors.inkMuted }]}>
                           KeepIt captures the front and back lenses one after the other. No photo is shared until you review and publish it.
                         </Text>
                         <KeepItButton
-                          label={permission.canAskAgain ? 'Allow camera access' : Platform.OS === 'web' ? 'How to allow camera access' : 'Open camera settings'}
+                          label={
+                            permission.canAskAgain
+                              ? 'Allow camera access'
+                              : Platform.OS === 'web'
+                                ? 'How to allow camera access'
+                                : 'Open camera settings'
+                          }
                           loading={permissionRetrying}
                           variant="secondary"
                           onPress={() => {
                             setPermissionRetrying(true);
                             if (Platform.OS === 'web' && !permission.canAskAgain) {
-                              setError('Camera access is blocked. Open this site’s camera permissions in your browser settings, allow access, then reload this page.');
+                              setError(
+                                'Camera access is blocked. Open this site’s camera permissions in your browser settings, allow access, then reload this page.'
+                              );
                               setPermissionRetrying(false);
                               return;
                             }
-                            const request = permission.canAskAgain ? requestPermission() : Linking.openSettings();
-                            void request.catch(() => setError('Camera permission could not be opened. Try again in your device settings.')).finally(() => setPermissionRetrying(false));
+                            const request = permission.canAskAgain
+                              ? requestPermission()
+                              : Linking.openSettings();
+                            void request
+                              .catch(() =>
+                                setError(
+                                  'Camera permission could not be opened. Try again in your device settings.'
+                                )
+                              )
+                              .finally(() => setPermissionRetrying(false));
                           }}
                         />
                       </View>
@@ -984,6 +1031,7 @@ export default function CameraModalScreen() {
                     </Text>
                   </View>
                 ) : null}
+
                 {/* Live Filter Color Grade Overlay */}
                 {activeFilterMeta.tintOverlay !== 'transparent' ? (
                   <View
@@ -1000,59 +1048,195 @@ export default function CameraModalScreen() {
                   <KeepItWatermarkLogo width={76} color="#FFFFFF" />
                   <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
+
+                {/* Collapsible Filter Carousel Strip Overlaid Inside Viewfinder */}
+                {showFilterTray ? (
+                  <View
+                    style={[
+                      styles.floatingFilterTray,
+                      {
+                        backgroundColor: colors.chromeGlass,
+                        borderColor: colors.border,
+                        borderRadius: radii.card,
+                      },
+                    ]}>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.filterStrip}>
+                      {MOMENT_FILTER_PRESETS.map((preset) => {
+                        const selected = filterPreset === preset.id;
+                        return (
+                          <Pressable
+                            key={preset.id}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Filter ${preset.label}`}
+                            accessibilityState={{ selected }}
+                            disabled={stage !== 'ready'}
+                            onPress={() => {
+                              if (Platform.OS !== 'web') {
+                                void Haptics.selectionAsync();
+                              }
+                              setFilterPreset(preset.id);
+                              setShowFilterTray(false);
+                            }}
+                            style={[
+                              styles.filterChip,
+                              {
+                                backgroundColor: selected
+                                  ? colors.accent
+                                  : colors.surfaceElevated,
+                                borderColor: selected ? colors.accent : colors.border,
+                                borderRadius: radii.pill,
+                              },
+                            ]}>
+                            <View
+                              style={[
+                                styles.filterSwatch,
+                                { backgroundColor: preset.svgTintHex },
+                              ]}
+                            />
+                            <Text
+                              style={[
+                                styles.filterChipText,
+                                { color: selected ? colors.onAccent : colors.ink },
+                              ]}>
+                              {preset.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+
+            {error ? (
+              <View style={styles.compactNoticeWrap}>
+                <InlineNotice message={error} tone="error" />
+              </View>
+            ) : null}
+            {bundleQuery.isSuccess &&
+            shotsRemainingToday === 0 &&
+            !params.replaceMomentId ? (
+              <View style={styles.compactNoticeWrap}>
+                <InlineNotice
+                  message={`You have posted all ${MAX_DAILY_MOMENTS_PER_DAY} Moments for today. You can replace an existing Moment from its menu.`}
+                />
+              </View>
+            ) : null}
+            {Platform.OS === 'web' && mediaType === 'video' ? (
+              <View style={styles.compactNoticeWrap}>
+                <InlineNotice message="Browser video recording is unavailable. Switch to Photo to use your browser cameras." />
+              </View>
+            ) : null}
+
+            {/* Bottom Camera Controls: Photo/Video Selector Above Shutter + Icon Controls */}
+            <View style={styles.bottomCameraControls}>
+              <View
+                accessibilityRole="tablist"
+                accessibilityLabel="Camera capture mode"
+                style={styles.cameraModeSelector}>
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityLabel="Photo"
+                  accessibilityState={{ selected: mediaType === 'photo' }}
+                  disabled={stage !== 'ready'}
+                  onPress={() => handleSelectMediaType('photo')}
+                  style={styles.cameraModeOption}>
+                  <Text
+                    style={[
+                      styles.cameraModeText,
+                      {
+                        color:
+                          mediaType === 'photo' ? colors.ink : colors.inkMuted,
+                        fontWeight: mediaType === 'photo' ? '700' : '500',
+                      },
+                    ]}>
+                    Photo
+                  </Text>
+                  <View
+                    style={[
+                      styles.cameraModeDot,
+                      {
+                        backgroundColor:
+                          mediaType === 'photo' ? colors.ink : 'transparent',
+                      },
+                    ]}
+                  />
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityLabel="Video"
+                  accessibilityState={{ selected: mediaType === 'video' }}
+                  disabled={stage !== 'ready'}
+                  onPress={() => handleSelectMediaType('video')}
+                  style={styles.cameraModeOption}>
+                  <Text
+                    style={[
+                      styles.cameraModeText,
+                      {
+                        color:
+                          mediaType === 'video' ? colors.ink : colors.inkMuted,
+                        fontWeight: mediaType === 'video' ? '700' : '500',
+                      },
+                    ]}>
+                    Video
+                  </Text>
+                  <View
+                    style={[
+                      styles.cameraModeDot,
+                      {
+                        backgroundColor:
+                          mediaType === 'video' ? colors.danger : 'transparent',
+                      },
+                    ]}
+                  />
+                </Pressable>
               </View>
 
-              {/* Filter Carousel Strip */}
-              <ScrollView
-                horizontal
-                style={{ flexGrow: 0 }}
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterStrip}>
-                {MOMENT_FILTER_PRESETS.map((preset) => {
-                  const selected = filterPreset === preset.id;
-                  return (
-                    <Pressable
-                      key={preset.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Filter ${preset.label}`}
-                      accessibilityState={{ selected }}
-                      disabled={stage !== 'ready'}
-                      onPress={() => setFilterPreset(preset.id)}
-                      style={[
-                        styles.filterChip,
-                        {
-                          backgroundColor: selected ? colors.accent : colors.surface,
-                          borderColor: selected ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
-                        },
-                      ]}>
-                      <View
-                        style={[
-                          styles.filterSwatch,
-                          { backgroundColor: preset.svgTintHex },
-                        ]}
-                      />
+              <View style={styles.shutterBar}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Toggle filters, current filter ${activeFilterMeta.label}`}
+                  accessibilityState={{ expanded: showFilterTray, selected: filterActive }}
+                  disabled={stage !== 'ready'}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      void Haptics.selectionAsync();
+                    }
+                    setShowFilterTray((prev) => !prev);
+                  }}
+                  style={[
+                    styles.dockIconBtn,
+                    {
+                      backgroundColor: filterActive
+                        ? colors.accent
+                        : colors.surface,
+                      borderColor: filterActive ? colors.accent : colors.border,
+                    },
+                  ]}>
+                  <SymbolView
+                    name={{
+                      ios: 'camera.filters',
+                      android: 'filter_vintage',
+                      web: 'filter_vintage',
+                    }}
+                    tintColor={filterActive ? colors.onAccent : colors.ink}
+                    size={22}
+                    fallback={
                       <Text
                         style={[
-                          styles.filterChipText,
-                          { color: selected ? colors.onAccent : colors.ink },
+                          styles.iconFallbackText,
+                          { color: filterActive ? colors.onAccent : colors.ink },
                         ]}>
-                        {preset.label}
+                        ◐
                       </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-
-              {error ? <InlineNotice message={error} tone="error" /> : null}
-              {bundleQuery.isSuccess && shotsRemainingToday === 0 && !params.replaceMomentId ? <InlineNotice message={`You have posted all ${MAX_DAILY_MOMENTS_PER_DAY} Moments for today. You can replace an existing Moment from its menu.`} /> : null}
-              {Platform.OS === 'web' && mediaType === 'video' ? <InlineNotice message="Browser video recording is unavailable. Dual Photo uses your real browser cameras." /> : null}
-
-              {/* Shutter Controls */}
-              <View style={styles.shutterBar}>
-                <Text style={[styles.sideMeta, { color: colors.inkMuted }]}>
-                  {shotsRemainingToday}/{MAX_DAILY_MOMENTS_PER_DAY} left today
-                </Text>
+                    }
+                  />
+                </Pressable>
 
                 <Pressable
                   accessibilityRole="button"
@@ -1063,7 +1247,16 @@ export default function CameraModalScreen() {
                         : 'Record Dual Video'
                       : 'Capture Dual Moment'
                   }
-                  disabled={!permission?.granted || !cameraReady || (stage !== 'ready' && stage !== 'recording_video') || (stage === 'ready' && bundleQuery.isSuccess && shotsRemainingToday === 0 && !params.replaceMomentId) || (Platform.OS === 'web' && mediaType === 'video')}
+                  disabled={
+                    !permission?.granted ||
+                    !cameraReady ||
+                    (stage !== 'ready' && stage !== 'recording_video') ||
+                    (stage === 'ready' &&
+                      bundleQuery.isSuccess &&
+                      shotsRemainingToday === 0 &&
+                      !params.replaceMomentId) ||
+                    (Platform.OS === 'web' && mediaType === 'video')
+                  }
                   onPress={() => {
                     if (mediaType === 'video') {
                       void startOrStopVideoRecording();
@@ -1095,20 +1288,67 @@ export default function CameraModalScreen() {
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Flip primary lens"
+                  accessibilityLabel={`Switch camera lens, currently ${facing}`}
                   disabled={stage !== 'ready'}
-                  onPress={() => handleSwitchLens(facing === 'back' ? 'front' : 'back')}>
-                  <Text style={[styles.sideMeta, { color: colors.ink }]}>
-                    Lens: {facing === 'back' ? 'Back' : 'Front'}
-                  </Text>
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      void Haptics.selectionAsync();
+                    }
+                    handleSwitchLens(facing === 'back' ? 'front' : 'back');
+                  }}
+                  style={[
+                    styles.dockIconBtn,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                    },
+                  ]}>
+                  <SymbolView
+                    name={{
+                      ios: 'arrow.triangle.2.circlepath.camera',
+                      android: 'flip_camera_ios',
+                      web: 'flip_camera_ios',
+                    }}
+                    tintColor={colors.ink}
+                    size={22}
+                    fallback={
+                      <Text style={[styles.iconFallbackText, { color: colors.ink }]}>
+                        ↻
+                      </Text>
+                    }
+                  />
                 </Pressable>
               </View>
-              <Text accessibilityLiveRegion="polite" style={[styles.musicSub, { color: colors.inkMuted, textAlign: 'center' }]}>
-                {stage === 'recording_video' ? 'Recording up to 15 seconds. Tap stop to review.' : stage === 'ready' ? 'Capture both sides. Keep still while KeepIt switches lenses.' : 'Capturing both sides. Keep the camera steady.'}
-              </Text>
-            </>
-          ) : (
-            <>
+            </View>
+          </View>
+        ) : (
+          <ScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[
+              styles.content,
+              { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 132 },
+            ]}>
+            <PageHeader
+              title="Review Moment"
+              subtitle="Check both sides before publishing."
+              onBack={handleClose}
+              backLabel={submitting ? 'Publishing…' : 'Close'}
+              backDisabled={submitting}
+            />
+            {bundleQuery.isError ? (
+              <View style={{ gap: 8 }}>
+                <InlineNotice
+                  message="Today's capture allowance could not load. Retry before publishing."
+                  tone="error"
+                />
+                <KeepItButton
+                  label="Retry daily allowance"
+                  variant="secondary"
+                  onPress={() => void bundleQuery.refetch()}
+                />
+              </View>
+            ) : null}
               {/* Captured Dual Preview with Filter, Overlays, Music, Location, Tags & #KeepIt Watermark */}
               <View
                 style={[
@@ -1948,7 +2188,6 @@ export default function CameraModalScreen() {
                       setVideoUri(null);
                       setVideoDurationSec(null);
                       setCapturedAtIso(null);
-                      setActiveCameraMode('picture');
                       setStage('ready');
                       setError(null);
                     };
@@ -1963,9 +2202,8 @@ export default function CameraModalScreen() {
                   }}
                 />
               </View>
-            </>
-          )}
-        </ScrollView>
+          </ScrollView>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1982,37 +2220,42 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     gap: 16,
   },
-  headerControl: {
-    minHeight: 44,
-    minWidth: 44,
-    paddingHorizontal: 10,
-    justifyContent: 'center',
+  captureViewport: {
+    flex: 1,
+    maxWidth: 520,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 14,
+    justifyContent: 'space-between',
+    gap: 10,
   },
-  statusRow: {
+  captureTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 12,
   },
-  statusCopy: {
-    flexShrink: 1,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  topBar: {
-    flexDirection: 'row',
+  iconCircleBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  topButton: {
-    minHeight: 44,
-    minWidth: 44,
     justifyContent: 'center',
-    paddingHorizontal: 10,
   },
-  topButtonText: {
-    fontSize: 14,
+  dockIconBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconFallbackText: {
+    fontSize: 18,
+    lineHeight: 22,
     fontWeight: '600',
   },
   timerPill: {
@@ -2025,46 +2268,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  modeSwitchRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+  compactNoticeWrap: {
+    gap: 6,
   },
-  segmentedPill: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 3,
-    gap: 4,
-  },
-  modeTab: {
-    minHeight: 44,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-  },
-  modeTabText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
-  },
-  lensPill: {
-    minHeight: 44,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+  viewfinderStage: {
+    flex: 1,
+    minHeight: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  lensPillText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
+  captureViewfinderFrame: {
+    height: '100%',
+    maxHeight: '100%',
+    maxWidth: '100%',
+    aspectRatio: 0.75,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
   },
   viewfinderFrame: {
     width: '100%',
@@ -2080,21 +2300,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     gap: 10,
-  },
-  selfiePipGuide: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    width: 96,
-    height: 128,
-    borderRadius: 16,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pipGuideLabel: {
-    fontSize: 12,
-    fontWeight: '600',
   },
   viewfinderTitle: {
     fontSize: 18,
@@ -2132,6 +2337,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
+  floatingFilterTray: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    zIndex: 10,
+  },
   filterStrip: {
     alignItems: 'center',
     gap: 8,
@@ -2144,7 +2359,7 @@ const styles = StyleSheet.create({
     gap: 6,
     borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingVertical: 8,
   },
   filterSwatch: {
     width: 10,
@@ -2152,22 +2367,42 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   filterChipText: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
+  },
+  bottomCameraControls: {
+    gap: 8,
+  },
+  cameraModeSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 24,
+  },
+  cameraModeOption: {
+    minHeight: 44,
+    minWidth: 64,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  cameraModeText: {
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: 0.2,
+  },
+  cameraModeDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
   shutterBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  sideMeta: {
-    fontSize: 13,
-    lineHeight: 20,
-    fontWeight: '600',
-    flexShrink: 1,
-    maxWidth: 90,
+    justifyContent: 'space-around',
+    paddingVertical: 2,
   },
   shutterOuter: {
     width: 78,

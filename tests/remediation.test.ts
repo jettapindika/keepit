@@ -22,6 +22,7 @@ import {
   addMomentComment,
   deleteMomentComment,
   deleteMomentPost,
+  ensureCrossDeviceShareableUri,
   fetchTodayMomentBundle,
   computeDeterministicPromptTriggerIso,
   formatLateDuration,
@@ -1095,5 +1096,50 @@ describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Ch
     assert.equal(enriched.recent_chain?.length, 7);
     const bridgedNode = enriched.recent_chain?.find((n) => n.date === '2026-11-03');
     assert.equal(bridgedNode?.state, 'shield');
+  });
+
+  it('prevents native OOM by skipping base64 reads on large camera files (>180 KB) and persists dual video moments with both lenses', async () => {
+    Platform.OS = 'android';
+    try {
+      const smallFile = new FileSystem.File(FileSystem.Paths.cache, 'small-shot.jpg');
+      await smallFile.write('SMALL_JPEG_BYTES');
+      const smallResolved = await ensureCrossDeviceShareableUri(smallFile.uri);
+      assert.ok(
+        smallResolved.startsWith('data:image/jpeg;base64,'),
+        'Small camera files within limit should convert to portable data URI'
+      );
+
+      const largeFile = new FileSystem.File(FileSystem.Paths.cache, 'large-8mp-shot.jpg');
+      await largeFile.write(new Uint8Array(250_000));
+      const largeResolved = await ensureCrossDeviceShareableUri(largeFile.uri);
+      assert.equal(
+        largeResolved,
+        largeFile.uri,
+        'Large native camera files (>180 KB) must stay as file:// URI to prevent JS heap OOM'
+      );
+
+      const coupleId = 'couple_dual_video';
+      const userId = 'user_video_creator';
+      const today = todayLocalDateString();
+      const videoMoment = await submitDailyMoment({
+        coupleId,
+        promptId: `prompt_${coupleId}_${today}`,
+        userId,
+        authorName: 'Video Creator',
+        backUri: largeFile.uri,
+        frontUri: smallFile.uri,
+        mediaType: 'video',
+        videoUri: 'file:///tmp/keepit-cache/dual-video.mp4',
+        videoDurationSeconds: 12,
+      });
+
+      assert.equal(videoMoment.media_type, 'video');
+      assert.equal(videoMoment.video_uri, 'file:///tmp/keepit-cache/dual-video.mp4');
+      assert.equal(videoMoment.video_duration_seconds, 12);
+      assert.equal(videoMoment.back_photo_url, largeFile.uri);
+      assert.ok(videoMoment.front_photo_url?.startsWith('data:image/jpeg;base64,'));
+    } finally {
+      Platform.OS = 'web';
+    }
   });
 });

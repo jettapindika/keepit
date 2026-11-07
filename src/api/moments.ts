@@ -160,6 +160,10 @@ export async function ensureCrossDeviceShareableUri(uri: string): Promise<string
   if (Platform.OS !== 'web' && uri.startsWith('file://')) {
     try {
       const file = new FileSystem.File(uri);
+      const byteSize = typeof file.size === 'number' ? file.size : 0;
+      if (byteSize > 180_000) {
+        return uri;
+      }
       const base64 = await file.base64();
       // Keep base64 payload bounded (< 240 KB) so Android SQLite CursorWindow (2 MB) and Realtime Broadcast never overflow
       if (base64 && base64.length > 0 && base64.length <= 240_000) {
