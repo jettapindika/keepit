@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="302" height="278" viewBox="0 0 302 278" fill="none">
+  <title>Two white hands sharing a pair of yellow photo prints</title>
+  <g stroke="#000000" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M78 91C45 119 48 174 81 198C112 222 163 216 186 192L168 176C149 192 117 195 95 180C73 165 73 129 95 111Z" fill="#000000" transform="translate(4 5)"/>
+    <path d="M78 91C45 119 48 174 81 198C112 222 163 216 186 192L168 176C149 192 117 195 95 180C73 165 73 129 95 111Z" fill="#FFCF24"/>
+    <path d="M78 91L95 111L81 113L67 101Z" fill="#FFCC00"/>
+    <path d="M168 176L168 194L186 192Z" fill="#FFCC00"/>
+    <path d="M65 131C58 163 80 192 109 197" stroke="#FFF5B3" stroke-width="4"/>
+    <path d="M84 25L104 58Q117 62 121 76L127 96Q129 102 123 104Q117 106 114 100L108 88L107 109Q107 116 101 116Q95 116 95 109L94 94L87 114Q85 120 79 118Q73 116 76 109L82 91L72 102Q67 107 63 102Q59 98 64 93L77 77Q81 66 72 53L65 41Z" fill="#000000" transform="translate(4 5)"/>
+    <path d="M84 25L104 58Q117 62 121 76L127 96Q129 102 123 104Q117 106 114 100L108 88L107 109Q107 116 101 116Q95 116 95 109L94 94L87 114Q85 120 79 118Q73 116 76 109L82 91L72 102Q67 107 63 102Q59 98 64 93L77 77Q81 66 72 53L65 41Z" fill="#FFFFFF"/>
+    <path d="M108 88L104 78Q99 70 93 73M94 94L93 84M82 91L86 81" stroke-width="2.2"/>
+    <path d="M54 32L80 16L96 40L69 57Z" fill="#FFFFFF"/>
+    <path d="M64 39L87 25M69 48L92 34" stroke-width="2.2"/>
+    <circle cx="64" cy="31" r="2" fill="#000000" stroke="none"/>
+    <g transform="rotate(-16 140 118)">
+      <path d="M96 71H181V164H96Z" fill="#000000" transform="translate(5 6)"/>
+      <path d="M96 71H181V164H96Z" fill="#FFFFFF"/>
+      <path d="M104 79H173V143H104Z" fill="#FFDD00" stroke-width="2.4"/>
+      <path d="M104 126Q119 117 137 126Q153 112 173 126V143H104Z" fill="#FFCC00" stroke-width="2.2"/>
+      <path d="M119 114V101Q119 94 126 94Q133 94 133 101V114M145 113V99Q145 92 152 92Q159 92 159 99V113" fill="#FFFFFF" stroke-width="2.4"/>
+      <path d="M113 135Q113 113 126 113Q138 113 138 135M139 135Q139 112 152 112Q165 112 165 135" fill="#000000" stroke-width="2.4"/>
+      <path d="M126 153H150" stroke-width="2.2"/>
+    </g>
+    <g transform="rotate(14 193 159)">
+      <path d="M151 112H236V207H151Z" fill="#000000" transform="translate(5 6)"/>
+      <path d="M151 112H236V207H151Z" fill="#FFFFFF"/>
+      <path d="M159 120H228V185H159Z" fill="#FFCF24" stroke-width="2.4"/>
+      <path d="M159 170C175 161 179 165 194 172Q212 157 228 168V185H159Z" fill="#FFCC00" stroke-width="2.2"/>
+      <path d="M176 150C172 144 175 135 183 135Q190 135 193 142Q197 134 204 135C212 137 214 145 209 151L193 166Z" fill="#000000" stroke-width="2.4"/>
+      <path d="M179 143Q180 139 184 140" stroke="#FFFFFF" stroke-width="2.2"/>
+      <path d="M182 196H205" stroke-width="2.2"/>
+    </g>
+    <path d="M185 242L197 221C187 220 181 214 177 206L167 192Q163 187 168 183Q173 179 177 184L190 197L186 181Q184 175 190 173Q195 171 198 178L204 193L210 182Q213 176 218 179Q224 182 220 188L215 198L224 190Q229 186 233 191Q236 196 231 201L224 208Q220 222 211 233L208 245Z" fill="#000000" transform="translate(4 5)"/>
+    <path d="M185 242L197 221C187 220 181 214 177 206L167 192Q163 187 168 183Q173 179 177 184L190 197L186 181Q184 175 190 173Q195 171 198 178L204 193L210 182Q213 176 218 179Q224 182 220 188L215 198L224 190Q229 186 233 191Q236 196 231 201L224 208Q220 222 211 233L208 245Z" fill="#FFFFFF"/>
+    <path d="M190 197L197 202Q203 208 198 213M204 193L207 200M215 198L212 204M207 217L214 213" stroke-width="2.2"/>
+    <path d="M183 233L213 240L208 261L176 253Z" fill="#FFFFFF"/>
+    <path d="M181 242L211 249" stroke-width="2.2"/>
+    <circle cx="202" cy="252" r="2" fill="#000000" stroke="none"/>
+  </g>
+</svg>

@@ -12,6 +12,8 @@ export default function TabsLayout() {
       tabBar={(props) => <MochyTabBar {...(props as unknown as MochyTabBarProps)} />}
       screenOptions={{
         headerShown: false,
+        animation: 'none',
+        tabBarHideOnKeyboard: true,
         sceneStyle: {
           backgroundColor: colors.canvas,
         },

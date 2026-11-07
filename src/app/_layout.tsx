@@ -12,11 +12,13 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { fetchTodayMomentBundle } from '@/api/moments';
 import { fetchCoupleStatuses } from '@/api/statuses';
 import { useRealtimePairing } from '@/hooks/useRealtimePairing';
+import { KeepItButton } from '@/components/ui/Primitives';
+import { useAppMotion } from '@/hooks/useAppMotion';
 import { useWidgetSync } from '@/hooks/useWidgetSync';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -55,56 +57,26 @@ class AppErrorBoundary extends React.Component<
 
   override render() {
     if (this.state.error) {
-      return (
-        <View style={errorStyles.container}>
-          <Text style={errorStyles.title}>KeepIt recovered from an error</Text>
-          <Text style={errorStyles.message}>{this.state.error.message}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Continue to KeepIt"
-            onPress={() => this.setState({ error: null })}
-            style={errorStyles.button}>
-            <Text style={errorStyles.buttonText}>Continue</Text>
-          </Pressable>
-        </View>
-      );
+      return <AppErrorFallback error={this.state.error} onRetry={() => this.setState({ error: null })} />;
     }
     return this.props.children;
   }
 }
 
-const errorStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    gap: 12,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  message: {
-    color: '#9A9AA0',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  button: {
-    backgroundColor: '#E0E0E0',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 999,
-    marginTop: 8,
-  },
-  buttonText: {
-    color: '#000000',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-});
+function AppErrorFallback({ error, onRetry }: { error: Error; onRetry: () => void }) {
+  const { colors, radii } = useKeepItTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.canvas, padding: 24, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ width: '100%', maxWidth: 480, backgroundColor: colors.surface, borderRadius: radii.card, padding: 24, gap: 16 }}>
+        <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 24, lineHeight: 30, fontWeight: '600' }}>
+          This screen couldn’t open
+        </Text>
+        <Text style={{ color: colors.inkMuted, fontSize: 15, lineHeight: 22 }}>{error.message}</Text>
+        <KeepItButton label="Try again" onPress={onRetry} />
+      </View>
+    </View>
+  );
+}
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -123,6 +95,7 @@ function NavigationGuard() {
   const hydrated = useSessionStore((s) => s.hydrated);
   const user = useSessionStore((s) => s.user);
   const couple = useSessionStore((s) => s.couple);
+  const pendingInviteCode = useSessionStore((s) => s.pendingInviteCode);
   const setPendingInviteCode = useSessionStore((s) => s.setPendingInviteCode);
   useRealtimePairing();
 
@@ -146,7 +119,7 @@ function NavigationGuard() {
       }),
   });
   useWidgetSync({
-    partnerName: partner?.display_name ?? 'Partner',
+    partnerName: partner?.display_name ?? 'You',
     coupleId: couple?.id,
     momentBundle: globalBundleQuery.data,
     statusBundle: globalStatusQuery.data,
@@ -166,7 +139,7 @@ function NavigationGuard() {
         ? globalParams.code.trim()
         : null;
 
-    if (incomingCode) {
+    if (!user && incomingCode && incomingCode !== pendingInviteCode) {
       setPendingInviteCode(incomingCode);
     }
 
@@ -180,8 +153,9 @@ function NavigationGuard() {
     // Users do NOT need to pair with a partner to use KeepIt!
     // Only open /(auth)/pair automatically if they explicitly tapped an incoming invite code link,
     // or if they manually navigated to /(auth)/pair to link a partner.
-    if (incomingCode && (!inAuthGroup || authLeaf !== 'pair')) {
-      router.replace({ pathname: '/(auth)/pair', params: { code: incomingCode } });
+    const inviteToResume = incomingCode ?? pendingInviteCode;
+    if (inviteToResume && (!inAuthGroup || authLeaf !== 'pair')) {
+      router.replace({ pathname: '/(auth)/pair', params: { code: inviteToResume } });
       return;
     }
 
@@ -196,6 +170,7 @@ function NavigationGuard() {
     segments,
     router,
     globalParams.code,
+    pendingInviteCode,
     setPendingInviteCode,
   ]);
 
@@ -206,6 +181,7 @@ export default function RootLayout() {
   const hydrate = useSessionStore((s) => s.hydrate);
   const hydrated = useSessionStore((s) => s.hydrated);
   const { colors, isDark } = useKeepItTheme();
+  const { reduced } = useAppMotion();
 
   useEffect(() => {
     void hydrate();
@@ -249,6 +225,7 @@ export default function RootLayout() {
             screenOptions={{
               headerShown: false,
               contentStyle: { backgroundColor: colors.canvas },
+              animation: reduced ? 'none' : 'default',
             }}>
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
@@ -256,14 +233,14 @@ export default function RootLayout() {
               name="camera"
               options={{
                 presentation: 'fullScreenModal',
-                animation: 'fade_from_bottom',
+                animation: reduced ? 'none' : 'slide_from_bottom',
               }}
             />
             <Stack.Screen
               name="status-sheet"
               options={{
                 presentation: 'modal',
-                animation: 'slide_from_bottom',
+                animation: reduced ? 'none' : 'slide_from_bottom',
               }}
             />
           </Stack>

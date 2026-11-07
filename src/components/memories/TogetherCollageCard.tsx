@@ -1,22 +1,14 @@
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import React, { useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { formatLateDuration } from '@/api/moments';
-import { RevealOnAppear } from '@/components/ui/Primitives';
-import { useSessionStore } from '@/store/sessionStore';
-import { MOCHY_SPRINGS } from '@/theme/motion';
+import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
+import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
-import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+import { exportAndShareCompositeMoment, formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 
 export interface TogetherCollageCardProps {
   promptDate: string;
@@ -28,456 +20,79 @@ export interface TogetherCollageCardProps {
   revealKey?: string;
 }
 
-interface CollageHalfPaneProps {
-  moment: MomentRecord;
-  authorName: string;
-  side: 'left' | 'right';
-}
-
-function CollageHalfPane({ moment, authorName, side }: CollageHalfPaneProps) {
+function CollageHalfPane({ moment, authorName }: { moment: MomentRecord; authorName: string }) {
   const { colors, radii } = useKeepItTheme();
-  const motionEnabled = useSessionStore((s) => s.motionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
   const [swapped, setSwapped] = useState(false);
-
-  const paneScale = useSharedValue(1);
-  const pipScale = useSharedValue(1);
-
-  const paneAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: paneScale.get() }],
-  }));
-
-  const pipAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pipScale.get() }],
-  }));
-
-  const backUri = moment.back_photo_url ?? moment.back_photo_path;
-  const frontUri = moment.front_photo_url ?? moment.front_photo_path;
-  const mainSource = swapped ? frontUri : backUri;
-  const pipSource = swapped ? backUri : frontUri;
-
-  const postedTime = new Date(moment.posted_at).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
-  const handleSwap = () => {
-    if (Platform.OS !== 'web') {
-      void Haptics.selectionAsync();
-    }
-    if (motionEnabled) {
-      pipScale.set(0.88);
-      pipScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
-    }
-    setSwapped((prev) => !prev);
-  };
-
-  return (
-    <AnimatedPressable
-      accessibilityRole="button"
-      accessibilityLabel={`Swap ${authorName} front and back lens in Together collage`}
-      onPressIn={() => {
-        if (!motionEnabled) return;
-        paneScale.set(withSpring(0.985, MOCHY_SPRINGS.pressIn(motionSpeed)));
-      }}
-      onPressOut={() => {
-        if (!motionEnabled) {
-          paneScale.set(1);
-          return;
-        }
-        paneScale.set(withSpring(1, MOCHY_SPRINGS.pressRelease(motionSpeed)));
-      }}
-      onPress={handleSwap}
-      style={[styles.halfPane, paneAnimatedStyle]}>
-      <Image
-        source={{ uri: mainSource }}
-        placeholder={{ blurhash: moment.back_blurhash }}
-        contentFit="cover"
-        transition={180}
-        style={styles.fullFill}
-      />
-
-      {/* Top author & timing tag */}
-      <View
-        style={[
-          styles.paneAuthorTag,
-          side === 'left' ? styles.anchorTopLeft : styles.anchorTopRight,
-          {
-            backgroundColor: colors.chromeGlass,
-            borderColor: colors.chromeOutline,
-            borderRadius: radii.pill,
-          },
-        ]}>
-        <Text numberOfLines={1} style={[styles.paneAuthorText, { color: colors.ink }]}>
-          {authorName}
-        </Text>
-        <Text style={[styles.paneTimeText, { color: colors.inkMuted }]}>
-          · {postedTime}
-        </Text>
-      </View>
-
-      {/* Late status tag when applicable */}
-      {moment.is_late ? (
-        <View
-          style={[
-            styles.lateChip,
-            side === 'left' ? styles.anchorTopRight : styles.anchorTopLeft,
-            {
-              backgroundColor: colors.canvas,
-              borderColor: colors.warning,
-              borderRadius: radii.pill,
-            },
-          ]}>
-          <Text style={[styles.lateChipText, { color: colors.warning }]}>
-            {formatLateDuration(moment.late_by_seconds)}
-          </Text>
-        </View>
-      ) : null}
-
-      {/* Mini Selfie PIP anchored to outer bottom corner */}
-      <Animated.View
-        style={[
-          styles.miniPipAnchor,
-          side === 'left' ? styles.anchorBottomRight : styles.anchorBottomRight,
-          pipAnimatedStyle,
-        ]}>
-        <View
-          style={[
-            styles.miniPipFrame,
-            {
-              backgroundColor: colors.surfaceElevated,
-              borderColor: colors.canvas,
-            },
-          ]}>
-          <Image source={{ uri: pipSource }} contentFit="cover" style={styles.fullFill} />
-        </View>
-      </Animated.View>
-    </AnimatedPressable>
-  );
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const back = moment.back_photo_url || moment.back_photo_path;
+  const front = moment.front_photo_url || moment.front_photo_path;
+  const main = swapped ? front : back;
+  const pip = swapped ? back : front;
+  const canSwap = Boolean(back && front);
+  const missing = !main || failed[main];
+  return <View style={styles.pane}>
+    <View style={styles.paneHeading}>
+      <Text style={[styles.author, { color: colors.ink }]}>{authorName}</Text>
+      <Text style={[styles.secondary, { color: colors.inkMuted }]}>{new Date(moment.posted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{moment.is_late ? ` · ${formatLateDuration(moment.late_by_seconds)}` : ' · On time'}</Text>
+    </View>
+    <AppPressable accessibilityRole="button" accessibilityLabel={`Swap ${authorName} front and back lens in Together collage`} accessibilityHint={`Currently showing ${swapped ? 'front' : 'back'} camera as the main photo.`} accessibilityState={{ disabled: !canSwap }} disabled={!canSwap} onPress={() => { if (Platform.OS !== 'web') void Haptics.selectionAsync(); setLoading(true); setSwapped((value) => !value); }} style={[styles.photo, { backgroundColor: colors.canvas, borderRadius: radii.input, borderColor: colors.controlBorder }]}>
+      {missing ? <View style={styles.imageState}><Text style={[styles.secondary, { color: colors.inkMuted, textAlign: 'center' }]}>Photo unavailable</Text></View> : <>
+        <Image key={main} source={{ uri: main }} contentFit="cover" transition={0} style={StyleSheet.absoluteFill} onLoadStart={() => setLoading(true)} onLoad={() => setLoading(false)} onError={() => { setFailed((value) => ({ ...value, [main]: true })); setLoading(false); }} />
+        {loading ? <View style={[styles.imageState, { backgroundColor: colors.canvas }]}><ActivityIndicator color={colors.ink} /><Text style={[styles.secondary, { color: colors.inkMuted }]}>Loading photo…</Text></View> : null}
+        {pip && !failed[pip] ? <View style={[styles.pip, { borderColor: colors.canvas, borderRadius: radii.input }]}><Image source={{ uri: pip }} contentFit="cover" style={StyleSheet.absoluteFill} onError={() => setFailed((value) => ({ ...value, [pip]: true }))} /></View> : null}
+      </>}
+      <View pointerEvents="none" style={styles.lensLabel}><Text style={styles.lensText}>{swapped ? 'Front camera' : 'Back camera'}</Text></View>
+    </AppPressable>
+    {missing && main ? <KeepItButton label="Retry photo" variant="secondary" onPress={() => { setFailed({}); setLoading(true); }} /> : null}
+    <Text style={[styles.secondary, { color: colors.inkMuted }]}>{canSwap ? 'Tap the photo to swap cameras.' : 'The second camera photo is unavailable.'}</Text>
+    <Text style={[styles.caption, { color: moment.caption ? colors.ink : colors.inkMuted }]}>{moment.caption || 'No note left.'}</Text>
+  </View>;
 }
 
-export function TogetherCollageCard({
-  promptDate,
-  myMoment,
-  partnerMoment,
-  myName,
-  partnerName,
-  streakCount,
-  revealKey,
-}: TogetherCollageCardProps) {
-  const { colors, radii, spacing, type } = useKeepItTheme();
-
-  const parsedDate = new Date(`${promptDate}T12:00:00Z`);
-  const formattedDate = Number.isNaN(parsedDate.getTime())
-    ? promptDate
-    : parsedDate.toLocaleDateString(undefined, {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      });
-
-  const bothOnTime = !myMoment.is_late && !partnerMoment.is_late;
-  const watermarkTimestamp = formatMomentWatermarkTimestamp(
-    myMoment.posted_at || partnerMoment.posted_at
-  );
-  return (
-    <RevealOnAppear revealKey={revealKey ?? `together:${promptDate}`}>
-      <View
-        style={[
-          styles.outerCard,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderRadius: radii.group,
-            padding: spacing.lg,
-            gap: spacing.md,
-          },
-        ]}>
-        {/* Top Metadata Stamp: Date + Shared Streak Tag */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <Text
-              style={[
-                styles.togetherKicker,
-                { color: colors.inkMuted, letterSpacing: type.bodyTracking },
-              ]}>
-              Together · {bothOnTime ? 'On time' : 'Captured'}
-            </Text>
-            <Text
-              style={[
-                styles.dateTitle,
-                { color: colors.ink, letterSpacing: type.titleTracking },
-              ]}>
-              {formattedDate}
-            </Text>
-          </View>
-
-          {typeof streakCount === 'number' && streakCount > 0 ? (
-            <View
-              style={[
-                styles.streakTag,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.border,
-                  borderRadius: radii.pill,
-                },
-              ]}>
-              <View style={[styles.streakDot, { backgroundColor: colors.success }]} />
-              <Text style={[styles.streakTagText, { color: colors.ink }]}>
-                {streakCount}d streak
-              </Text>
-            </View>
-          ) : null}
-        </View>
-
-        {/* Side-by-Side Split Daily Collage: Left = Partner, Right = You */}
-        <View
-          style={[
-            styles.splitStage,
-            {
-              backgroundColor: colors.canvas,
-              borderColor: colors.border,
-              borderRadius: radii.photo,
-            },
-          ]}>
-          <CollageHalfPane
-            moment={partnerMoment}
-            authorName={partnerName}
-            side="left"
-          />
-          <View style={[styles.centerSeam, { backgroundColor: colors.canvas }]} />
-          <CollageHalfPane moment={myMoment} authorName={myName} side="right" />
-          <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
-            <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
-            <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
-          </View>
-        </View>
-
-        {/* Dual Captions Underneath */}
-        <View style={[styles.captionsGrid, { gap: spacing.sm }]}>
-          <View
-            style={[
-              styles.captionTile,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.border,
-                borderRadius: radii.input,
-                padding: spacing.md,
-              },
-            ]}>
-            <Text numberOfLines={1} style={[styles.captionAuthor, { color: colors.ink }]}>
-              {partnerName}
-            </Text>
-            <Text
-              numberOfLines={2}
-              style={[
-                styles.captionCopy,
-                { color: partnerMoment.caption ? colors.ink : colors.inkMuted },
-              ]}>
-              {partnerMoment.caption ? `“${partnerMoment.caption}”` : 'No note left.'}
-            </Text>
-          </View>
-
-          <View
-            style={[
-              styles.captionTile,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.border,
-                borderRadius: radii.input,
-                padding: spacing.md,
-              },
-            ]}>
-            <Text numberOfLines={1} style={[styles.captionAuthor, { color: colors.ink }]}>
-              {myName}
-            </Text>
-            <Text
-              numberOfLines={2}
-              style={[
-                styles.captionCopy,
-                { color: myMoment.caption ? colors.ink : colors.inkMuted },
-              ]}>
-              {myMoment.caption ? `“${myMoment.caption}”` : 'No note left.'}
-            </Text>
-          </View>
-        </View>
-      </View>
-    </RevealOnAppear>
-  );
+export function TogetherCollageCard({ promptDate, myMoment, partnerMoment, myName, partnerName, streakCount, revealKey }: TogetherCollageCardProps) {
+  const { colors, radii, type } = useKeepItTheme();
+  const [saving, setSaving] = useState<'mine' | 'partner' | null>(null);
+  const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
+  const saveMoment = async (moment: MomentRecord, name: string, side: 'mine' | 'partner') => {
+    const backUri = moment.back_photo_url || moment.back_photo_path;
+    const frontUri = moment.front_photo_url || moment.front_photo_path;
+    if (!backUri || !frontUri) { setNotice({ message: 'Both camera photos must be available to save this Moment.', error: true }); return; }
+    setSaving(side); setNotice(null);
+    try {
+      const message = await exportAndShareCompositeMoment({ backUri, frontUri, authorName: name, postedAtIso: moment.posted_at, caption: moment.caption, filterPreset: moment.filter_preset, locationLabel: moment.location_label, musicTitle: moment.music_track?.title, taggedUsers: moment.tagged_users, overlays: moment.overlays, aspect: '3:4', baseFilename: `keepit-${promptDate}-${side}`, title: `${name}'s KeepIt Moment` });
+      setNotice({ message, error: false });
+    } catch (error) { setNotice({ message: error instanceof Error ? error.message : 'Could not save this Moment. Try again.', error: true }); }
+    finally { setSaving(null); }
+  };
+  const formattedDate = new Date(`${promptDate}T12:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  return <RevealOnAppear revealKey={revealKey ?? `together:${promptDate}`}>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+      <View style={styles.header}><Text style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>{formattedDate}</Text><Text style={[styles.secondary, { color: colors.inkMuted }]}>{!myMoment.is_late && !partnerMoment.is_late ? 'Both posted on time' : 'Both Moments archived'}</Text>{typeof streakCount === 'number' && streakCount > 0 ? <Text style={[styles.secondary, { color: colors.inkMuted }]}>Current streak: {streakCount} days</Text> : null}</View>
+      <View style={styles.panes}><CollageHalfPane key={partnerMoment.id} moment={partnerMoment} authorName={partnerName} /><CollageHalfPane key={myMoment.id} moment={myMoment} authorName={myName} /></View>
+      <View style={styles.watermark}><Text style={[styles.author, { color: colors.ink }]}>#keepit</Text><Text style={[styles.secondary, { color: colors.inkMuted }]}>{formatMomentWatermarkTimestamp(myMoment.posted_at || partnerMoment.posted_at)}</Text></View>
+      {notice ? <InlineNotice tone={notice.error ? 'error' : 'info'} message={notice.message} /> : null}
+      <View style={styles.saveActions}><KeepItButton label={`Save ${partnerName}'s Moment`} variant="secondary" loading={saving === 'partner'} disabled={saving !== null} onPress={() => void saveMoment(partnerMoment, partnerName, 'partner')} style={styles.saveButton} /><KeepItButton label="Save your Moment" variant="secondary" loading={saving === 'mine'} disabled={saving !== null} onPress={() => void saveMoment(myMoment, myName, 'mine')} style={styles.saveButton} /></View>
+    </View>
+  </RevealOnAppear>;
 }
 
 const styles = StyleSheet.create({
-  outerCard: {
-    borderWidth: 1,
-    borderCurve: 'continuous',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  headerLeft: {
-    flex: 1,
-    gap: 2,
-  },
-  togetherKicker: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  dateTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  streakTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderCurve: 'continuous',
-  },
-  streakDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  streakTagText: {
-    fontSize: 12,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-    letterSpacing: -0.25,
-  },
-  splitStage: {
-    flexDirection: 'row',
-    width: '100%',
-    aspectRatio: 1.06,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderCurve: 'continuous',
-  },
-  halfPane: {
-    flex: 1,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  centerSeam: {
-    width: 2,
-    height: '100%',
-  },
-  fullFill: {
-    width: '100%',
-    height: '100%',
-  },
-  paneAuthorTag: {
-    position: 'absolute',
-    top: 10,
-    maxWidth: '86%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderCurve: 'continuous',
-  },
-  anchorTopLeft: {
-    left: 10,
-  },
-  anchorTopRight: {
-    right: 10,
-  },
-  paneAuthorText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: -0.2,
-    flexShrink: 1,
-  },
-  paneTimeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  miniPipAnchor: {
-    position: 'absolute',
-    bottom: 10,
-  },
-  anchorBottomLeft: {
-    left: 10,
-  },
-  anchorBottomRight: {
-    right: 10,
-  },
-  miniPipFrame: {
-    width: 56,
-    height: 74,
-    borderRadius: 13,
-    borderWidth: 2,
-    overflow: 'hidden',
-    borderCurve: 'continuous',
-  },
-  lateChip: {
-    position: 'absolute',
-    top: 38,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderCurve: 'continuous',
-  },
-  lateChipText: {
-    fontSize: 10,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  keepItPhotoWatermark: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    alignItems: 'flex-start',
-    gap: 1,
-    zIndex: 6,
-  },
-  keepItWatermarkTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: -0.5,
-    lineHeight: 18,
-    textShadowColor: 'rgba(0, 0, 0, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
-  },
-  keepItWatermarkTime: {
-    color: 'rgba(255, 255, 255, 0.92)',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: -0.2,
-    lineHeight: 13,
-    fontVariant: ['tabular-nums'],
-    textShadowColor: 'rgba(0, 0, 0, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  captionsGrid: {
-    flexDirection: 'row',
-  },
-  captionTile: {
-    flex: 1,
-    borderWidth: 1,
-    gap: 4,
-    borderCurve: 'continuous',
-  },
-  captionAuthor: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.25,
-  },
-  captionCopy: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-    letterSpacing: -0.2,
-  },
+  card: { padding: 16, gap: 20 },
+  header: { gap: 4 },
+  title: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
+  panes: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  pane: { flex: 1, minWidth: 0, gap: 8 },
+  paneHeading: { minHeight: 64, gap: 3 },
+  author: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  secondary: { fontSize: 13, lineHeight: 20 },
+  caption: { fontSize: 15, lineHeight: 22 },
+  photo: { width: '100%', aspectRatio: 0.65, minWidth: 0, borderWidth: 1, overflow: 'hidden' },
+  imageState: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', padding: 8, gap: 8 },
+  pip: { position: 'absolute', width: '36%', aspectRatio: 0.75, right: 8, bottom: 38, overflow: 'hidden', borderWidth: 2 },
+  lensLabel: { position: 'absolute', bottom: 8, left: 6, right: 6, backgroundColor: '#0A0708', borderRadius: 5, paddingHorizontal: 4, paddingVertical: 3, alignItems: 'center' },
+  lensText: { color: '#FFFFFF', fontSize: 11, lineHeight: 16, fontWeight: '600' },
+  watermark: { gap: 2 },
+  saveActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  saveButton: { flex: 1, minWidth: 120 },
 });

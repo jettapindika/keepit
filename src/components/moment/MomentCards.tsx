@@ -4,13 +4,11 @@ import { Image } from 'expo-image';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
+  Linking,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import Animated, {
@@ -21,7 +19,6 @@ import Animated, {
 
 import {
   addMomentComment,
-  buildSimulatedDualPhotos,
   deleteMomentComment,
   deleteMomentPost,
   formatLateDuration,
@@ -39,7 +36,9 @@ import {
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
 import { DualFrameMark, InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { AppPressable as Pressable, AppSwitch as Switch, AppTextInput as TextInput, SectionHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
+import { useAppMotion } from '@/hooks/useAppMotion';
 import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 import {
@@ -114,8 +113,7 @@ export function DualMomentCard({
   const { colors, radii, spacing } = useKeepItTheme();
   const sessionUser = useSessionStore((s) => s.user);
   const sessionCouple = useSessionStore((s) => s.couple);
-  const motionEnabled = useSessionStore((s) => s.motionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const { enabled: motionEnabled, speed: motionSpeed } = useAppMotion();
 
   const effectiveUserId = propCurrentUserId ?? sessionUser?.id ?? 'local_user';
   const effectiveCoupleId =
@@ -186,28 +184,24 @@ export function DualMomentCard({
   const localComments: MomentCommentRecord[] = useOpt && optComments !== undefined
     ? optComments
     : (moment?.comments ?? []);
-  // Partner Image Fix (Item #2): always guarantee non-empty dual photos once unlocked
-  const fallbackPhotos = buildSimulatedDualPhotos({
-    authorLabel: authorName,
-    sceneLabel: 'Shared KeepIt Moment',
-    filterPreset: localFilterPreset,
-  });
-
   const resolvedBackUri =
     (backPhotoUrl && backPhotoUrl.trim()) ||
     (moment?.back_photo_url && moment.back_photo_url.trim()) ||
     (moment?.back_photo_path && moment.back_photo_path.trim()) ||
-    fallbackPhotos.backUri;
+    '';
 
   const resolvedFrontUri =
     (frontPhotoUrl && frontPhotoUrl.trim()) ||
     (moment?.front_photo_url && moment.front_photo_url.trim()) ||
     (moment?.front_photo_path && moment.front_photo_path.trim()) ||
-    fallbackPhotos.frontUri;
+    '';
 
   const [swapped, setSwapped] = useState(false);
   const mainSource = swapped ? resolvedFrontUri : resolvedBackUri;
   const pipSource = swapped ? resolvedBackUri : resolvedFrontUri;
+  const [failedImageUris, setFailedImageUris] = useState<string[]>([]);
+  const mediaUnavailable = !mainSource || mainSource.startsWith('data:image/svg+xml') || failedImageUris.includes(mainSource);
+  const [mediaRetry, setMediaRetry] = useState(0);
 
   const postedAtIso = propPostedAtIso ?? moment?.posted_at ?? new Date().toISOString();
   const lateBySeconds = propLateBySeconds ?? moment?.late_by_seconds ?? 0;
@@ -221,29 +215,9 @@ export function DualMomentCard({
       videoUri &&
       !videoUri.startsWith('data:image/svg+xml')
   );
-  // Video loop playback state (Item #18)
-  const [videoPlaying, setVideoPlaying] = useState(mediaType === 'video');
+  const [videoPlaying, setVideoPlaying] = useState(false);
   const [videoProgressPct, setVideoProgressPct] = useState(0);
-  const videoTimerRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    clearInterval(videoTimerRef.current);
-    if (mediaType !== 'video' || !videoPlaying) {
-      return;
-    }
-    const stepMs = 200;
-    const totalSteps = Math.max(10, Math.round((videoDurationSec * 1000) / stepMs));
-    videoTimerRef.current = setInterval(() => {
-      setVideoProgressPct((prev) => {
-        const next = prev + 100 / totalSteps;
-        return next >= 100 ? 0 : next;
-      });
-    }, stepMs) as unknown as number;
-
-    return () => {
-      clearInterval(videoTimerRef.current);
-    };
-  }, [mediaType, videoPlaying, videoDurationSec]);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // Real audible Music Preview state synced with global single-track player
   const [activeAudioTrackId, setActiveAudioTrackId] = useState<string | null>(() =>
@@ -304,6 +278,7 @@ export function DualMomentCard({
     initialRemaining !== null && initialRemaining > 0 ? initialRemaining : 15
   );
   const snapTimerRef = useRef<number | undefined>(undefined);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!localSnapOnce || ownerFlag || snapExpired) {
@@ -316,7 +291,7 @@ export function DualMomentCard({
           expired: true,
         }).then(() => {
           void onUpdated?.();
-        });
+        }).catch((err) => setActionError(err instanceof Error ? err.message : 'Could not sync the expired Snap Once state. Refresh the feed to retry.'));
       }
       return;
     }
@@ -336,7 +311,7 @@ export function DualMomentCard({
               expired: true,
             }).then(() => {
               void onUpdated?.();
-            });
+            }).catch((err) => setActionError(err instanceof Error ? err.message : 'Could not sync the expired Snap Once state. Refresh the feed to retry.'));
           }
           return 0;
         }
@@ -390,7 +365,7 @@ export function DualMomentCard({
         coupleId: effectiveCoupleId,
         viewerId: effectiveUserId,
         expired: false,
-      });
+      }).catch((err) => setActionError(err instanceof Error ? err.message : 'Could not sync the Snap Once view state. Refresh the feed to retry.'));
     }
   };
 
@@ -414,6 +389,7 @@ export function DualMomentCard({
   // Comments & Reactions state (Item #13)
   const [commentInput, setCommentInput] = useState('');
   const [postingComment, setPostingComment] = useState(false);
+  const [savingReaction, setSavingReaction] = useState(false);
 
   // Download & 9:16 Story Share modal state (Item #15 & #19)
   const [actionBanner, setActionBanner] = useState<string | null>(null);
@@ -421,6 +397,8 @@ export function DualMomentCard({
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyTheme, setStoryTheme] = useState<StoryThemePreset>('midnight');
   const [storySharing, setStorySharing] = useState(false);
+  const [pendingDeleteComment, setPendingDeleteComment] = useState<string | null>(null);
+  const [discardEdits, setDiscardEdits] = useState(false);
   const pipScale = useSharedValue(1);
   const pipStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pipScale.get() }],
@@ -440,6 +418,7 @@ export function DualMomentCard({
   };
 
   const handleOpenEditor = () => {
+    setDiscardEdits(false);
     setDraftCaption(localCaption ?? '');
     setDraftFilter(localFilterPreset);
     setDraftLocation(localLocationLabel ?? '');
@@ -462,7 +441,7 @@ export function DualMomentCard({
           }))
         );
       }
-    );
+    ).catch((err) => setCrudError(err instanceof Error ? err.message : 'Could not load people to tag. Reopen the editor to retry.'));
   };
 
   const availableTagCandidates: TaggedPerson[] = [
@@ -518,6 +497,7 @@ export function DualMomentCard({
   };
 
   const handleSaveEditor = async () => {
+    if (savingCrud || deletingPost) return;
     setSavingCrud(true);
     setCrudError(null);
     try {
@@ -577,7 +557,7 @@ export function DualMomentCard({
   };
 
   const handleConfirmDelete = async () => {
-    if (!moment?.id) return;
+    if (!moment?.id || savingCrud || deletingPost) return;
     setDeletingPost(true);
     setCrudError(null);
     try {
@@ -597,35 +577,31 @@ export function DualMomentCard({
   };
 
   const handleToggleReaction = async (emoji: string) => {
-    if (Platform.OS !== 'web') {
-      void Haptics.selectionAsync();
-    }
+    if (savingReaction || !moment?.id) return;
+    setSavingReaction(true);
+    setActionError(null);
+    if (Platform.OS !== 'web') void Haptics.selectionAsync();
     const nextReactions = { ...localReactions };
-    if (nextReactions[effectiveUserId] === emoji) {
-      delete nextReactions[effectiveUserId];
-    } else {
-      nextReactions[effectiveUserId] = emoji;
-    }
+    if (nextReactions[effectiveUserId] === emoji) delete nextReactions[effectiveUserId];
+    else nextReactions[effectiveUserId] = emoji;
     setOptimisticRev(momentRevisionKey);
     setOptReactions(nextReactions);
-    if (moment?.id) {
-      try {
-        await toggleMomentReaction({
-          momentId: moment.id,
-          coupleId: effectiveCoupleId,
-          userId: effectiveUserId,
-          emoji,
-        });
-        await onUpdated?.();
-      } catch {
-        // Optimistic update stays responsive
-      }
+    try {
+      await toggleMomentReaction({ momentId: moment.id, coupleId: effectiveCoupleId, userId: effectiveUserId, emoji });
+      await onUpdated?.();
+    } catch (err) {
+      setOptReactions(localReactions);
+      setActionError(err instanceof Error ? err.message : 'Could not save your reaction. Try again.');
+    } finally {
+      setSavingReaction(false);
     }
   };
 
   const handlePostComment = async () => {
     const cleaned = commentInput.trim();
-    if (!cleaned) return;
+    if (!cleaned || postingComment) return;
+    if (!moment?.id) { setActionError('This Moment is not available for comments. Refresh the feed and try again.'); return; }
+    setActionError(null);
     setPostingComment(true);
     const authorDisplay = sessionUser?.display_name ?? 'You';
     const authorHandle = sessionUser?.username;
@@ -643,21 +619,9 @@ export function DualMomentCard({
         setOptComments([...localComments, created]);
         setCommentInput('');
         await onUpdated?.();
-      } else {
-        overlaySeqRef.current += 1;
-        const fallbackComment: MomentCommentRecord = {
-          id: `cmt_local_${overlaySeqRef.current}`,
-          moment_id: 'local_moment',
-          author_id: effectiveUserId,
-          author_name: authorDisplay,
-          author_username: authorHandle,
-          text: cleaned,
-          created_at: new Date().toISOString(),
-        };
-        setOptimisticRev(momentRevisionKey);
-        setOptComments([...localComments, fallbackComment]);
-        setCommentInput('');
       }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not post your comment. Your draft is still here. Try again.');
     } finally {
       setPostingComment(false);
     }
@@ -675,33 +639,39 @@ export function DualMomentCard({
           requesterId: effectiveUserId,
         });
         await onUpdated?.();
-      } catch {
-        // Keep UI responsive
+      } catch (err) {
+        setOptComments(localComments);
+        setActionError(err instanceof Error ? err.message : 'Could not delete the comment. Try again.');
       }
     }
   };
 
   const handleNativeVideoPreview = async () => {
-    if (!videoUri) return;
-    if (Platform.OS !== 'web' && videoUri.startsWith('file://')) {
-      try {
-        const vidFile = new FileSystem.File(videoUri);
-        const canPrev = await vidFile.canPreview().catch(() => false);
-        if (canPrev) {
-          await vidFile.preview({ title: `${authorName}’s KeepIt Video`, mimeType: 'video/mp4' });
+    if (!videoUri || !isRealPlayableVideo) return;
+    try {
+      if (Platform.OS === 'web') {
+        if (!videoRef.current) return;
+        if (videoRef.current.paused) await videoRef.current.play();
+        else videoRef.current.pause();
+        return;
+      }
+      if (videoUri.startsWith('file://')) {
+        const file = new FileSystem.File(videoUri);
+        if (await file.canPreview()) {
+          await file.preview({ title: `${authorName}’s KeepIt Video`, mimeType: 'video/mp4' });
           return;
         }
-      } catch {
-        // Fall back to inline toggle
       }
+      await Linking.openURL(videoUri);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not play this video. Try again.');
     }
-    setVideoPlaying((prev) => !prev);
   };
 
   const watermarkTimestamp = formatMomentWatermarkTimestamp(postedAtIso);
 
   const handleSave3x4Photo = async () => {
-    if ((localSnapOnce && !ownerFlag) || savingPhoto) return;
+    if ((localSnapOnce && !ownerFlag) || savingPhoto || mediaUnavailable) return;
     setSavingPhoto(true);
     setActionBanner(null);
     try {
@@ -726,14 +696,14 @@ export function DualMomentCard({
       });
       setActionBanner(msg);
     } catch (err) {
-      setActionBanner(err instanceof Error ? err.message : 'Could not save photo.');
+      setActionError(err instanceof Error ? err.message : 'Could not save photo. Try again.');
     } finally {
       setSavingPhoto(false);
     }
   };
 
   const storyDataUri =
-    localSnapOnce && !ownerFlag
+    (localSnapOnce && !ownerFlag) || mediaUnavailable
       ? ''
       : buildMomentCompositeSvgDataUri({
           backUri: mainSource,
@@ -754,7 +724,7 @@ export function DualMomentCard({
         });
 
   const handleShare9x16Story = async () => {
-    if (localSnapOnce && !ownerFlag) return;
+    if ((localSnapOnce && !ownerFlag) || storySharing || mediaUnavailable) return;
     setStorySharing(true);
     try {
       const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
@@ -778,6 +748,8 @@ export function DualMomentCard({
         title: `${authorName}’s 9:16 KeepIt Story`,
       });
       setActionBanner(msg);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not share your story. Try again.');
     } finally {
       setStorySharing(false);
     }
@@ -798,7 +770,8 @@ export function DualMomentCard({
   }
 
   return (
-    <View style={{ gap: spacing.md }}>
+    <View style={{ gap: 12 }}>
+      <SectionHeader title={authorName} subtitle={`${timeFormatted} · ${isLate ? 'Late' : 'On time'}${moment?.daily_index ? ` · Moment ${moment.daily_index} of 5` : ''}`} />
       {/* Main 3:4 Photo Container */}
       <View
         style={[
@@ -842,9 +815,9 @@ export function DualMomentCard({
             <View
               style={[
                 styles.snapIconCircle,
-                { backgroundColor: colors.accentSoft, borderColor: colors.warning },
+                { backgroundColor: colors.accentSoft, borderColor: colors.inkMuted },
               ]}>
-              <Text style={[styles.snapIconEmoji, { color: colors.warning }]}>15s</Text>
+              <Text style={[styles.snapIconEmoji, { color: colors.ink }]}>15s</Text>
             </View>
             <Text style={[styles.snapOverlayTitle, { color: colors.ink }]}>
               Snap Once · Tap to view for 15s
@@ -857,12 +830,21 @@ export function DualMomentCard({
           <>
             {Platform.OS === 'web' && isRealPlayableVideo && videoUri ? (
               React.createElement('video', {
+                ref: videoRef,
+                'aria-label': `${authorName}’s Moment video`,
+                onPlay: () => setVideoPlaying(true),
+                onPause: () => setVideoPlaying(false),
+                onError: () => setActionError('Could not load this video. Use the player controls to retry.'),
+                onTimeUpdate: (event: React.SyntheticEvent<HTMLVideoElement>) => {
+                  const video = event.currentTarget;
+                  setVideoProgressPct(video.duration ? (video.currentTime / video.duration) * 100 : 0);
+                },
                 src: videoUri,
                 autoPlay: videoPlaying,
                 loop: true,
                 muted: false,
                 playsInline: true,
-                controls: false,
+                controls: true,
                 style: {
                   width: '100%',
                   height: '100%',
@@ -870,8 +852,17 @@ export function DualMomentCard({
                   filter: filterMeta.webCssFilter !== 'none' ? filterMeta.webCssFilter : undefined,
                 },
               })
+            ) : mediaUnavailable ? (
+              <View style={[styles.snapOverlayContainer, { backgroundColor: colors.surfaceElevated }]}>
+                <Text style={[styles.snapOverlayTitle, { color: colors.ink }]}>Moment photo unavailable</Text>
+                <Text style={[styles.snapOverlaySub, { color: colors.inkMuted }]}>The original camera photo is unavailable. Generated illustrations are not shown as real Moments.</Text>
+                <KeepItButton label="Retry photo" variant="secondary" onPress={() => { setFailedImageUris([]); setMediaRetry((value) => value + 1); void onUpdated?.(); }} />
+              </View>
             ) : (
               <Image
+                key={`${mainSource}-${mediaRetry}`}
+                accessibilityLabel={`${authorName}’s ${swapped ? 'front' : 'back'} camera photo`}
+                onError={() => setFailedImageUris((uris) => [...uris, mainSource])}
                 source={{ uri: mainSource }}
                 contentFit="cover"
                 style={[
@@ -898,7 +889,7 @@ export function DualMomentCard({
             ) : null}
 
             {/* Overlapping 3:4 Front/Back PIP */}
-            <Animated.View style={[styles.pipAnchor, pipStyle]}>
+            {pipSource && !pipSource.startsWith('data:image/svg+xml') && !failedImageUris.includes(pipSource) ? <Animated.View style={[styles.pipAnchor, pipStyle]}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Swap ${authorName} front and back camera view`}
@@ -911,12 +902,14 @@ export function DualMomentCard({
                   },
                 ]}>
                 <Image
+                  accessibilityLabel={`${authorName}’s other camera photo. Swap views.`}
+                  onError={() => setFailedImageUris((uris) => [...uris, pipSource])}
                   source={{ uri: pipSource }}
                   contentFit="cover"
                   style={styles.fullImage}
                 />
               </Pressable>
-            </Animated.View>
+            </Animated.View> : null}
 
             {/* On-Photo Emoji & Text Overlays (Item #12) */}
             {localOverlays.map((ov) => (
@@ -958,12 +951,12 @@ export function DualMomentCard({
                   style={[
                     styles.statusPill,
                     {
-                      backgroundColor: colors.warning,
-                      borderColor: colors.warning,
+                      backgroundColor: colors.accent,
+                      borderColor: colors.accent,
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.statusPillText, { color: '#000000' }]}>
+                  <Text style={[styles.statusPillText, { color: colors.onAccent }]}>
                     15s · {snapSecondsLeft}s left
                   </Text>
                 </View>
@@ -975,11 +968,11 @@ export function DualMomentCard({
                     styles.statusPill,
                     {
                       backgroundColor: colors.canvas,
-                      borderColor: colors.warning,
+                      borderColor: colors.inkMuted,
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.statusPillText, { color: colors.warning }]}>
+                  <Text style={[styles.statusPillText, { color: colors.ink }]}>
                     Snap Once · 15s
                   </Text>
                 </View>
@@ -988,7 +981,7 @@ export function DualMomentCard({
               {mediaType === 'video' ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={videoPlaying ? 'Pause video loop' : 'Play video loop'}
+                  accessibilityLabel={Platform.OS === 'web' ? videoPlaying ? 'Pause video' : 'Play video' : 'Open video player'}
                   onPress={() => void handleNativeVideoPreview()}
                   style={[
                     styles.statusPill,
@@ -999,7 +992,7 @@ export function DualMomentCard({
                     },
                   ]}>
                   <Text style={[styles.statusPillText, { color: colors.ink }]}>
-                    {videoPlaying ? 'PAUSE' : 'PLAY'} VIDEO · {videoDurationSec}s
+                    {Platform.OS === 'web' ? videoPlaying ? 'Pause video' : 'Play video' : 'Open video'} · {videoDurationSec}s
                   </Text>
                 </Pressable>
               ) : null}
@@ -1025,14 +1018,14 @@ export function DualMomentCard({
                   styles.statusPill,
                   {
                     backgroundColor: colors.canvas,
-                    borderColor: isLate ? colors.warning : colors.border,
+                    borderColor: colors.border,
                     borderRadius: radii.pill,
                   },
                 ]}>
                 <Text
                   style={[
                     styles.statusPillText,
-                    { color: isLate ? colors.warning : colors.ink },
+                    { color: colors.ink },
                   ]}>
                   {formatLateDuration(lateBySeconds)}
                 </Text>
@@ -1056,13 +1049,13 @@ export function DualMomentCard({
             </View>
 
             {/* Video Playback Progress Bar (Item #18) */}
-            {mediaType === 'video' ? (
+            {Platform.OS === 'web' && isRealPlayableVideo ? (
               <View style={styles.videoProgressTrack}>
                 <View
                   style={[
                     styles.videoProgressFill,
                     {
-                      width: `${videoPlaying ? videoProgressPct : 100}%`,
+                      width: `${videoProgressPct}%`,
                       backgroundColor: colors.accent,
                     },
                   ]}
@@ -1090,25 +1083,7 @@ export function DualMomentCard({
             padding: spacing.lg,
           },
         ]}>
-        <View style={styles.metaTopRow}>
-          <View style={styles.authorRow}>
-            <Text style={[styles.authorText, { color: colors.ink }]}>{authorName}</Text>
-            {moment?.daily_index && moment.daily_index > 1 ? (
-              <View
-                style={[
-                  styles.dailyShotBadge,
-                  { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
-                ]}>
-                <Text style={[styles.dailyShotBadgeText, { color: colors.inkMuted }]}>
-                  #{moment.daily_index}/5
-                </Text>
-              </View>
-            ) : null}
-          </View>
-          <Text style={[styles.timestampText, { color: colors.inkMuted }]}>
-            {timeFormatted}
-          </Text>
-        </View>
+        {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
 
         {/* Location, Music & Tagged People Badges (Item #7 & #9) */}
         {!isSnapLockedForViewer &&
@@ -1196,6 +1171,7 @@ export function DualMomentCard({
               <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>Caption</Text>
               <TextInput
                 accessibilityLabel="Edit Moment caption"
+                editable={!savingCrud && !deletingPost}
                 value={draftCaption}
                 maxLength={160}
                 placeholder="Add a caption (up to 160 chars)..."
@@ -1205,7 +1181,7 @@ export function DualMomentCard({
                   styles.captionInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1228,13 +1204,15 @@ export function DualMomentCard({
                     <Pressable
                       key={preset.id}
                       accessibilityRole="button"
+                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                      disabled={savingCrud || deletingPost}
                       onPress={() => setDraftFilter(preset.id)}
                       style={[
                         styles.OptionPill,
                         {
                           backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
+                          borderColor: active ? colors.accent : colors.controlBorder,
+                          borderRadius: radii.input,
                         },
                       ]}>
                       <Text
@@ -1257,6 +1235,7 @@ export function DualMomentCard({
               </Text>
               <TextInput
                 accessibilityLabel="Edit Moment location"
+                editable={!savingCrud && !deletingPost}
                 value={draftLocation}
                 placeholder="Custom location or choose below..."
                 placeholderTextColor={colors.inkMuted}
@@ -1265,7 +1244,7 @@ export function DualMomentCard({
                   styles.captionInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1277,6 +1256,8 @@ export function DualMomentCard({
                 contentContainerStyle={styles.horizontalPillsRow}>
                 <Pressable
                   accessibilityRole="button"
+                  accessibilityState={{ selected: !draftLocation }}
+                  disabled={savingCrud || deletingPost}
                   onPress={() => setDraftLocation('')}
                   style={[
                     styles.OptionPill,
@@ -1300,13 +1281,15 @@ export function DualMomentCard({
                     <Pressable
                       key={loc.label}
                       accessibilityRole="button"
+                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                      disabled={savingCrud || deletingPost}
                       onPress={() => setDraftLocation(loc.label)}
                       style={[
                         styles.OptionPill,
                         {
                           backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
+                          borderColor: active ? colors.accent : colors.controlBorder,
+                          borderRadius: radii.input,
                         },
                       ]}>
                       <Text
@@ -1333,6 +1316,8 @@ export function DualMomentCard({
                 contentContainerStyle={styles.horizontalPillsRow}>
                 <Pressable
                   accessibilityRole="button"
+                  accessibilityState={{ selected: !draftMusic }}
+                  disabled={savingCrud || deletingPost}
                   onPress={() => setDraftMusic(null)}
                   style={[
                     styles.OptionPill,
@@ -1356,13 +1341,15 @@ export function DualMomentCard({
                     <Pressable
                       key={trk.id}
                       accessibilityRole="button"
+                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                      disabled={savingCrud || deletingPost}
                       onPress={() => setDraftMusic(trk)}
                       style={[
                         styles.OptionPill,
                         {
                           backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
+                          borderColor: active ? colors.accent : colors.controlBorder,
+                          borderRadius: radii.input,
                         },
                       ]}>
                       <Text
@@ -1393,13 +1380,15 @@ export function DualMomentCard({
                     <Pressable
                       key={person.userId}
                       accessibilityRole="button"
+                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                      disabled={savingCrud || deletingPost}
                       onPress={() => handleToggleDraftTag(person)}
                       style={[
                         styles.OptionPill,
                         {
                           backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
+                          borderColor: active ? colors.accent : colors.controlBorder,
+                          borderRadius: radii.input,
                         },
                       ]}>
                       <Text
@@ -1424,6 +1413,7 @@ export function DualMomentCard({
                 {draftOverlays.length > 0 ? (
                   <Pressable
                     accessibilityRole="button"
+                    disabled={savingCrud || deletingPost}
                     onPress={() => setDraftOverlays([])}
                     style={styles.clearOverlaysBtn}>
                     <Text style={[styles.clearOverlaysText, { color: colors.danger }]}>
@@ -1442,6 +1432,7 @@ export function DualMomentCard({
                     key={emoji}
                     accessibilityRole="button"
                     accessibilityLabel={`Add ${emoji} sticker overlay`}
+                    disabled={savingCrud || deletingPost}
                     onPress={() => handleAddEmojiOverlay(emoji)}
                     style={[
                       styles.emojiStickerBtn,
@@ -1459,6 +1450,7 @@ export function DualMomentCard({
               <View style={styles.overlayInputRow}>
                 <TextInput
                   accessibilityLabel="New text overlay"
+                  editable={!savingCrud && !deletingPost}
                   value={draftOverlayText}
                   placeholder="Add text banner on photo..."
                   placeholderTextColor={colors.inkMuted}
@@ -1468,7 +1460,7 @@ export function DualMomentCard({
                     {
                       flex: 1,
                       backgroundColor: colors.surface,
-                      borderColor: colors.border,
+                      borderColor: colors.controlBorder,
                       color: colors.ink,
                       borderRadius: radii.input,
                     },
@@ -1476,6 +1468,7 @@ export function DualMomentCard({
                 />
                 <Pressable
                   accessibilityRole="button"
+                  disabled={savingCrud || deletingPost || !draftOverlayText.trim()}
                   onPress={handleAddTextOverlay}
                   style={[
                     styles.smallActionChip,
@@ -1491,20 +1484,22 @@ export function DualMomentCard({
                 </Pressable>
               </View>
 
-              <View style={styles.horizontalPillsRow}>
+              <View style={[styles.horizontalPillsRow, { flexDirection: 'row', flexWrap: 'wrap' }]}>
                 {(['glass', 'solid', 'neon'] as const).map((st) => {
                   const active = draftOverlayBgStyle === st;
                   return (
                     <Pressable
                       key={st}
                       accessibilityRole="button"
+                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                      disabled={savingCrud || deletingPost}
                       onPress={() => setDraftOverlayBgStyle(st)}
                       style={[
                         styles.OptionPill,
                         {
                           backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
+                          borderColor: active ? colors.accent : colors.controlBorder,
+                          borderRadius: radii.input,
                         },
                       ]}>
                       <Text
@@ -1531,9 +1526,10 @@ export function DualMomentCard({
                 </Text>
               </View>
               <Switch
+                accessibilityLabel="Snap Once, disappears 15 seconds after opening"
+                disabled={savingCrud || deletingPost}
                 value={draftSnapOnce}
                 onValueChange={setDraftSnapOnce}
-                trackColor={{ false: colors.border, true: colors.warning }}
               />
             </View>
 
@@ -1541,6 +1537,7 @@ export function DualMomentCard({
               <KeepItButton
                 label="Save Changes"
                 loading={savingCrud}
+                disabled={deletingPost}
                 onPress={() => void handleSaveEditor()}
                 style={{ flex: 1 }}
               />
@@ -1548,7 +1545,7 @@ export function DualMomentCard({
                 label="Cancel"
                 variant="secondary"
                 disabled={savingCrud || deletingPost}
-                onPress={() => setEditing(false)}
+                onPress={() => setDiscardEdits(true)}
                 style={{ flex: 1 }}
               />
             </View>
@@ -1621,8 +1618,8 @@ export function DualMomentCard({
                     styles.smallActionChip,
                     {
                       backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
                     },
                   ]}>
                   <Text style={[styles.smallActionText, { color: colors.ink }]}>
@@ -1640,8 +1637,8 @@ export function DualMomentCard({
                     styles.smallActionChip,
                     {
                       backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
                     },
                   ]}>
                   <Text style={[styles.smallActionText, { color: colors.accent }]}>
@@ -1663,6 +1660,8 @@ export function DualMomentCard({
                 key={emoji}
                 accessibilityRole="button"
                 accessibilityLabel={`React with ${emoji}`}
+                accessibilityState={{ selected, busy: savingReaction, disabled: savingReaction }}
+                disabled={savingReaction}
                 onPress={() => void handleToggleReaction(emoji)}
                 style={[
                   styles.reactionChip,
@@ -1718,10 +1717,10 @@ export function DualMomentCard({
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Delete comment"
-                        onPress={() => void handleDeleteComment(cmt.id)}
-                        style={{ minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ color: colors.danger, fontSize: 12, fontWeight: '700' }}>
-                          ✕
+                        onPress={() => setPendingDeleteComment(cmt.id)}
+                        style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: colors.danger, fontSize: 13, fontWeight: '600' }}>
+                          Delete
                         </Text>
                       </Pressable>
                     ) : null}
@@ -1743,15 +1742,16 @@ export function DualMomentCard({
                 styles.commentInput,
                 {
                   backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.border,
+                  borderColor: colors.controlBorder,
                   color: colors.ink,
-                  borderRadius: radii.pill,
+                  borderRadius: radii.input,
                 },
               ]}
             />
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Post comment"
+              accessibilityState={{ busy: postingComment, disabled: postingComment || !commentInput.trim() }}
               disabled={postingComment || !commentInput.trim()}
               onPress={() => void handlePostComment()}
               style={[
@@ -1761,7 +1761,7 @@ export function DualMomentCard({
                     ? colors.accent
                     : colors.surfaceElevated,
                   borderColor: colors.border,
-                  borderRadius: radii.pill,
+                  borderRadius: radii.input,
                 },
               ]}>
               <Text
@@ -1771,7 +1771,7 @@ export function DualMomentCard({
                     color: commentInput.trim() ? colors.onAccent : colors.inkMuted,
                   },
                 ]}>
-                Post
+                {postingComment ? 'Posting…' : 'Post'}
               </Text>
             </Pressable>
           </View>
@@ -1784,14 +1784,14 @@ export function DualMomentCard({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Save 3:4 photo with KeepIt watermark"
-              disabled={savingPhoto}
+              disabled={savingPhoto || mediaUnavailable}
               onPress={() => void handleSave3x4Photo()}
               style={[
                 styles.exportActionBtn,
                 {
                   backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.border,
-                  borderRadius: radii.pill,
+                  borderColor: colors.controlBorder,
+                  borderRadius: radii.input,
                   opacity: savingPhoto ? 0.6 : 1,
                 },
               ]}>
@@ -1803,13 +1803,14 @@ export function DualMomentCard({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Open 9:16 Story Share preview"
+              disabled={mediaUnavailable}
               onPress={() => setStoryModalOpen(true)}
               style={[
                 styles.exportActionBtn,
                 {
                   backgroundColor: colors.accentSoft,
                   borderColor: colors.accent,
-                  borderRadius: radii.pill,
+                  borderRadius: radii.input,
                 },
               ]}>
               <Text style={[styles.exportActionText, { color: colors.ink }]}>
@@ -1826,11 +1827,11 @@ export function DualMomentCard({
       {/* Full-Screen 9:16 Story Share Modal (Item #19) */}
       <Modal
         visible={storyModalOpen}
-        animationType="slide"
+        animationType={motionEnabled ? 'slide' : 'none'}
         transparent
-        onRequestClose={() => setStoryModalOpen(false)}>
+        onRequestClose={() => { if (!storySharing) setStoryModalOpen(false); }}>
         <View style={styles.storyModalBackdrop}>
-          <View
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.storyModalContent}
             style={[
               styles.storyModalSheet,
               {
@@ -1851,13 +1852,14 @@ export function DualMomentCard({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close Story modal"
-                onPress={() => setStoryModalOpen(false)}
+                disabled={storySharing}
+                onPress={() => { if (!storySharing) setStoryModalOpen(false); }}
                 style={[
                   styles.smallActionChip,
                   {
                     backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
+                    borderColor: colors.controlBorder,
+                    borderRadius: radii.input,
                   },
                 ]}>
                 <Text style={[styles.smallActionText, { color: colors.ink }]}>
@@ -1899,6 +1901,8 @@ export function DualMomentCard({
                     <Pressable
                       key={preset.id}
                       accessibilityRole="button"
+                      accessibilityState={{ selected: active, disabled: storySharing }}
+                      disabled={storySharing}
                       onPress={() => setStoryTheme(preset.id)}
                       style={[
                         styles.OptionPill,
@@ -1906,8 +1910,8 @@ export function DualMomentCard({
                           backgroundColor: active
                             ? colors.accent
                             : colors.surfaceElevated,
-                          borderColor: active ? colors.accent : colors.border,
-                          borderRadius: radii.pill,
+                          borderColor: active ? colors.accent : colors.controlBorder,
+                          borderRadius: radii.input,
                         },
                       ]}>
                       <Text
@@ -1928,6 +1932,15 @@ export function DualMomentCard({
               loading={storySharing}
               onPress={() => void handleShare9x16Story()}
             />
+          </ScrollView>
+        </View>
+      </Modal>
+      <Modal visible={Boolean(pendingDeleteComment || discardEdits)} transparent animationType={motionEnabled ? 'fade' : 'none'} onRequestClose={() => { setPendingDeleteComment(null); setDiscardEdits(false); }}>
+        <View style={styles.storyModalBackdrop}>
+          <View accessibilityViewIsModal style={[styles.confirmDialog, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+            <SectionHeader title={discardEdits ? 'Discard Moment edits?' : 'Delete this comment?'} subtitle={discardEdits ? 'Your unsaved changes will be lost.' : 'This cannot be undone.'} />
+            <KeepItButton label={discardEdits ? 'Discard edits' : 'Delete comment'} variant="danger" onPress={() => { if (discardEdits) { setDiscardEdits(false); setEditing(false); } else if (pendingDeleteComment) { const id = pendingDeleteComment; setPendingDeleteComment(null); void handleDeleteComment(id); } }} />
+            <KeepItButton label={discardEdits ? 'Keep editing' : 'Keep comment'} variant="secondary" onPress={() => { setPendingDeleteComment(null); setDiscardEdits(false); }} />
           </View>
         </View>
       </Modal>
@@ -1975,11 +1988,11 @@ export function LockedMomentCard({
             styles.statusPill,
             {
               backgroundColor: colors.surfaceElevated,
-              borderColor: isLate ? colors.warning : colors.border,
+              borderColor: colors.border,
               borderRadius: radii.pill,
             },
           ]}>
-          <Text style={[styles.statusPillText, { color: isLate ? colors.warning : colors.ink }]}>
+          <Text style={[styles.statusPillText, { color: colors.ink }]}>
             {partnerName} posted at {timeFormatted} · {formatLateDuration(lateBySeconds)}
           </Text>
         </View>
@@ -1998,6 +2011,7 @@ export function LockedMomentCard({
 }
 
 const styles = StyleSheet.create({
+  confirmDialog: { width: '100%', maxWidth: 520, alignSelf: 'center', padding: 20, gap: 16 },
   photoFrame: {
     width: '100%',
     aspectRatio: 0.75,
@@ -2017,9 +2031,9 @@ const styles = StyleSheet.create({
     zIndex: 4,
   },
   pipFrame: {
-    width: 102,
-    height: 136,
-    borderRadius: 16,
+    width: 80,
+    height: 107,
+    borderRadius: 10,
     borderWidth: 2.5,
     overflow: 'hidden',
     borderCurve: 'continuous',
@@ -2051,6 +2065,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 6,
     zIndex: 6,
+    maxWidth: '60%',
   },
   statusPill: {
     borderWidth: 1,
@@ -2059,8 +2074,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   statusPillText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   keepItPhotoWatermark: {
@@ -2070,6 +2085,9 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 1,
     zIndex: 6,
+    backgroundColor: 'rgba(10, 7, 8, 0.9)',
+    borderRadius: 10,
+    padding: 8,
   },
   keepItWatermarkTitle: {
     color: '#FFFFFF',
@@ -2082,11 +2100,10 @@ const styles = StyleSheet.create({
     textShadowRadius: 5,
   },
   keepItWatermarkTime: {
-    color: 'rgba(255, 255, 255, 0.92)',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: -0.2,
-    lineHeight: 14,
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 20,
     fontVariant: ['tabular-nums'],
     textShadowColor: 'rgba(0, 0, 0, 0.85)',
     textShadowOffset: { width: 0, height: 1 },
@@ -2126,47 +2143,25 @@ const styles = StyleSheet.create({
   },
   snapOverlayTitle: {
     fontSize: 18,
-    fontWeight: '800',
+    fontWeight: '600',
+    lineHeight: 24,
     textAlign: 'center',
-    letterSpacing: -0.3,
   },
   snapOverlaySub: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: 'center',
   },
   metaCard: {
-    borderWidth: 1,
-    gap: 12,
+    gap: 20,
     borderCurve: 'continuous',
   },
   metaTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  authorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  authorText: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  dailyShotBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  dailyShotBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  timestampText: {
-    fontSize: 13,
-    fontVariant: ['tabular-nums'],
+    flexWrap: 'wrap',
+    gap: 10,
   },
   attachmentChipsWrap: {
     flexDirection: 'row',
@@ -2174,7 +2169,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   attachmentChip: {
-    minHeight: 38,
+    minHeight: 44,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -2182,7 +2177,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   attachmentChipText: {
-    fontSize: 12,
+    fontSize: 15,
+    lineHeight: 22,
     fontWeight: '600',
   },
   captionRow: {
@@ -2190,7 +2186,7 @@ const styles = StyleSheet.create({
   },
   captionText: {
     fontSize: 15,
-    lineHeight: 21,
+    lineHeight: 22,
   },
   inlineButtonRow: {
     flexDirection: 'row',
@@ -2207,21 +2203,23 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   smallActionText: {
-    fontSize: 13,
+    fontSize: 15,
+    lineHeight: 22,
     fontWeight: '600',
   },
   editorPanel: {
-    borderWidth: 1,
-    padding: 14,
-    gap: 12,
+    padding: 0,
+    gap: 20,
     borderCurve: 'continuous',
   },
   editorSectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '600',
   },
   editorLabel: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 20,
     fontWeight: '600',
   },
   horizontalPillsRow: {
@@ -2238,16 +2236,18 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   optionPillText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   clearOverlaysBtn: {
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   clearOverlaysText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   emojiStickerBtn: {
     minHeight: 44,
@@ -2258,8 +2258,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emojiStickerBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   overlayInputRow: {
     flexDirection: 'row',
@@ -2274,15 +2275,15 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   captionInput: {
-    minHeight: 42,
+    minHeight: 48,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    fontSize: 14,
+    fontSize: 15,
     borderCurve: 'continuous',
   },
   editActionsRow: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 10,
   },
   deleteConfirmBox: {
@@ -2291,8 +2292,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   deleteConfirmText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   reactionRow: {
     flexDirection: 'row',
@@ -2312,26 +2314,25 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   reactionEmoji: {
-    fontSize: 14,
+    fontSize: 18,
   },
   reactionCount: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   commentsSection: {
     gap: 8,
   },
   commentBubble: {
-    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderCurve: 'continuous',
   },
   commentAuthor: {
-    fontSize: 13,
-    fontWeight: '700',
-    lineHeight: 18,
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 22,
   },
   commentBody: {
     fontWeight: '500',
@@ -2347,7 +2348,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    fontSize: 13,
+    fontSize: 15,
     borderCurve: 'continuous',
   },
   postCommentBtn: {
@@ -2359,11 +2360,12 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   postCommentBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   exportActionBar: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 8,
   },
   exportActionBtn: {
@@ -2377,8 +2379,9 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   exportActionText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   storyModalBackdrop: {
     flex: 1,
@@ -2387,19 +2390,23 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   storyModalSheet: {
-    borderWidth: 1,
-    padding: 18,
-    gap: 14,
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     maxHeight: '94%',
+  },
+  storyModalContent: {
+    padding: 20,
+    gap: 20,
   },
   storyModalTitle: {
     fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: -0.3,
+    fontWeight: '600',
+    lineHeight: 24,
   },
   storyModalSub: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    lineHeight: 20,
   },
   storyCanvasPreviewWrap: {
     alignItems: 'center',
@@ -2415,8 +2422,7 @@ const styles = StyleSheet.create({
   },
   lockedFrame: {
     width: '100%',
-    aspectRatio: 0.78,
-    borderWidth: 1,
+    minHeight: 300,
     justifyContent: 'space-between',
     position: 'relative',
     borderCurve: 'continuous',

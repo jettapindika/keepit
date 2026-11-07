@@ -458,7 +458,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   signOut: async () => {
     if (isSupabaseConfigured && supabase) {
-      await supabase.auth.signOut().catch(() => {});
+      const { error } = await supabase.auth.signOut();
+      if (error) throw new Error('Could not sign out. Check your connection and try again.');
     }
     await clearAccountSpecificCacheKeys();
     await persistSessionSlice({
@@ -473,6 +474,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       email: null,
       couple: null,
       partner: null,
+      pendingInviteCode: null,
     });
   },
 

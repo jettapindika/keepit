@@ -18,7 +18,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { useSessionStore } from '@/store/sessionStore';
+import { useAppMotion } from '@/hooks/useAppMotion';
 import { MOCHY_REVEAL_EASING, MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 
@@ -41,11 +41,7 @@ function nextCascadeDelayMs(cascade: boolean): number {
   return step * 35;
 }
 
-/**
- * Mochy-Music `RevealOnAppear` port (`RevealOnAppear.kt:139`):
- * Fades (0 -> 1) and slides up 20pt over 520ms with CubicBezier(0.2, 0, 0, 1) once per key,
- * staggering simultaneous mounts by 60ms steps.
- */
+/** First-mount feedback stays quiet and respects system and app motion settings. */
 export function RevealOnAppear({
   revealKey,
   cascade = true,
@@ -59,8 +55,7 @@ export function RevealOnAppear({
   style?: StyleProp<ViewStyle>;
   children: React.ReactNode;
 }) {
-  const motionEnabled = useSessionStore((s) => s.motionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const { enabled: motionEnabled, speed: motionSpeed } = useAppMotion();
   const alreadySeen = seenRevealKeys.has(revealKey);
 
   const progress = useSharedValue(alreadySeen || !motionEnabled ? 1 : 0.85);
@@ -93,9 +88,7 @@ export function RevealOnAppear({
   return <Animated.View style={[style, animatedStyle]}>{children}</Animated.View>;
 }
 
-/**
- * Mochy-Music `OnbCard` / `pressBounce` tappable card (`OnboardingDesign.kt:236` + `TouchFeedback.kt:115`)
- */
+/** A content surface; only actionable cards receive press feedback. */
 export function MochyCard({
   onPress,
   accessibilityLabel,
@@ -108,8 +101,7 @@ export function MochyCard({
   children: React.ReactNode;
 }) {
   const { colors, radii } = useKeepItTheme();
-  const motionEnabled = useSessionStore((s) => s.motionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const { enabled: motionEnabled, speed: motionSpeed } = useAppMotion();
   const scale = useSharedValue(1);
   const [focused, setFocused] = useState(false);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -162,6 +154,7 @@ export function MochyCard({
         },
         animatedStyle,
         style,
+        focused && { outlineColor: colors.focusRing, outlineStyle: 'solid', outlineWidth: 2, outlineOffset: 3 },
       ]}>
       {children}
     </AnimatedPressable>
@@ -173,26 +166,25 @@ interface ButtonProps {
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
   loading?: boolean;
+  loadingLabel?: string;
   disabled?: boolean;
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
 }
 
-/**
- * Mochy-Music `OnbButton` + `pressBounce` pill button (`TouchFeedback.kt:115-144`)
- */
+/** The monochrome action shape follows the approved 10px reference radius. */
 export function KeepItButton({
   label,
   onPress,
   variant = 'primary',
   loading = false,
+  loadingLabel,
   disabled = false,
   accessibilityLabel,
   style,
 }: ButtonProps) {
-  const { colors, radii } = useKeepItTheme();
-  const motionEnabled = useSessionStore((s) => s.motionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
+  const { colors, radii, type } = useKeepItTheme();
+  const { enabled: motionEnabled, speed: motionSpeed } = useAppMotion();
   const scale = useSharedValue(1);
   const [focused, setFocused] = useState(false);
   const isDisabled = disabled || loading;
@@ -203,7 +195,7 @@ export function KeepItButton({
 
   const handlePressIn = () => {
     if (isDisabled || !motionEnabled) return;
-    scale.set(withSpring(0.96, MOCHY_SPRINGS.pressIn(motionSpeed)));
+    scale.set(withTiming(0.98, mochyTiming(100, undefined, motionEnabled, motionSpeed)));
   };
 
   const handlePressOut = () => {
@@ -211,7 +203,7 @@ export function KeepItButton({
       scale.set(1);
       return;
     }
-    scale.set(withSpring(1, MOCHY_SPRINGS.pressRelease(motionSpeed)));
+    scale.set(withTiming(1, mochyTiming(120, undefined, motionEnabled, motionSpeed)));
   };
 
   const handlePress = () => {
@@ -239,7 +231,7 @@ export function KeepItButton({
   const borderColor = focused
     ? colors.ink
     : variant === 'secondary'
-      ? colors.border
+      ? colors.controlBorder
       : variant === 'danger'
         ? colors.danger
         : 'transparent';
@@ -259,21 +251,19 @@ export function KeepItButton({
         styles.buttonBase,
         {
           backgroundColor: bgByVariant,
-          borderRadius: radii.pill,
+          borderRadius: radii.input,
           borderColor,
-          borderWidth: focused ? 2 : variant === 'secondary' || variant === 'danger' ? 1 : 0,
-          opacity: isDisabled ? 0.45 : 1,
+          borderWidth: variant === 'secondary' || variant === 'danger' ? 1 : 0,
+          opacity: disabled && !loading ? 0.42 : 1,
         },
         animatedStyle,
         style,
+        focused && { outlineColor: colors.focusRing, outlineStyle: 'solid', outlineWidth: 2, outlineOffset: 3 },
       ]}>
-      {loading ? (
-        <ActivityIndicator pointerEvents="none" size="small" color={textByVariant} />
-      ) : (
-        <Text pointerEvents="none" numberOfLines={1} style={[styles.buttonText, { color: textByVariant }]}>
-          {label}
-        </Text>
-      )}
+      {loading ? <ActivityIndicator pointerEvents="none" size="small" color={textByVariant} /> : null}
+      <Text pointerEvents="none" style={[styles.buttonText, { color: textByVariant, fontFamily: type.fontSans }]}>
+        {loading ? (loadingLabel ?? `${label}…`) : label}
+      </Text>
     </AnimatedPressable>
   );
 }
@@ -296,6 +286,7 @@ export function InlineNotice({
   return (
     <View
       accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
       style={[
         styles.notice,
         {
@@ -375,7 +366,7 @@ export function SkeletonBlock({
       style={[
         styles.skeletonBase,
         {
-          height,
+          minHeight: height,
           backgroundColor: colors.surface,
           borderColor: colors.border,
           borderRadius: borderRadius ?? radii.group,
@@ -394,6 +385,7 @@ export function SkeletonBlock({
           { backgroundColor: colors.surfaceElevated, borderRadius: radii.pill },
         ]}
       />
+      <Text style={[styles.loadingText, { color: colors.inkMuted }]}>{label}</Text>
     </View>
   );
 }
@@ -404,18 +396,22 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   buttonBase: {
-    minHeight: 50,
-    paddingHorizontal: 22,
+    minHeight: 54,
+    paddingHorizontal: 20,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
+    gap: 10,
     borderCurve: 'continuous',
   },
   buttonText: {
     fontSize: 15,
     fontWeight: '700',
-    letterSpacing: -0.35,
+    letterSpacing: 0,
+    lineHeight: 22,
+    textAlign: 'center',
+    flexShrink: 1,
   },
   notice: {
     borderWidth: 1,
@@ -445,4 +441,5 @@ const styles = StyleSheet.create({
     width: '36%',
     height: 11,
   },
+  loadingText: { fontSize: 14, lineHeight: 20 },
 });

@@ -3,19 +3,19 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -34,10 +34,10 @@ import {
 } from '@/api/social';
 import { DualMomentCard } from '@/components/moment/MomentCards';
 import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
+import { AppPressable, AppSwitch as Switch, AppTextInput, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
-
 const BANNER_COLOR_SWATCHES = [
   '#1C1C1E',
   '#282830',
@@ -116,6 +116,16 @@ export default function ProfileScreen() {
   const [draftDumpMode, setDraftDumpMode] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [editConfirmOpen, setEditConfirmOpen] = useState(false);
+  const [editInitialSnapshot, setEditInitialSnapshot] = useState('');
+  const [privateModeSaving, setPrivateModeSaving] = useState(false);
+  const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   // Add Friend state
   const [friendInput, setFriendInput] = useState('');
@@ -172,8 +182,7 @@ export default function ProfileScreen() {
   const displayName = user?.display_name ?? 'KeepIt Creator';
   const username =
     user?.username || buildDefaultUsername(displayName, userId);
-  const friendCode =
-    user?.friend_code || buildFriendCode(userId, displayName) || 'KPT-204';
+  const friendCode = user?.friend_code || buildFriendCode(userId, displayName);
   const bannerColor = user?.banner_color ?? '#1C1C1E';
   const pronouns = user?.pronouns ?? '';
   const bio = user?.bio ?? '';
@@ -200,31 +209,65 @@ export default function ProfileScreen() {
 
   const handleCopyFriendCode = async () => {
     triggerHaptic();
-    await Clipboard.setStringAsync(friendCode).catch(() => {});
-    setCopiedCode(true);
-    clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => {
-      setCopiedCode(false);
-    }, 2000) as unknown as number;
+    try {
+      await Clipboard.setStringAsync(friendCode);
+      setCopiedCode(true);
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedCode(false), 2000) as unknown as number;
+    } catch {
+      setProfileError('Could not copy the Friend Code. Try selecting it manually.');
+    }
   };
 
   const openEditProfileModal = () => {
     triggerHaptic();
     setEditError(null);
-    setDraftName(user?.display_name ?? '');
-    setDraftUsername(username);
-    setDraftBio(user?.bio ?? '');
-    setDraftPronouns(user?.pronouns ?? '');
-    setDraftMoodSong(user?.mood_song ?? '');
-    setDraftBannerColor(user?.banner_color ?? '#1C1C1E');
-    setDraftWebsite(user?.website ?? '');
-    setDraftAvatarUri(user?.avatar_path ?? '');
-    setDraftIsPrivate(Boolean(user?.is_private));
-    setDraftDumpMode(Boolean(user?.dump_mode));
+    const initial = {
+      name: user?.display_name ?? '', username, bio: user?.bio ?? '', pronouns: user?.pronouns ?? '',
+      moodSong: user?.mood_song ?? '', bannerColor: user?.banner_color ?? '#1C1C1E', website: user?.website ?? '',
+      avatarUri: user?.avatar_path ?? '', isPrivate: Boolean(user?.is_private), dumpMode: Boolean(user?.dump_mode),
+    };
+    setEditInitialSnapshot(JSON.stringify(initial));
+    setDraftName(initial.name);
+    setDraftUsername(initial.username);
+    setDraftBio(initial.bio);
+    setDraftPronouns(initial.pronouns);
+    setDraftMoodSong(initial.moodSong);
+    setDraftBannerColor(initial.bannerColor);
+    setDraftWebsite(initial.website);
+    setDraftAvatarUri(initial.avatarUri);
+    setDraftIsPrivate(initial.isPrivate);
+    setDraftDumpMode(initial.dumpMode);
     setEditModalOpen(true);
+  };
+  const draftSnapshot = JSON.stringify({ name: draftName, username: draftUsername, bio: draftBio, pronouns: draftPronouns, moodSong: draftMoodSong, bannerColor: draftBannerColor, website: draftWebsite, avatarUri: draftAvatarUri, isPrivate: draftIsPrivate, dumpMode: draftDumpMode });
+  const editDirty = Boolean(editInitialSnapshot && draftSnapshot !== editInitialSnapshot);
+  const closeEditProfile = () => {
+    if (savingProfile) return;
+    if (!editDirty) {
+      setEditModalOpen(false);
+      return;
+    }
+    setEditConfirmOpen(true);
+  };
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined' || !editModalOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || savingProfile) return;
+      event.preventDefault();
+      if (editDirty) setEditConfirmOpen(true);
+      else setEditModalOpen(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [editModalOpen, editDirty, savingProfile]);
+  const discardEditProfile = () => {
+    setEditConfirmOpen(false);
+    setEditModalOpen(false);
   };
 
   const handleSaveProfile = async () => {
+    if (savingProfile) return;
     setEditError(null);
     setSavingProfile(true);
     triggerHaptic();
@@ -243,7 +286,7 @@ export default function ProfileScreen() {
         dumpMode: draftDumpMode,
       });
       setEditModalOpen(false);
-      showTemporaryFeedback('Profile updated! Your new aesthetic is live.');
+      showTemporaryFeedback('Profile changes saved.');
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Could not update profile.');
     } finally {
@@ -305,49 +348,69 @@ export default function ProfileScreen() {
   };
 
   const handleRemoveFriend = async (friendRecordId: string, name: string) => {
-    setProfileError(null);
-    triggerHaptic();
-    try {
-      await removeFriend({
-        userId,
-        friendRecordId,
-      });
-      showTemporaryFeedback(`Removed ${name} from your Friends Circle.`);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
-        queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
-      ]);
-    } catch (err) {
-      setProfileError(err instanceof Error ? err.message : 'Could not remove friend.');
+    const proceed = async () => {
+      setProfileError(null);
+      triggerHaptic();
+      try {
+        await removeFriend({ userId, friendRecordId });
+        showTemporaryFeedback(`Removed ${name} from your Friends Circle.`);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
+          queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
+        ]);
+      } catch (err) {
+        setProfileError(err instanceof Error ? err.message : 'Could not remove friend.');
+      }
+    };
+    if (Platform.OS === 'web') {
+      if (typeof globalThis.confirm === 'function' && globalThis.confirm(`Remove ${name}?\nThis removes the friend from your circle.`)) {
+        await proceed();
+      }
+      return;
     }
+    Alert.alert(`Remove ${name}?`, 'This removes the friend from your circle.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => void proceed() },
+    ]);
   };
 
   const handleOpenWebsite = (rawUrl: string) => {
     const cleaned = rawUrl.trim();
     if (!cleaned) return;
     const target = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
-    void Linking.openURL(target).catch(() => {});
+    void Linking.openURL(target).catch(() => setProfileError('Could not open that link. Check the URL and try again.'));
   };
 
   const monogram = displayName.trim().slice(0, 1).toUpperCase() || 'K';
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}> 
+      <View style={[styles.pageHeaderWrap, { paddingHorizontal: spacing.xl }]}> 
+        <PageHeader
+          title="Profile"
+          subtitle="Your identity, Moments, and Friends Circle"
+          action={
+            <AppPressable
+              accessibilityRole="button"
+              accessibilityLabel="Open settings"
+              onPress={() => router.navigate('/(tabs)/settings')}
+              style={[styles.pageHeaderAction, { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radii.input }]}
+            >
+              <Text style={{ color: colors.ink, fontWeight: '700', fontSize: 13 }}>Settings</Text>
+            </AppPressable>
+          }
+        />
+      </View>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{
-          paddingBottom: 148,
-        }}>
-        {/* Top Banner & Quick Action Bar */}
+        contentContainerStyle={{ paddingBottom: keyboardVisible ? Math.max(20, insets.bottom) : 148, maxWidth: 640, width: '100%', alignSelf: 'center' }}>
+        <View style={styles.contentWrap}>
         <RevealOnAppear revealKey="profile-banner">
           <View style={[styles.bannerBlock, { backgroundColor: bannerColor }]}>
             <View style={[styles.bannerOverlayRow, { paddingHorizontal: spacing.xl }]}>
-              <View style={styles.brandTagPill}>
-                <Text style={styles.brandTagText}>#KeepIt Social</Text>
-              </View>
 
               <View style={styles.topQuickButtons}>
-                <Pressable
+                <AppPressable
                   accessibilityRole="button"
                   accessibilityLabel="Open Memories Calendar"
                   onPress={() => {
@@ -356,18 +419,8 @@ export default function ProfileScreen() {
                   }}
                   style={styles.bannerQuickBtn}>
                   <Text pointerEvents="none" style={styles.bannerQuickBtnText}>Memories</Text>
-                </Pressable>
+                </AppPressable>
 
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Open Settings"
-                  onPress={() => {
-                    triggerHaptic();
-                    router.navigate('/(tabs)/settings');
-                  }}
-                  style={styles.bannerQuickBtn}>
-                  <Text pointerEvents="none" style={styles.bannerQuickBtnText}>Settings</Text>
-                </Pressable>
               </View>
             </View>
           </View>
@@ -376,7 +429,7 @@ export default function ProfileScreen() {
         {/* Avatar + Identity Card */}
         <View style={{ paddingHorizontal: spacing.xl }}>
           <View style={styles.avatarHeaderRow}>
-            <Pressable
+            <AppPressable
               accessibilityRole="button"
               accessibilityLabel="Edit profile avatar"
               onPress={openEditProfileModal}
@@ -408,10 +461,10 @@ export default function ProfileScreen() {
                 ]}>
                 <Text style={[styles.avatarEmojiBadgeText, { color: colors.ink }]}>+</Text>
               </View>
-            </Pressable>
+            </AppPressable>
 
             <View style={styles.headerEditActions}>
-              <Pressable
+              <AppPressable
                 accessibilityRole="button"
                 accessibilityLabel={`Copy Friend Code ${friendCode}`}
                 onPress={() => void handleCopyFriendCode()}
@@ -427,9 +480,9 @@ export default function ProfileScreen() {
                 <Text pointerEvents="none" style={[styles.friendCodeValue, { color: colors.ink }]}>
                   {copiedCode ? 'Copied ✓' : friendCode}
                 </Text>
-              </Pressable>
+              </AppPressable>
 
-              <Pressable
+              <AppPressable
                 accessibilityRole="button"
                 accessibilityLabel="Edit Profile"
                 onPress={openEditProfileModal}
@@ -437,13 +490,13 @@ export default function ProfileScreen() {
                   styles.editProfilePill,
                   {
                     backgroundColor: colors.ink,
-                    borderRadius: radii.pill,
+                    borderRadius: 10,
                   },
                 ]}>
                 <Text pointerEvents="none" style={[styles.editProfilePillText, { color: colors.canvas }]}>
                   Edit Profile
                 </Text>
-              </Pressable>
+              </AppPressable>
             </View>
           </View>
 
@@ -521,7 +574,7 @@ export default function ProfileScreen() {
               ) : null}
 
               {website ? (
-                <Pressable
+                <AppPressable
                   accessibilityRole="link"
                   accessibilityLabel={`Open website ${website}`}
                   onPress={() => handleOpenWebsite(website)}
@@ -536,7 +589,7 @@ export default function ProfileScreen() {
                   <Text style={[styles.metaBadgeText, { color: colors.ink }]}>
                     {website.replace(/^https?:\/\//i, '')}
                   </Text>
-                </Pressable>
+                </AppPressable>
               ) : null}
             </View>
           </View>
@@ -576,7 +629,7 @@ export default function ProfileScreen() {
 
               <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
 
-              <Pressable
+              <AppPressable
                 accessibilityRole="button"
                 accessibilityLabel={
                   isPartnerPaired ? `Paired with ${partnerName}` : 'Pair with a Partner (Optional)'
@@ -594,7 +647,7 @@ export default function ProfileScreen() {
                 <Text numberOfLines={1} style={[styles.statLabel, { color: colors.inkMuted }]}>
                   {isPartnerPaired ? `Paired with ${partnerName}` : 'Solo / Optional'}
                 </Text>
-              </Pressable>
+                </AppPressable>
             </View>
           </RevealOnAppear>
 
@@ -618,8 +671,8 @@ export default function ProfileScreen() {
               ]}>
               <View style={{ flex: 1, gap: 2 }}>
                 <Text style={{ color: colors.ink, fontSize: 14, fontWeight: '700' }}>
-                  {isPrivateAccount
-                    ? 'Private Dump Account Active'
+                  {privateModeSaving ? 'Updating privacy…' : isPrivateAccount
+                    ? isDumpAccount ? 'Private Dump Account Active' : 'Private Profile Active'
                     : 'Public / Circle Account'}
                 </Text>
                 <Text style={{ color: colors.inkMuted, fontSize: 12 }}>
@@ -629,24 +682,22 @@ export default function ProfileScreen() {
                 </Text>
               </View>
               <Switch
-                accessibilityLabel="Toggle Private Dump Account mode"
+                accessibilityLabel="Toggle Private Profile mode"
                 value={isPrivateAccount}
+                disabled={privateModeSaving}
                 onValueChange={(nextVal) => {
                   triggerHaptic();
+                  setPrivateModeSaving(true);
                   void updateProfile({
                     displayName,
                     isPrivate: nextVal,
                     dumpMode: nextVal ? true : isDumpAccount,
                   }).then(() => {
-                    showTemporaryFeedback(
-                      nextVal
-                        ? 'Switched to Private Dump Account mode.'
-                        : 'Profile is now visible to your circle.'
-                    );
-                  });
+                    showTemporaryFeedback(nextVal ? 'Private Profile enabled.' : 'Profile is now visible to your circle.');
+                  }).catch((err) => {
+                    setProfileError(err instanceof Error ? err.message : 'Could not update privacy settings.');
+                  }).finally(() => setPrivateModeSaving(false));
                 }}
-                trackColor={{ false: colors.border, true: colors.warning }}
-                thumbColor={colors.ink}
               />
             </View>
           </RevealOnAppear>
@@ -674,7 +725,7 @@ export default function ProfileScreen() {
                 marginTop: spacing.lg,
               },
             ]}>
-            <Pressable
+            <AppPressable
               accessibilityRole="tab"
               accessibilityState={{ selected: subTab === 'posts' }}
               accessibilityLabel="My Posts (CRUD)"
@@ -697,9 +748,9 @@ export default function ProfileScreen() {
                 ]}>
                 My Posts ({myPosts.length})
               </Text>
-            </Pressable>
+            </AppPressable>
 
-            <Pressable
+            <AppPressable
               accessibilityRole="tab"
               accessibilityState={{ selected: subTab === 'friends' }}
               accessibilityLabel="Friends Circle"
@@ -722,7 +773,7 @@ export default function ProfileScreen() {
                 ]}>
                 Friends Circle ({friendsList.length + (isPartnerPaired ? 1 : 0)})
               </Text>
-            </Pressable>
+            </AppPressable>
           </View>
 
           {/* SUB-TAB 1: MY POSTS (CRUD) */}
@@ -738,19 +789,19 @@ export default function ProfileScreen() {
                   </Text>
                 </View>
 
-                <Pressable
+                <AppPressable
                   accessibilityRole="button"
                   accessibilityLabel="Create New Moment Post"
                   onPress={handleOpenCameraNewPost}
                   style={[
                     styles.newPostButton,
                     {
-                      backgroundColor: bannerColor,
-                      borderRadius: radii.pill,
+                      backgroundColor: colors.ink,
+                      borderRadius: 10,
                     },
                   ]}>
-                  <Text pointerEvents="none" style={styles.newPostButtonText}>+ New Post</Text>
-                </Pressable>
+                  <Text pointerEvents="none" style={[styles.newPostButtonText, { color: colors.canvas }]}>+ New Post</Text>
+                </AppPressable>
               </View>
 
               {userPostsQuery.isError ? (
@@ -861,7 +912,7 @@ export default function ProfileScreen() {
                   {(['bestie', 'friend'] as const).map((tier) => {
                     const active = friendRel === tier;
                     return (
-                      <Pressable
+                      <AppPressable
                         key={tier}
                         accessibilityRole="radio"
                         accessibilityState={{ selected: active }}
@@ -885,13 +936,13 @@ export default function ProfileScreen() {
                           ]}>
                           {tier === 'bestie' ? 'Bestie' : 'Friend'}
                         </Text>
-                      </Pressable>
+                      </AppPressable>
                     );
                   })}
                 </View>
 
                 <View style={styles.addFriendInputRow}>
-                  <TextInput
+                  <AppTextInput
                     accessibilityLabel="Friend @username, name, or Friend Code"
                     value={friendInput}
                     onChangeText={setFriendInput}
@@ -911,7 +962,7 @@ export default function ProfileScreen() {
                     ]}
                   />
 
-                  <Pressable
+                  <AppPressable
                     accessibilityRole="button"
                     accessibilityLabel="Add Friend"
                     disabled={!friendInput.trim() || addingFriend}
@@ -927,7 +978,7 @@ export default function ProfileScreen() {
                     <Text style={styles.addFriendSubmitText}>
                       {addingFriend ? 'Adding…' : '+ Add'}
                     </Text>
-                  </Pressable>
+                  </AppPressable>
                 </View>
               </View>
 
@@ -996,7 +1047,7 @@ export default function ProfileScreen() {
                 </View>
 
                 <View style={styles.friendActionRow}>
-                  <Pressable
+                  <AppPressable
                     accessibilityRole="button"
                     accessibilityLabel={`Message ${partnerName}`}
                     onPress={() => {
@@ -1019,7 +1070,7 @@ export default function ProfileScreen() {
                     <Text style={[styles.friendMsgBtnText, { color: colors.canvas }]}>
                       Message
                     </Text>
-                  </Pressable>
+                  </AppPressable>
                 </View>
               </View>
               ) : null}
@@ -1121,7 +1172,7 @@ export default function ProfileScreen() {
                     </View>
 
                     <View style={styles.friendActionRow}>
-                      <Pressable
+                      <AppPressable
                         accessibilityRole="button"
                         accessibilityLabel={`Message ${fName}`}
                         onPress={() => {
@@ -1144,9 +1195,9 @@ export default function ProfileScreen() {
                         <Text style={[styles.friendMsgBtnText, { color: colors.canvas }]}>
                           Message
                         </Text>
-                      </Pressable>
+                      </AppPressable>
 
-                      <Pressable
+                      <AppPressable
                         accessibilityRole="button"
                         accessibilityLabel={`Remove ${fName} from friends`}
                         onPress={() => void handleRemoveFriend(fr.id, fName)}
@@ -1161,7 +1212,7 @@ export default function ProfileScreen() {
                         <Text style={[styles.friendRemoveBtnText, { color: colors.danger }]}>
                           Remove
                         </Text>
-                      </Pressable>
+                      </AppPressable>
                     </View>
                   </View>
                 );
@@ -1169,15 +1220,20 @@ export default function ProfileScreen() {
             </View>
           )}
         </View>
+        </View>
       </ScrollView>
 
       {/* Edit Profile Modal / Drawer */}
       <Modal
         visible={editModalOpen}
         animationType="slide"
-        transparent={false}
-        onRequestClose={() => setEditModalOpen(false)}>
-        <SafeAreaView style={[styles.modalSafe, { backgroundColor: colors.sheetSurface }]}>
+        transparent
+        onRequestClose={closeEditProfile}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={insets.top}>
+          <SafeAreaView style={[styles.modalSheet, { backgroundColor: colors.sheetSurface, borderColor: colors.controlBorder }]}>
           <View
             style={[
               styles.modalHeader,
@@ -1187,16 +1243,17 @@ export default function ProfileScreen() {
                 paddingVertical: spacing.md,
               },
             ]}>
-            <Pressable
+            <AppPressable
               accessibilityRole="button"
               accessibilityLabel="Cancel editing profile"
-              onPress={() => setEditModalOpen(false)}>
-              <Text style={[styles.modalCancelText, { color: colors.inkMuted }]}>Cancel</Text>
-            </Pressable>
+              disabled={savingProfile}
+              onPress={closeEditProfile}>
+              <Text style={[styles.modalCancelText, { color: colors.inkMuted }]}>{savingProfile ? 'Saving…' : 'Cancel'}</Text>
+            </AppPressable>
 
-            <Text style={[styles.modalTitle, { color: colors.ink }]}>Edit Social Profile</Text>
+            <Text numberOfLines={1} style={[styles.modalTitle, { color: colors.ink }]}>Edit profile</Text>
 
-            <Pressable
+            <AppPressable
               accessibilityRole="button"
               accessibilityLabel="Save profile changes"
               disabled={savingProfile}
@@ -1204,14 +1261,30 @@ export default function ProfileScreen() {
               <Text style={[styles.modalSaveText, { color: colors.ink }]}>
                 {savingProfile ? 'Saving…' : 'Save'}
               </Text>
-            </Pressable>
+            </AppPressable>
           </View>
+          {editConfirmOpen ? (
+            <View style={[styles.editConfirm, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}> 
+              <Text style={{ color: colors.ink, fontSize: 14, lineHeight: 20 }}>Discard unsaved profile changes?</Text>
+              <View style={styles.editConfirmActions}>
+                <AppPressable accessibilityRole="button" accessibilityLabel="Keep editing profile" onPress={() => setEditConfirmOpen(false)} style={[styles.confirmButton, { borderColor: colors.controlBorder, backgroundColor: colors.surface }]}>
+                  <Text style={{ color: colors.ink, fontWeight: '700' }}>Keep editing</Text>
+                </AppPressable>
+                <AppPressable accessibilityRole="button" accessibilityLabel="Discard profile changes" onPress={discardEditProfile} style={[styles.confirmButton, { borderColor: colors.danger, backgroundColor: colors.dangerSoft }]}> 
+                  <Text style={{ color: colors.danger, fontWeight: '700' }}>Discard</Text>
+                </AppPressable>
+              </View>
+            </View>
+          ) : null}
 
           <ScrollView
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
+            style={{ flexShrink: 1 }}
             contentContainerStyle={{
               paddingHorizontal: spacing.xl,
               paddingTop: spacing.lg,
-              paddingBottom: 60,
+              paddingBottom: Math.max(32, insets.bottom),
               gap: spacing.lg,
             }}>
             {editError ? <InlineNotice message={editError} tone="error" /> : null}
@@ -1223,7 +1296,7 @@ export default function ProfileScreen() {
                 {BANNER_COLOR_SWATCHES.map((hex) => {
                   const selected = draftBannerColor.toUpperCase() === hex.toUpperCase();
                   return (
-                    <Pressable
+                    <AppPressable
                       key={hex}
                       accessibilityRole="radio"
                       accessibilityState={{ selected }}
@@ -1240,7 +1313,7 @@ export default function ProfileScreen() {
                         },
                       ]}>
                       {selected ? <Text style={styles.swatchCheck}>✓</Text> : null}
-                    </Pressable>
+                    </AppPressable>
                   );
                 })}
               </View>
@@ -1255,7 +1328,7 @@ export default function ProfileScreen() {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
-                <Pressable
+                <AppPressable
                   accessibilityRole="button"
                   accessibilityLabel="Use Monogram Avatar"
                   onPress={() => {
@@ -1277,12 +1350,12 @@ export default function ProfileScreen() {
                     ]}>
                     Monogram
                   </Text>
-                </Pressable>
+                </AppPressable>
 
                 {AVATAR_PRESETS.map((preset) => {
                   const selected = draftAvatarUri === preset.uri;
                   return (
-                    <Pressable
+                    <AppPressable
                       key={preset.id}
                       accessibilityRole="button"
                       accessibilityLabel={`Select avatar preset ${preset.label}`}
@@ -1310,12 +1383,12 @@ export default function ProfileScreen() {
                         ]}>
                         {preset.label}
                       </Text>
-                    </Pressable>
+                    </AppPressable>
                   );
                 })}
               </ScrollView>
 
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Custom Avatar Image URI"
                 value={draftAvatarUri}
                 onChangeText={setDraftAvatarUri}
@@ -1326,7 +1399,7 @@ export default function ProfileScreen() {
                   styles.modalInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1337,7 +1410,7 @@ export default function ProfileScreen() {
             {/* Display Name */}
             <View style={{ gap: spacing.xs }}>
               <Text style={[styles.fieldLabel, { color: colors.ink }]}>Display Name</Text>
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Display Name"
                 value={draftName}
                 onChangeText={setDraftName}
@@ -1348,7 +1421,7 @@ export default function ProfileScreen() {
                   styles.modalInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1359,7 +1432,7 @@ export default function ProfileScreen() {
             {/* @username */}
             <View style={{ gap: spacing.xs }}>
               <Text style={[styles.fieldLabel, { color: colors.ink }]}>@username Handle</Text>
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Username handle"
                 value={draftUsername}
                 onChangeText={setDraftUsername}
@@ -1371,7 +1444,7 @@ export default function ProfileScreen() {
                   styles.modalInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1387,7 +1460,7 @@ export default function ProfileScreen() {
                   {draftBio.length}/140
                 </Text>
               </View>
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Profile bio"
                 value={draftBio}
                 onChangeText={setDraftBio}
@@ -1400,7 +1473,7 @@ export default function ProfileScreen() {
                   styles.bioTextarea,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1415,7 +1488,7 @@ export default function ProfileScreen() {
                 {PRONOUN_PRESETS.map((p) => {
                   const selected = draftPronouns === p;
                   return (
-                    <Pressable
+                    <AppPressable
                       key={p}
                       accessibilityRole="button"
                       accessibilityLabel={`Pronouns ${p}`}
@@ -1438,11 +1511,11 @@ export default function ProfileScreen() {
                         ]}>
                         {p}
                       </Text>
-                    </Pressable>
+                    </AppPressable>
                   );
                 })}
               </View>
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Custom Pronouns"
                 value={draftPronouns}
                 onChangeText={setDraftPronouns}
@@ -1454,7 +1527,7 @@ export default function ProfileScreen() {
                   styles.modalInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1475,7 +1548,7 @@ export default function ProfileScreen() {
                   const label = `${trk.title} · ${trk.artist}`;
                   const selected = draftMoodSong === label || draftMoodSong === trk.title;
                   return (
-                    <Pressable
+                    <AppPressable
                       key={trk.id}
                       accessibilityRole="button"
                       accessibilityLabel={`Pick mood song ${label}`}
@@ -1498,11 +1571,11 @@ export default function ProfileScreen() {
                         ]}>
                         {trk.title} · {trk.artist}
                       </Text>
-                    </Pressable>
+                    </AppPressable>
                   );
                 })}
               </ScrollView>
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Custom Mood Song"
                 value={draftMoodSong}
                 onChangeText={setDraftMoodSong}
@@ -1513,7 +1586,7 @@ export default function ProfileScreen() {
                   styles.modalInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1524,7 +1597,7 @@ export default function ProfileScreen() {
             {/* Website Link */}
             <View style={{ gap: spacing.xs }}>
               <Text style={[styles.fieldLabel, { color: colors.ink }]}>Website / Social Link</Text>
-              <TextInput
+              <AppTextInput
                 accessibilityLabel="Website link"
                 value={draftWebsite}
                 onChangeText={setDraftWebsite}
@@ -1536,7 +1609,7 @@ export default function ProfileScreen() {
                   styles.modalInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
                     borderRadius: radii.input,
                   },
@@ -1573,8 +1646,6 @@ export default function ProfileScreen() {
                   accessibilityLabel="Private profile toggle"
                   value={draftIsPrivate}
                   onValueChange={setDraftIsPrivate}
-                  trackColor={{ false: colors.border, true: colors.warning }}
-                  thumbColor={colors.ink}
                 />
               </View>
 
@@ -1597,8 +1668,6 @@ export default function ProfileScreen() {
                   accessibilityLabel="Dump account mode toggle"
                   value={draftDumpMode}
                   onValueChange={setDraftDumpMode}
-                  trackColor={{ false: colors.border, true: colors.accent }}
-                  thumbColor={colors.ink}
                 />
               </View>
             </View>
@@ -1608,13 +1677,67 @@ export default function ProfileScreen() {
               onPress={() => void handleSaveProfile()}
             />
           </ScrollView>
-        </SafeAreaView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  pageHeaderWrap: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  contentWrap: {
+    width: '100%',
+  },
+  pageHeaderAction: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  editConfirm: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    padding: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+  },
+  editConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  confirmButton: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 10,
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.42)',
+  },
+  modalSheet: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '94%',
+    height: '94%',
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: 22,
+    overflow: 'hidden',
+  },
   safe: {
     flex: 1,
   },
@@ -1706,10 +1829,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   headerEditActions: {
+    flex: 1,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: 8,
     paddingBottom: 4,
+    minWidth: 0,
   },
   friendCodePill: {
     minHeight: 44,
@@ -1736,10 +1863,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 10,
   },
   editProfilePillText: {
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
     letterSpacing: -0.2,
   },
   nameAndPronounsRow: {
@@ -1749,9 +1878,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   displayNameText: {
-    fontSize: 25,
-    fontWeight: '800',
-    letterSpacing: -0.6,
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '600',
+    letterSpacing: -0.3,
   },
   pronounsPill: {
     borderWidth: 1,
@@ -1844,12 +1974,14 @@ const styles = StyleSheet.create({
   },
   sectionHeading: {
     fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: -0.4,
+    lineHeight: 24,
+    fontWeight: '600',
+    letterSpacing: -0.2,
   },
   sectionSub: {
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '400',
   },
   newPostButton: {
     minHeight: 44,
@@ -1860,8 +1992,9 @@ const styles = StyleSheet.create({
   },
   newPostButtonText: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
     letterSpacing: -0.2,
   },
   emptyFeedCard: {
@@ -2025,9 +2158,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    letterSpacing: -0.3,
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'center',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '600',
+    letterSpacing: -0.2,
   },
   modalSaveText: {
     fontSize: 15,

@@ -175,14 +175,7 @@ async function findLatestSandboxMomentCoords(
       };
     }
 
-    // Simulator Moments captured without hardware GPS still represent an intentional Moment check-in
-    const latest = myMoments[0];
-    return {
-      lat: FALLBACK_LIVE_COORDS.lat,
-      lng: FALLBACK_LIVE_COORDS.lng,
-      postedAt: latest.posted_at,
-      placeName: latest.location_label ?? FALLBACK_LIVE_COORDS.placeName,
-    };
+    return null;
   } catch {
     return null;
   }
@@ -294,17 +287,7 @@ export async function fetchCoupleLocations(params: {
           location_updated_at: null,
           mode_changed_at: nowIso,
         };
-        const hydratedMine: LocationShareRecord =
-          rawMine.mode !== 'ghost' && (rawMine.lat === null || rawMine.lng === null)
-            ? {
-                ...rawMine,
-                lat: FALLBACK_LIVE_COORDS.lat,
-                lng: FALLBACK_LIVE_COORDS.lng,
-                accuracy_m: rawMine.accuracy_m ?? FALLBACK_LIVE_COORDS.accuracyM,
-                place_name: rawMine.place_name ?? FALLBACK_LIVE_COORDS.placeName,
-                location_updated_at: rawMine.location_updated_at ?? nowIso,
-              }
-            : rawMine;
+        const hydratedMine: LocationShareRecord = rawMine;
 
         const isPaired = Boolean(
           !params.coupleId.startsWith('solo_') && sessionState.partner?.id
@@ -323,17 +306,7 @@ export async function fetchCoupleLocations(params: {
               location_updated_at: null,
               mode_changed_at: nowIso,
             });
-        const hydratedPartner: LocationShareRecord | null =
-          rawPartner && rawPartner.mode !== 'ghost' && (rawPartner.lat === null || rawPartner.lng === null)
-            ? {
-                ...rawPartner,
-                lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
-                lng: DEFAULT_PARTNER_LIVE_COORDS.lng,
-                accuracy_m: rawPartner.accuracy_m ?? DEFAULT_PARTNER_LIVE_COORDS.accuracyM,
-                place_name: rawPartner.place_name ?? DEFAULT_PARTNER_LIVE_COORDS.placeName,
-                location_updated_at: rawPartner.location_updated_at ?? nowIso,
-              }
-            : rawPartner;
+        const hydratedPartner: LocationShareRecord | null = rawPartner;
         return {
           mine: redactGhostShare(hydratedMine),
           partner: redactGhostShare(hydratedPartner),
@@ -342,7 +315,7 @@ export async function fetchCoupleLocations(params: {
         };
       }
     } catch {
-      // Fall through to local + default live circle coordinates
+      // Preserve offline cached shares without inventing missing coordinates.
     }
   }
 
@@ -363,17 +336,6 @@ export async function fetchCoupleLocations(params: {
       place_name: null,
       location_updated_at: null,
       mode_changed_at: nowIso,
-    };
-    mutated = true;
-  } else if (existingMine.mode !== 'ghost' && (existingMine.lat === null || existingMine.lng === null)) {
-    locationsMap[myKey] = {
-      ...existingMine,
-      display_name: existingMine.display_name ?? myDisplayName,
-      lat: FALLBACK_LIVE_COORDS.lat,
-      lng: FALLBACK_LIVE_COORDS.lng,
-      accuracy_m: existingMine.accuracy_m ?? FALLBACK_LIVE_COORDS.accuracyM,
-      place_name: existingMine.place_name ?? FALLBACK_LIVE_COORDS.placeName,
-      location_updated_at: existingMine.location_updated_at ?? nowIso,
     };
     mutated = true;
   }
@@ -401,20 +363,6 @@ export async function fetchCoupleLocations(params: {
         place_name: null,
         location_updated_at: null,
         mode_changed_at: nowIso,
-      };
-      mutated = true;
-    } else if (
-      existingPartner.mode !== 'ghost' &&
-      (existingPartner.lat === null || existingPartner.lng === null)
-    ) {
-      locationsMap[partnerKey] = {
-        ...existingPartner,
-        display_name: existingPartner.display_name ?? sessionPartnerName,
-        lat: DEFAULT_PARTNER_LIVE_COORDS.lat,
-        lng: DEFAULT_PARTNER_LIVE_COORDS.lng,
-        accuracy_m: existingPartner.accuracy_m ?? DEFAULT_PARTNER_LIVE_COORDS.accuracyM,
-        place_name: existingPartner.place_name ?? DEFAULT_PARTNER_LIVE_COORDS.placeName,
-        location_updated_at: existingPartner.location_updated_at ?? nowIso,
       };
       mutated = true;
     }
@@ -457,14 +405,13 @@ export async function updateMyLocationShare(params: {
       coupleId: params.coupleId,
       userId: params.userId,
     });
-    const previousMode: LocationMode = currentBundle.mine?.mode ?? 'live';
+    const previousMode: LocationMode = currentBundle.mine?.mode ?? 'ghost';
 
     const { error } = await supabase.rpc('update_my_location_share', {
       p_mode: params.mode,
-      p_lat: params.mode === 'ghost' ? null : (params.lat ?? FALLBACK_LIVE_COORDS.lat),
-      p_lng: params.mode === 'ghost' ? null : (params.lng ?? FALLBACK_LIVE_COORDS.lng),
-      p_accuracy_m:
-        params.mode === 'ghost' ? null : (params.accuracyM ?? FALLBACK_LIVE_COORDS.accuracyM),
+      p_lat: params.mode === 'ghost' ? null : (params.lat ?? null),
+      p_lng: params.mode === 'ghost' ? null : (params.lng ?? null),
+      p_accuracy_m: params.mode === 'ghost' ? null : (params.accuracyM ?? null),
     });
 
     if (!error) {
@@ -479,7 +426,7 @@ export async function updateMyLocationShare(params: {
             place_name:
               params.mode === 'ghost'
                 ? null
-                : (params.placeName ?? updatedBundle.mine.place_name ?? FALLBACK_LIVE_COORDS.placeName),
+                : (params.placeName ?? updatedBundle.mine.place_name ?? null),
           }
         : null;
 
@@ -513,7 +460,7 @@ export async function updateMyLocationShare(params: {
   const nowIso = new Date().toISOString();
   const myKey = `${params.coupleId}:${params.userId}`;
   const existing = locationsMap[myKey];
-  const previousMode: LocationMode = existing?.mode ?? 'live';
+  const previousMode: LocationMode = existing?.mode ?? 'ghost';
   const myDisplayName = useSessionStore.getState().user?.display_name;
 
   let nextLat: number | null = null;
@@ -549,19 +496,19 @@ export async function updateMyLocationShare(params: {
         nextPlaceName = params.placeName ?? momentCoords.placeName ?? 'Moment Check-In';
         nextUpdatedAt = momentCoords.postedAt;
       } else {
-        nextLat = existing?.lat ?? FALLBACK_LIVE_COORDS.lat;
-        nextLng = existing?.lng ?? FALLBACK_LIVE_COORDS.lng;
-        nextAccuracy = 40;
-        nextPlaceName = params.placeName ?? existing?.place_name ?? FALLBACK_LIVE_COORDS.placeName;
-        nextUpdatedAt = nowIso;
+        nextLat = existing?.lat ?? null;
+        nextLng = existing?.lng ?? null;
+        nextAccuracy = existing?.accuracy_m ?? null;
+        nextPlaceName = params.placeName ?? existing?.place_name ?? null;
+        nextUpdatedAt = existing?.location_updated_at ?? null;
       }
     }
   } else {
-    nextLat = params.lat ?? existing?.lat ?? FALLBACK_LIVE_COORDS.lat;
-    nextLng = params.lng ?? existing?.lng ?? FALLBACK_LIVE_COORDS.lng;
-    nextAccuracy = params.accuracyM ?? existing?.accuracy_m ?? FALLBACK_LIVE_COORDS.accuracyM;
-    nextPlaceName = params.placeName ?? existing?.place_name ?? FALLBACK_LIVE_COORDS.placeName;
-    nextUpdatedAt = nowIso;
+    nextLat = params.lat ?? existing?.lat ?? null;
+    nextLng = params.lng ?? existing?.lng ?? null;
+    nextAccuracy = params.accuracyM ?? existing?.accuracy_m ?? null;
+    nextPlaceName = params.placeName ?? existing?.place_name ?? null;
+    nextUpdatedAt = nextLat !== null && nextLng !== null ? nowIso : null;
   }
 
   locationsMap[myKey] = {

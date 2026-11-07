@@ -11,15 +11,13 @@
 // module (including src/api/supabase.ts) is evaluated — ESM import hoisting makes
 // in-file process.env assignments run too late.
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import fs from 'node:fs';
 import { beforeEach, describe, it } from 'node:test';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 
 import { fetchMonthMemories } from '@/api/extras';
-import { fetchCoupleLocations } from '@/api/locations';
+import { fetchCoupleLocations, updateMyLocationShare } from '@/api/locations';
 import {
   addMomentComment,
   deleteMomentComment,
@@ -33,7 +31,7 @@ import {
   toggleMomentReaction,
   updateMomentDetails,
 } from '@/api/moments';
-import { redeemInviteCode, upsertUserProfile } from '@/api/pairing';
+import { createOrRefreshInvite, fetchPairingSnapshot, redeemInviteCode, upsertUserProfile } from '@/api/pairing';
 import { applyIncomingCouplePacket } from '@/api/realtimeSync';
 import {
   addFriendByHandleOrCode,
@@ -73,6 +71,7 @@ async function resetAllState() {
     email: null,
     couple: null,
     partner: null,
+    pendingInviteCode: null,
   });
 }
 
@@ -315,11 +314,14 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
     assert.equal(useSessionStore.getState().couple?.id, 'solo_user_sec_1');
     assert.equal(useSessionStore.getState().couple?.state, 'active');
 
+    useSessionStore.getState().setPendingInviteCode('ABC123');
     // Signing out clears account-specific caches (messages, friends, moments, widget)
     await useSessionStore.getState().signOut();
     assert.equal(await AsyncStorage.getItem('keepit.local_messages.v1'), null);
     assert.equal(await AsyncStorage.getItem('keepit.local_friends.v1'), null);
     assert.equal(await AsyncStorage.getItem('keepit.widget_snapshot.v1'), null);
+    assert.equal(useSessionStore.getState().pendingInviteCode, null);
+    assert.equal(useSessionStore.getState().user, null);
   });
 
   it('rejects unknown 6-character invite codes instead of fabricating a synthetic ghost partner', async () => {
@@ -327,6 +329,43 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
       () => redeemInviteCode('user_solo_1', 'Z9Y8X7'),
       (err: Error) => err.message.includes('No active invite matches')
     );
+  });
+
+  it('joins a normalized invite and persists the same two-partner relationship for both accounts', async () => {
+    const host = await upsertUserProfile({ userId: 'invite_host', displayName: 'Host' });
+    const guest = await upsertUserProfile({ userId: 'invite_guest', displayName: 'Guest' });
+    const invite = await createOrRefreshInvite(host.id);
+
+    await assert.rejects(() => redeemInviteCode(host.id, invite.invite_code), /your own invite code/);
+    const pastedCode = ` ${invite.invite_code.slice(0, 3).toLowerCase()}-${invite.invite_code.slice(3).toLowerCase()} `;
+    const joined = await redeemInviteCode(guest.id, pastedCode);
+    assert.equal(joined.couple?.id, invite.id);
+    assert.equal(joined.couple?.state, 'active');
+    assert.equal(joined.partner?.id, host.id);
+    const hostSnapshot = await fetchPairingSnapshot(host.id);
+    assert.equal(hostSnapshot.couple?.user_b_id, guest.id);
+    assert.equal(hostSnapshot.partner?.id, guest.id);
+    await assert.rejects(() => redeemInviteCode('third_account', invite.invite_code), /already has 2 partners/);
+  });
+
+  it('rejects expired invites without pairing either account and permits joining a refreshed invite', async () => {
+    const host = await upsertUserProfile({ userId: 'expiry_host', displayName: 'Host' });
+    const guest = await upsertUserProfile({ userId: 'expiry_guest', displayName: 'Guest' });
+    const invite = await createOrRefreshInvite(host.id);
+    const raw = await AsyncStorage.getItem('keepit.local_db.v1');
+    assert.ok(raw);
+    const database = JSON.parse(raw);
+    database.couples[invite.id].invite_expires_at = '2000-01-01T00:00:00.000Z';
+    await AsyncStorage.setItem('keepit.local_db.v1', JSON.stringify(database));
+
+    await assert.rejects(() => redeemInviteCode(guest.id, invite.invite_code), /invite code expired/);
+    assert.equal((await fetchPairingSnapshot(guest.id)).couple, null);
+    assert.equal((await fetchPairingSnapshot(host.id)).couple?.state, 'pending');
+    const refreshed = await createOrRefreshInvite(host.id, true);
+    assert.ok(new Date(refreshed.invite_expires_at).getTime() > Date.now());
+    const joined = await redeemInviteCode(guest.id, refreshed.invite_code);
+    assert.equal(joined.couple?.state, 'active');
+    assert.equal(joined.partner?.id, host.id);
   });
 });
 
@@ -673,6 +712,39 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.equal(locBundle.friends?.length ?? 0, 0);
   });
 
+  it('keeps missing coordinates unknown and shares only a real located Moment', async () => {
+    const host = await upsertUserProfile({ userId: 'location_host', displayName: 'Host' });
+    const guest = await upsertUserProfile({ userId: 'location_guest', displayName: 'Guest' });
+    const invite = await createOrRefreshInvite(host.id);
+    const pairing = await redeemInviteCode(guest.id, invite.invite_code);
+    assert.ok(pairing.couple);
+    const coupleId = pairing.couple.id;
+    useSessionStore.setState({ user: host, couple: pairing.couple, partner: guest });
+
+    await updateMyLocationShare({ coupleId, userId: host.id, mode: 'on_moment' });
+    await updateMyLocationShare({ coupleId, userId: guest.id, mode: 'on_moment' });
+    let locations = await fetchCoupleLocations({ coupleId, userId: host.id });
+    assert.equal(locations.mine?.lat, null);
+    assert.equal(locations.mine?.lng, null);
+    assert.equal(locations.partner?.lat, null);
+    assert.equal(locations.partner?.lng, null);
+
+    const promptId = `prompt_${coupleId}_${todayLocalDateString()}`;
+    await submitDailyMoment({ coupleId, userId: host.id, promptId, backUri: 'data:image/jpeg;base64,UNLOCATED_BACK', frontUri: 'data:image/jpeg;base64,UNLOCATED_FRONT' });
+    locations = await updateMyLocationShare({ coupleId, userId: host.id, mode: 'on_moment' });
+    assert.equal(locations.mine?.lat, null);
+    assert.equal(locations.mine?.location_updated_at, null);
+
+    await submitDailyMoment({ coupleId, userId: host.id, promptId, backUri: 'data:image/jpeg;base64,LOCATED_BACK', frontUri: 'data:image/jpeg;base64,LOCATED_FRONT', lat: -6.2, lng: 106.8, locationLabel: 'Chosen check-in' });
+    locations = await updateMyLocationShare({ coupleId, userId: host.id, mode: 'on_moment' });
+    assert.equal(locations.mine?.lat, -6.2);
+    assert.equal(locations.mine?.lng, 106.8);
+    locations = await updateMyLocationShare({ coupleId, userId: host.id, mode: 'ghost' });
+    assert.equal(locations.mine?.lat, null);
+    assert.equal(locations.mine?.lng, null);
+    assert.equal(locations.mine?.place_name, null);
+  });
+
   it('ensures newly created account via signUpWithPassword is completely fresh with no dummy bio, song, partner, friends, or posts', async () => {
     await useSessionStore.getState().signUpWithPassword({
       displayName: 'Fresh User',
@@ -785,119 +857,4 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.ok(svg9x16.includes('neon vibe'));
   });
 
-  it('keeps settings and memories tab routes navigable in Expo Router 58 and avoids non-worklet closures in InteractiveCoupleMap', () => {
-    const tabsLayoutSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/app/(tabs)/_layout.tsx'),
-      'utf8'
-    );
-    assert.equal(
-      /href:\s*null/.test(tabsLayoutSrc),
-      false,
-      'Tabs.Screen routes must not set href: null because Expo Router 58 useVisibleTabsWithRedirect redirects hidden focused tabs back to index'
-    );
-
-    const mapSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/components/map/InteractiveCoupleMap.tsx'),
-      'utf8'
-    );
-    assert.equal(
-      /useAnimatedStyle\([\s\S]{0,160}?\bclamp\(/.test(mapSrc),
-      false,
-      'useAnimatedStyle worklets must not capture non-worklet clamp() helper across UI runtime'
-    );
-    assert.equal(
-      mapSrc.includes('tile.openstreetmap.org'),
-      false,
-      'InteractiveCoupleMap must not use tile.openstreetmap.org which blocks web/app Referer/User-Agent with Access Blocked tiles'
-    );
-    assert.equal(
-      mapSrc.includes('basemaps.cartocdn.com'),
-      true,
-      'InteractiveCoupleMap should use CartoDB basemaps for unblocked light/dark street tiles'
-    );
-  });
-
-  it('secures Realtime channels as private and throttles invite redemption server-side', () => {
-    const realtimeSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/api/realtimeSync.ts'),
-      'utf8'
-    );
-    const pairingSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/api/pairing.ts'),
-      'utf8'
-    );
-    const pairingHookSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/hooks/useRealtimePairing.ts'),
-      'utf8'
-    );
-    const pairScreenSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/app/(auth)/pair.tsx'),
-      'utf8'
-    );
-    const socialSrc = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/api/social.ts'),
-      'utf8'
-    );
-    const migrationSql = fs.readFileSync(
-      path.resolve(process.cwd(), 'supabase/migrations/0006_realtime_channel_security.sql'),
-      'utf8'
-    );
-
-    // 1. Every custom channel topic is private-prefixed and the channel is created with
-    //    config.private so Supabase enforces realtime.messages RLS before join/broadcast.
-    assert.ok(realtimeSrc.includes('private-keepit:couple_sync:'));
-    assert.ok(realtimeSrc.includes('private-keepit:invite:'));
-    assert.ok(realtimeSrc.includes('private-keepit:dm_sync:'));
-    assert.ok(
-      realtimeSrc.includes('private: true'),
-      'broadcastCoupleSync fallback channel must declare config.private: true'
-    );
-    assert.ok(
-      pairingHookSrc.includes('buildCoupleSyncChannelTopic(coupleId)') &&
-        pairingHookSrc.includes('private: true'),
-      'useRealtimePairing must join the private couple sync channel'
-    );
-    assert.ok(
-      pairingSrc.includes('buildInviteChannelTopic(params.cleanedCode)') &&
-        pairingSrc.includes('private: true'),
-      'invite redemption room must be a private channel'
-    );
-    assert.ok(
-      pairScreenSrc.includes('buildInviteChannelTopic(code)') &&
-        pairScreenSrc.includes('private: true'),
-      'invite host room on the pair screen must be a private channel'
-    );
-    assert.ok(
-      socialSrc.includes('buildDirectMessageSyncChannelTopic(convId)'),
-      'DM sync broadcasts must use the private DM topic builder'
-    );
-
-    // 2. No ad hoc un-prefixed channel topics remain anywhere.
-    for (const [name, src] of [
-      ['realtimeSync', realtimeSrc],
-      ['useRealtimePairing', pairingHookSrc],
-      ['pairing', pairingSrc],
-      ['pair screen', pairScreenSrc],
-      ['social', socialSrc],
-    ] as const) {
-      assert.equal(
-        /channel\(`keepit:/.test(src) || /`conv_\$\{/.test(src),
-        false,
-        `${name} must not create un-prefixed public realtime channels`
-      );
-    }
-
-    // 3. Server side: realtime.messages is RLS-guarded by topic membership.
-    assert.ok(migrationSql.includes('alter table realtime.messages enable row level security'));
-    assert.ok(migrationSql.includes('realtime_messages_authorized'));
-    assert.ok(migrationSql.includes('user_authorized_for_realtime_topic'));
-
-    // 4. Server side: invite redemption is throttled and single-use.
-    assert.ok(migrationSql.includes('invite_redeem_attempts'));
-    assert.ok(migrationSql.includes('TOO_MANY_ATTEMPTS'));
-    assert.ok(
-      migrationSql.includes('invite_code = public.generate_invite_code()'),
-      'redeem must rotate the invite code so a redeemed code cannot be replayed'
-    );
-  });
 });

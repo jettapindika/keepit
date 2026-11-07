@@ -3,16 +3,15 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -25,6 +24,7 @@ import {
   toggleDirectMessageReaction,
 } from '@/api/social';
 import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
+import { AppPressable, AppTextInput, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { DirectMessageRecord } from '@/types/database';
@@ -53,6 +53,13 @@ export default function MessagesScreen() {
   const params = useLocalSearchParams<{ peerId?: string; peerName?: string }>();
   const queryClient = useQueryClient();
   const { colors, radii, spacing } = useKeepItTheme();
+  const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   const user = useSessionStore((s) => s.user);
   const partner = useSessionStore((s) => s.partner);
@@ -335,46 +342,29 @@ export default function MessagesScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
         {/* Header */}
         <RevealOnAppear revealKey="dm-header">
-          <View
-            style={[
-              styles.headerRow,
-              {
-                paddingHorizontal: spacing.lg,
-                paddingTop: spacing.sm,
-                paddingBottom: spacing.sm,
-                borderBottomColor: colors.border,
-              },
-            ]}>
-            <View style={styles.headerTitleCol}>
-              <Text style={[styles.screenTitle, { color: colors.ink }]}>Messages</Text>
-              <Text style={[styles.screenSub, { color: colors.inkMuted }]}>
-                {activePeer
-                  ? `Chat & 15s Snaps with ${activePeer.displayName}`
-                  : 'Pair with a partner or add friends to start chatting'}
-              </Text>
-            </View>
-
-            <View style={styles.headerActions}>
-              <Pressable
-                accessibilityRole="button"
-
-                accessibilityLabel="Open Profile & Friends"
-                onPress={() => router.navigate('/(tabs)/profile' as never)}
-                style={[
-                  styles.iconPillButton,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text pointerEvents="none" style={[styles.iconPillText, { color: colors.ink }]}>Friends</Text>
-              </Pressable>
-            </View>
+          <View style={[styles.headerWrap, { paddingHorizontal: spacing.lg }]}> 
+            <PageHeader
+              title="Messages"
+              subtitle={
+                activePeer
+                  ? `Chat and 15s Snaps with ${activePeer.displayName}`
+                  : 'Pair with a partner or add friends to start chatting'
+              }
+              action={
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Profile and Friends"
+                  onPress={() => router.navigate('/(tabs)/profile' as never)}
+                  style={[styles.headerAction, { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radii.input }]}
+                >
+                  <Text style={[styles.iconPillText, { color: colors.ink }]}>Friends</Text>
+                </AppPressable>
+              }
+            />
           </View>
         </RevealOnAppear>
 
@@ -399,7 +389,7 @@ export default function MessagesScreen() {
                 const selected = peer.id === activePeer?.id;
                 const monogram = peer.displayName.trim().slice(0, 1).toUpperCase() || 'K';
                 return (
-                  <Pressable
+                  <AppPressable
                     key={peer.id}
                     accessibilityRole="tab"
                     accessibilityState={{ selected }}
@@ -451,15 +441,21 @@ export default function MessagesScreen() {
                         {peer.isPartner ? 'Partner' : peer.roleLabel}
                       </Text>
                     </View>
-                  </Pressable>
+                  </AppPressable>
                 );
               })}
             </ScrollView>
           </View>
         ) : null}
 
+        {friendsQuery.isError ? (
+          <View style={{ maxWidth: 640, width: '100%', alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.xs }}>
+            <InlineNotice message="Could not load your conversation list." tone="error" />
+            <KeepItButton label="Retry Friends" variant="secondary" onPress={() => void friendsQuery.refetch()} />
+          </View>
+        ) : null}
         {errorMsg || messagesQuery.isError ? (
-          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.xs }}>
+          <View style={{ maxWidth: 640, width: '100%', alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.xs }}>
             <InlineNotice
               message={
                 errorMsg ??
@@ -470,11 +466,7 @@ export default function MessagesScreen() {
               tone="error"
             />
             {messagesQuery.isError ? (
-              <KeepItButton
-                label="Retry Messages"
-                variant="secondary"
-                onPress={() => void messagesQuery.refetch()}
-              />
+              <KeepItButton label="Retry Messages" variant="secondary" onPress={() => void messagesQuery.refetch()} />
             ) : null}
           </View>
         ) : null}
@@ -484,6 +476,9 @@ export default function MessagesScreen() {
           contentContainerStyle={[
             styles.threadContent,
             {
+              width: '100%',
+              maxWidth: 640,
+              alignSelf: 'center',
               paddingHorizontal: spacing.lg,
               paddingTop: spacing.md,
               paddingBottom: spacing.xl,
@@ -577,7 +572,7 @@ export default function MessagesScreen() {
 
                   {/* Message Bubble */}
                   {isSnap ? (
-                    <Pressable
+                    <AppPressable
                       accessibilityRole="button"
                       accessibilityLabel={
                         hasViewerOpened
@@ -670,9 +665,9 @@ export default function MessagesScreen() {
                           </View>
                         </View>
                       )}
-                    </Pressable>
+                    </AppPressable>
                   ) : (
-                    <Pressable
+                    <AppPressable
                       accessibilityRole="button"
                       accessibilityLabel={`${msg.sender_name}: ${msg.text}. Tap to react`}
                       onPress={() => {
@@ -701,7 +696,7 @@ export default function MessagesScreen() {
                         ]}>
                         {msg.text}
                       </Text>
-                    </Pressable>
+                    </AppPressable>
                   )}
 
                   {/* Existing Reactions */}
@@ -714,7 +709,7 @@ export default function MessagesScreen() {
                         if (reactors.length === 0) return null;
                         const mineReacted = reactors.includes(userId);
                         return (
-                          <Pressable
+                          <AppPressable
                             key={emoji}
                             accessibilityRole="button"
                             accessibilityLabel={`Toggle ${emoji} reaction`}
@@ -732,7 +727,7 @@ export default function MessagesScreen() {
                             <Text style={[styles.reactionBadgeText, { color: colors.ink }]}>
                               {emoji} {reactors.length > 1 ? reactors.length : ''}
                             </Text>
-                          </Pressable>
+                          </AppPressable>
                         );
                       })}
                     </View>
@@ -752,7 +747,7 @@ export default function MessagesScreen() {
                       {DM_REACTION_EMOJIS.map((emoji) => {
                         const selectedEmoji = reactionsMap[userId] === emoji;
                         return (
-                          <Pressable
+                          <AppPressable
                             key={emoji}
                             accessibilityRole="button"
                             accessibilityLabel={`React with ${emoji}`}
@@ -765,7 +760,7 @@ export default function MessagesScreen() {
                               },
                             ]}>
                             <Text style={styles.reactionChoiceEmoji}>{emoji}</Text>
-                          </Pressable>
+                          </AppPressable>
                         );
                       })}
                     </View>
@@ -790,7 +785,10 @@ export default function MessagesScreen() {
                 borderTopColor: colors.border,
                 paddingHorizontal: spacing.md,
                 paddingTop: spacing.sm,
-                paddingBottom: 148,
+                paddingBottom: keyboardVisible ? Math.max(insets.bottom, spacing.sm) : 148,
+                width: '100%',
+                maxWidth: 640,
+                alignSelf: 'center',
               },
             ]}>
             {/* Quick Emoji / Nudge Chips */}
@@ -799,7 +797,7 @@ export default function MessagesScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.nudgeChipsScroll}>
               {QUICK_NUDGE_CHIPS.map((chip) => (
-                <Pressable
+                <AppPressable
                   key={chip}
                   accessibilityRole="button"
                   accessibilityLabel={`Send quick message: ${chip}`}
@@ -814,13 +812,13 @@ export default function MessagesScreen() {
                     },
                   ]}>
                   <Text pointerEvents="none" style={[styles.nudgeChipText, { color: colors.ink }]}>{chip}</Text>
-                </Pressable>
+                </AppPressable>
               ))}
             </ScrollView>
 
             <View style={styles.inputRow}>
               {/* Snap Once 15s Toggle */}
-              <Pressable
+              <AppPressable
                 accessibilityRole="switch"
                 accessibilityState={{ checked: snapOnceMode }}
                 accessibilityLabel="Toggle 15 second Snap Once disappearing message"
@@ -844,12 +842,14 @@ export default function MessagesScreen() {
                   ]}>
                   15s Snap
                 </Text>
-              </Pressable>
+              </AppPressable>
 
-              <TextInput
+              <AppTextInput
                 accessibilityLabel={`Message ${activePeer.displayName}`}
                 value={draftText}
                 onChangeText={setDraftText}
+                onFocus={() => { if (Platform.OS === 'web') setKeyboardVisible(true); }}
+                onBlur={() => { if (Platform.OS === 'web') setKeyboardVisible(false); }}
                 placeholder={
                   snapOnceMode
                     ? `Send 15s disappearing Snap to ${activePeer.displayName}…`
@@ -863,14 +863,14 @@ export default function MessagesScreen() {
                   styles.textInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: snapOnceMode ? colors.warning : colors.border,
+                    borderColor: colors.controlBorder,
                     color: colors.ink,
-                    borderRadius: radii.pill,
+                    borderRadius: 10,
                   },
                 ]}
               />
 
-              <Pressable
+              <AppPressable
                 accessibilityRole="button"
                 accessibilityLabel="Send message"
                 disabled={!draftText.trim() || sending}
@@ -879,7 +879,7 @@ export default function MessagesScreen() {
                   styles.sendBtn,
                   {
                     backgroundColor: draftText.trim() ? colors.ink : colors.surfaceElevated,
-                    borderRadius: radii.pill,
+                    borderRadius: 10,
                     opacity: !draftText.trim() || sending ? 0.5 : 1,
                   },
                 ]}>
@@ -888,9 +888,9 @@ export default function MessagesScreen() {
                     styles.sendBtnText,
                     { color: draftText.trim() ? colors.canvas : colors.inkMuted },
                   ]}>
-                  Send
+                  {sending ? 'Sending…' : 'Send'}
                 </Text>
-              </Pressable>
+              </AppPressable>
             </View>
           </View>
         ) : null}
@@ -905,6 +905,20 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  headerWrap: {
+    maxWidth: 640,
+    width: '100%',
+    alignSelf: 'center',
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  headerAction: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   headerRow: {
     flexDirection: 'row',

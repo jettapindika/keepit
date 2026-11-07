@@ -23,6 +23,7 @@ export interface UseWidgetSyncParams {
 export interface UseWidgetSyncResult {
   snapshot: WidgetSnapshotPayload | null;
   lastSyncedAt: string | null;
+  error: string | null;
   forceSync: () => Promise<void>;
 }
 
@@ -88,7 +89,9 @@ export function buildWidgetSnapshotPayload(params: {
 
   return {
     coupleId: params.coupleId,
-    partnerName: params.partnerName,
+    partnerName: !partnerMoment && (fallbackMoment || (activePartnerStatus && activePartnerStatus === params.statusBundle?.mine))
+      ? 'You'
+      : params.partnerName,
     statusEmoji: activePartnerStatus?.emoji ?? null,
     statusText: activePartnerStatus?.text ?? null,
     statusExpiresAt: activePartnerStatus?.expires_at ?? null,
@@ -137,6 +140,7 @@ export function useWidgetSync({
 }: UseWidgetSyncParams): UseWidgetSyncResult {
   const [cachedSnapshot, setCachedSnapshot] = useState<WidgetSnapshotPayload | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const lastSyncedSignatureRef = useRef<string | null>(null);
 
   // Hydrate previously synced widget snapshot on mount so cold start previews render immediately
@@ -148,6 +152,8 @@ export function useWidgetSync({
         setCachedSnapshot(saved);
         setLastSyncedAt(saved.updatedAt);
       }
+    }).catch((err: unknown) => {
+      if (active) setError(err instanceof Error ? err.message : 'Could not load your widget preview. Try syncing again.');
     });
     return () => {
       active = false;
@@ -172,10 +178,16 @@ export function useWidgetSync({
       return;
     }
     lastSyncedSignatureRef.current = null;
+    let active = true;
     void clearWidgetSnapshot().then(() => {
+      if (!active) return;
       setCachedSnapshot(null);
       setLastSyncedAt(null);
+    }).catch((err: unknown) => {
+      if (!active) return;
+      setError(err instanceof Error ? err.message : 'Could not clear the previous widget snapshot. Try syncing again.');
     });
+    return () => { active = false; };
   }, [coupleId]);
 
   // Sync automatically whenever partner Moment, lock state, or status changes
@@ -200,6 +212,11 @@ export function useWidgetSync({
       if (!active) return;
       setCachedSnapshot(stampedSnapshot);
       setLastSyncedAt(stampedSnapshot.updatedAt);
+      setError(null);
+    }).catch((err: unknown) => {
+      if (!active) return;
+      if (lastSyncedSignatureRef.current === nextSignature) lastSyncedSignatureRef.current = null;
+      setError(err instanceof Error ? err.message : 'Your widget could not sync. Try again.');
     });
 
     return () => {
@@ -208,31 +225,37 @@ export function useWidgetSync({
   }, [liveSnapshot]);
 
   const forceSync = useCallback(async () => {
-    if (!coupleId) {
-      await clearWidgetSnapshot();
-      lastSyncedSignatureRef.current = null;
-      setCachedSnapshot(null);
-      setLastSyncedAt(null);
-      return;
+    setError(null);
+    try {
+      if (!coupleId) {
+        await clearWidgetSnapshot();
+        lastSyncedSignatureRef.current = null;
+        setCachedSnapshot(null);
+        setLastSyncedAt(null);
+        return;
+      }
+
+      const freshSnapshot = buildWidgetSnapshotPayload({
+        coupleId,
+        partnerName,
+        momentBundle,
+        statusBundle,
+        now: new Date(),
+      });
+      await syncWidgetSnapshot(freshSnapshot);
+      lastSyncedSignatureRef.current = computeSnapshotSignature(freshSnapshot);
+      setCachedSnapshot(freshSnapshot);
+      setLastSyncedAt(freshSnapshot.updatedAt);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Your widget could not sync. Try again.');
+      throw err;
     }
-
-    const freshSnapshot = buildWidgetSnapshotPayload({
-      coupleId,
-      partnerName,
-      momentBundle,
-      statusBundle,
-      now: new Date(),
-    });
-
-    lastSyncedSignatureRef.current = computeSnapshotSignature(freshSnapshot);
-    await syncWidgetSnapshot(freshSnapshot);
-    setCachedSnapshot(freshSnapshot);
-    setLastSyncedAt(freshSnapshot.updatedAt);
   }, [coupleId, partnerName, momentBundle, statusBundle]);
 
   return {
     snapshot: coupleId ? (liveSnapshot ?? cachedSnapshot) : null,
     lastSyncedAt: coupleId ? lastSyncedAt : null,
+    error,
     forceSync,
   };
 }

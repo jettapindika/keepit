@@ -1,18 +1,18 @@
 # Next AI Notes: Strict Antislop Gate Follow-up
 
-Status: strict antislop gate incomplete. The UX update is integrated with main's newer account-cleanup commit `bd630a9`, which removes automatic dummy friends, conversations, and partner posts. Earlier fixing-branch checks (14 tests, typecheck, lint, web build, and selected Chromium flows) are historical smoke evidence, not an exhaustive gate result or proof for every integrated path.
+Status: app-wide UI/UX redesign integrated on top of `3499759`; strict antislop gate remains uncertified for native hardware and owner `DESIGN.md` reconciliation.
 
-Do not claim a clean strict antislop gate without finishing these items:
+Completed in this pass:
 
-- **R-25:** Audit every text/background pairing, image overlay, non-text boundary, focus state, and semantic state in both themes. `src/theme/tokens.ts` uses corrected placeholder values (`#94949C` Dark, `#686870` Light), but `DESIGN.md` still documents the old `#77777D` value. Reconcile this only after reading the owner's latest `DESIGN.md` update. Do not overwrite that other-worktree change.
-- **R-26:** Build an inventory of every interactive control and exercise each action, including modal close/save/cancel controls, switches, radios, calendar cells, map controls, widget controls, profile controls, and destructive confirmations.
-- **R-27:** Add or verify explicit loading, empty, and error/retry states for Status, Widget, Profile/Friends paths, Settings, Pairing, and any remaining query-backed surfaces.
-- **R-32:** Focus treatment currently exists on `KeepItButton` and `MochyCard`; audit custom `Pressable`, `Switch`, radio, tab, and modal controls for keyboard focus visibility and logical tab order. Preserve `pointerEvents="box-none"` on the dock wrapper and `pointerEvents="auto"` on the pill: React Native `none` on a parent disables native descendant touches even when a web browser allows CSS overrides.
-- **R-35:** Keep evidence for the exhaustive control click-through separate from the core smoke test. Real-device camera, GPS, haptics, and native widget behavior remain unverified on the VPS.
-- **R-38 / C-5:** Main's account cleanup removes the previously seeded directory profiles, friend Moments, welcome messages, and simulated replies from new-account flows. Verify that fresh accounts remain empty and that old persisted dummy records, remaining sandbox helpers, synthetic camera fallbacks, and `MomentCards.tsx` fallback images never masquerade as real partner activity. Do not restore deleted demo seeding while finishing this audit.
-- **R-29:** Filter presets, music covers, profile banner choices, story exports, and generated media still contain colors outside the monochrome system palette. Distinguish content colors from interface colors and record any deliberate exceptions before claiming strict palette compliance.
-- **R-31:** The decision ledger covers major design choices, not every visual decision in the repository. Expand it only if the strict gate requires repository-wide provenance.
-- **R-37:** `DESIGN.md` is owner-managed in another worktree. Read the latest version before further visual/token work; current source tokens should not silently override the owner's direction.
+- Extended the warm monochrome `design.md` system (dark + light palettes, `22px` cards, `10px` actions/inputs, `44px+` touch targets, focus rings, `ScreenKit` controls, and `useAppMotion` live OS/app reduced-motion handling) across Welcome, Auth, Pair, Home, Status Sheet, Moment Cards, Widget Preview, Map, Chat, Profile, Memories, Monthly Recap, Settings, Camera, and the navigation dock.
+- Preserved main's account cleanup (`bd630a9`), CARTO map tiles, private Realtime topic builders, Snap Once expiry/scrubbing, 5/day Moment quota, and password/Supabase/local session flows.
+- Removed fabricated San Francisco fallback coordinates from `fetchCoupleLocations` and `updateMyLocationShare`, removed synthetic Moment photo fallbacks from `MomentCards` and `camera.tsx`, fixed `data:` URI double-prefixing in web camera capture, resumed `pendingInviteCode` after auth, and surfaced Supabase sign-out and widget-sync errors instead of swallowing them.
+- Verified `17/17` behavioral tests (`npm test`), `npx tsc --noEmit`, `npx expo lint`, a clean `expo export --platform web`, a production-bundle browser click-through (onboarding, sign-in, pairing, status save/discard/clear, map modes/check-ins/pan/zoom, dual-camera capture/publish, comments/reactions/story studio/editor, friend add + DM + 15s Snap, memories + monthly recap, light/dark settings), and zero root horizontal overflow across `/`, `/map`, `/messages`, `/profile`, `/memories`, `/settings`, and `/pair` at `320`, `390`, `768`, and `1280` widths.
+
+Still open before claiming a strict gate PASS:
+
+- **R-25 / R-37:** Reconcile `DESIGN.md` (left untouched per owner constraint) with `src/theme/tokens.ts`, and audit dynamic photo/banner overlays at worst-case pixel regions in both themes.
+- **R-26 / R-32 / R-35:** Exhaustive keyboard-only traversal of every modal/picker sub-control, 200% zoom / Dynamic Type XL verification, and physical iOS/Android verification for dual-camera video lens switching, hardware GPS, haptics, system share sheets, and WidgetKit/Glance pinning.
 
 ## Integration and verification constraints
 

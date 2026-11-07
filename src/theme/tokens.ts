@@ -1,4 +1,4 @@
-import { useColorScheme } from 'react-native';
+import { Platform, useColorScheme } from 'react-native';
 
 import { useSessionStore } from '@/store/sessionStore';
 
@@ -17,6 +17,8 @@ export interface KeepItPalette {
   ink: string;
   inkMuted: string;
   placeholder: string;
+  controlBorder: string;
+  focusRing: string;
   accent: string;
   accentSoft: string;
   onAccent: string;
@@ -28,61 +30,65 @@ export interface KeepItPalette {
   dangerSoft: string;
 }
 
-// Mochy-Music Dark Color System (Theme.kt + SearchDesign.kt + FrostedGlass.kt + SettingsGroup.kt)
+// Warm monochrome chrome keeps the app consistent with the approved onboarding.
 export const DARK_PALETTE: KeepItPalette = {
-  canvas: '#000000',
-  sheetSurface: '#0B0B0C',
-  surface: '#141416',
-  surfaceElevated: '#1E1E21',
-  surfacePressed: '#2C2C2C',
-  border: '#232326',
-  chromeGlass: 'rgba(19, 19, 19, 0.84)',
-  chromeOutline: 'rgba(255, 255, 255, 0.06)',
-  chromeHighlight: 'rgba(255, 255, 255, 0.11)',
+  canvas: '#0A0708',
+  sheetSurface: '#1F1D1E',
+  surface: '#1F1D1E',
+  surfaceElevated: '#2A2729',
+  surfacePressed: '#353133',
+  border: '#494247',
+  chromeGlass: '#1F1D1E',
+  chromeOutline: '#494247',
+  chromeHighlight: '#353133',
   ink: '#FFFFFF',
-  inkMuted: '#9A9AA0',
-  placeholder: '#94949C',
-  accent: '#E0E0E0',
-  accentSoft: '#282830',
-  onAccent: '#000000',
-  badgeBg: '#E5E5EA',
-  badgeFg: '#1C1C1E',
-  success: '#34C759',
-  warning: '#F5A623',
-  danger: '#FF453A',
-  dangerSoft: '#2C1517',
+  inkMuted: '#C0B9BD',
+  placeholder: '#AAA2A6',
+  controlBorder: '#91858C',
+  focusRing: '#FFFFFF',
+  accent: '#FFFFFF',
+  accentSoft: '#353133',
+  onAccent: '#0A0708',
+  badgeBg: '#FFFFFF',
+  badgeFg: '#1F1D1E',
+  success: '#92D6AB',
+  warning: '#DDD4D8',
+  danger: '#FFACA8',
+  dangerSoft: '#3C2325',
 };
 
-// Mochy-Music Light Counterpart (Theme.kt lightColorScheme)
+// The light counterpart shares the same warm neutral family and geometry.
 export const LIGHT_PALETTE: KeepItPalette = {
-  canvas: '#FFFFFF',
-  sheetSurface: '#F7F7F8',
-  surface: '#F0F0F2',
-  surfaceElevated: '#FFFFFF',
-  surfacePressed: '#E4E4E8',
-  border: '#DCDCE0',
-  chromeGlass: 'rgba(245, 245, 247, 0.88)',
-  chromeOutline: 'rgba(0, 0, 0, 0.06)',
-  chromeHighlight: 'rgba(0, 0, 0, 0.08)',
-  ink: '#000000',
-  inkMuted: '#55555C',
-  placeholder: '#686870',
-  accent: '#141416',
-  accentSoft: '#E5E5EA',
+  canvas: '#F8F6F7',
+  sheetSurface: '#FFFFFF',
+  surface: '#FFFFFF',
+  surfaceElevated: '#F0ECEE',
+  surfacePressed: '#E8E3E6',
+  border: '#D5CED2',
+  chromeGlass: '#FFFFFF',
+  chromeOutline: '#D5CED2',
+  chromeHighlight: '#F0ECEE',
+  ink: '#161214',
+  inkMuted: '#62595F',
+  placeholder: '#71656C',
+  controlBorder: '#8A7D85',
+  focusRing: '#161214',
+  accent: '#161214',
+  accentSoft: '#E8E3E6',
   onAccent: '#FFFFFF',
-  badgeBg: '#1C1C1E',
+  badgeBg: '#161214',
   badgeFg: '#FFFFFF',
-  success: '#248A3D',
-  warning: '#B25000',
-  danger: '#D70015',
-  dangerSoft: '#FCE8E8',
+  success: '#236C44',
+  warning: '#6E5B66',
+  danger: '#AD2E35',
+  dangerSoft: '#FBEDEF',
 };
 
 export const RADII = {
-  group: 28,
-  photo: 24,
-  card: 20,
-  input: 14,
+  group: 22,
+  photo: 18,
+  card: 22,
+  input: 10,
   pill: 999,
 } as const;
 
@@ -96,11 +102,62 @@ export const SPACING = {
   xxxl: 40,
 } as const;
 
+export const APP_LAYOUT = {
+  pageInset: 20,
+  cardPadding: 20,
+  maxContentWidth: 640,
+  modalWidth: 520,
+  tabBarClearance: 132,
+  minimumTarget: 44,
+} as const;
+
 export const MOCHY_TYPE = {
-  titleTracking: -0.7,
-  bodyTracking: -0.35,
-  fontSans: "'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  fontMono: "'Geist Mono', 'SFMono-Regular', Menlo, monospace",
+  titleTracking: -0.3,
+  bodyTracking: 0,
+  fontSans: Platform.OS === 'web'
+    ? '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, Arial, sans-serif'
+    : undefined,
+  fontMono: Platform.OS === 'ios' ? 'SFMono-Regular' : 'monospace',
+} as const;
+
+export const MAX_WALLET_LAYOUT = {
+  viewportInset: 20,
+  sheetHeight: 434,
+  sheetBottom: 26,
+  sheetRadius: 22,
+  contentInset: 20,
+  contentWidth: 310,
+  buttonRadius: 10,
+  primaryButtonHeight: 58,
+  secondaryButtonHeight: 44,
+  artWidth: 302,
+  artHeight: 278,
+  artTopGap: 31,
+} as const;
+
+export const MAX_WALLET_TYPE = {
+  sansFamily:
+    Platform.OS === 'web'
+      ? '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, "Helvetica Neue", Arial, sans-serif'
+      : undefined,
+  monoFamily: Platform.OS === 'ios' ? 'SFMono-Regular' : 'monospace',
+  titleSize: 28,
+  titleLineHeight: 34,
+  bodySize: 13,
+  bodyLineHeight: 20,
+  primarySize: 16,
+  secondarySize: 15,
+  legalSize: 12,
+  legalLineHeight: 18,
+} as const;
+
+export const MAX_WALLET_MOTION = {
+  slide: 320,
+  heroFade: 220,
+  heroFloat: 1_800,
+  pagination: 180,
+  pressIn: 100,
+  pressOut: 120,
 } as const;
 
 export function useKeepItTheme() {

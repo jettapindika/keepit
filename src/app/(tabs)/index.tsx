@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { fetchRecentNudges, sendPartnerNudge } from '@/api/extras';
@@ -22,11 +22,12 @@ import {
   RevealOnAppear,
   SkeletonBlock,
 } from '@/components/ui/Primitives';
+import { AppPressable as Pressable, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { WidgetPreviewCard } from '@/components/widget/WidgetPreviewCard';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
 import { useWidgetSync } from '@/hooks/useWidgetSync';
 import { useSessionStore } from '@/store/sessionStore';
-import { useKeepItTheme } from '@/theme/tokens';
+import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import {
   MAX_DAILY_MOMENTS_PER_DAY,
   MomentRecord,
@@ -131,7 +132,7 @@ export default function HomeScreen() {
   const countdown = useMomentCountdown(bundle?.prompt.trigger_at);
 
   const widgetSync = useWidgetSync({
-    partnerName,
+    partnerName: isPartnerPaired ? partnerName : 'You',
     coupleId: couple?.id,
     momentBundle: bundle,
     statusBundle: statusQuery.data,
@@ -206,11 +207,12 @@ export default function HomeScreen() {
       await refreshMoments();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not update note.');
+      throw err;
     }
   };
 
   const handleSendNudge = async () => {
-    if (!couple || !user) return;
+    if (!couple || !user || nudging || !isPartnerPaired) return;
     setNudging(true);
     setNudgeFeedback(null);
     try {
@@ -277,239 +279,60 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <ScrollView
+        keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={[
           styles.content,
           {
-            paddingHorizontal: spacing.xl,
-            paddingTop: spacing.xl,
-            paddingBottom: 148,
+            paddingHorizontal: APP_LAYOUT.pageInset,
+            paddingTop: 20,
+            paddingBottom: APP_LAYOUT.tabBarClearance,
           },
         ]}>
-        <RevealOnAppear revealKey="home-header">
-          <View style={styles.headerBlock}>
-            <View style={styles.topRow}>
-              <View style={styles.brandColumn}>
-                <Text style={[styles.wordmark, { color: colors.ink }]}>KeepIt</Text>
-                <Text style={[styles.subHeader, { color: colors.inkMuted }]}>
-                  {isPartnerPaired
-                    ? `${user?.display_name ?? 'You'} & ${partnerName}`
-                    : `${user?.display_name ?? 'You'} · ${user?.is_private ? 'Private Dump' : 'Solo & Friends Circle'}`}
-                </Text>
-              </View>
+        <PageHeader
+          title="Today"
+          subtitle={isPartnerPaired ? `${user?.display_name ?? 'You'} & ${partnerName}` : 'Your daily life, from both sides of the camera.'}
+          action={<Pressable accessibilityRole="button" accessibilityLabel="Open memories calendar" onPress={() => router.navigate('/(tabs)/memories')} style={[styles.quickNavPill, { backgroundColor: colors.surface, borderRadius: radii.input }]}><Text style={[styles.quickNavText, { color: colors.ink }]}>Memories</Text></Pressable>}
+        />
+        <View style={styles.quickCameraChipsRow}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Open settings" onPress={() => router.navigate('/(tabs)/settings')} style={[styles.cameraModeChip, { backgroundColor: colors.surface, borderRadius: radii.input }]}><Text style={[styles.cameraModeChipText, { color: colors.ink }]}>Settings</Text></Pressable>
+          {!isPartnerPaired ? <Pressable accessibilityRole="button" onPress={() => router.navigate('/(auth)/pair')} style={[styles.cameraModeChip, { backgroundColor: colors.surface, borderRadius: radii.input }]}><Text style={[styles.cameraModeChipText, { color: colors.ink }]}>Pair with partner</Text></Pressable> : null}
+        </View>
 
-              <View
-                style={[
-                  styles.streakBadge,
-                  {
-                    borderColor: colors.border,
-                    backgroundColor: colors.surfaceElevated,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.streakText, { color: colors.ink }]}>
-                  {streakCount}d streak
-                </Text>
-              </View>
+        <View style={[styles.quotaCard, { backgroundColor: colors.surface, borderRadius: radii.group, padding: 20 }]}>
+          <SectionHeader title="Keep a little of today" subtitle={bundleQuery.isLoading ? 'Loading your daily capture allowance…' : bundleQuery.isError ? 'Capture allowance could not be refreshed.' : `${dailyPostCount} of ${maxDailyPosts} daily Moments posted`} />
+          {bundle ? <>
+            <View accessibilityLabel={`${dailyPostCount} of ${maxDailyPosts} daily slots used`} style={styles.dotsRow}>
+              {Array.from({ length: maxDailyPosts }, (_, index) => <View key={index} style={[styles.quotaDot, { backgroundColor: index < dailyPostCount ? colors.ink : colors.surfaceElevated, borderColor: colors.controlBorder }]} />)}
             </View>
+            <Text style={[styles.quotaSubtitle, { color: colors.inkMuted }]}>{countdown.phase === 'live' ? `Capture window open · ${countdown.formattedTimer}` : countdown.phase === 'upcoming' ? `Next window in ${countdown.formattedTimer}` : canPostMore ? `${maxDailyPosts - dailyPostCount} more Moment${maxDailyPosts - dailyPostCount === 1 ? '' : 's'} available today` : 'Your daily slots are full. Come back tomorrow.'}</Text>
+          </> : null}
+          <KeepItButton label={!canPostMore ? 'Daily limit reached' : dailyPostCount ? 'Capture another Moment' : 'Capture your Moment'} disabled={!canPostMore || !bundle || bundleQuery.isLoading} onPress={() => openCameraModal()} />
+          {canPostMore && bundle ? <View style={styles.quickCameraChipsRow}>
+            {([{ label: 'Front photo', lens: 'front', mode: 'photo' }, { label: 'Back photo', lens: 'back', mode: 'photo' }, { label: 'Dual video', lens: 'back', mode: 'video' }] as const).map((camera) => <Pressable key={camera.label} accessibilityRole="button" accessibilityLabel={`Capture ${camera.label.toLowerCase()}`} onPress={() => openCameraModal({ initialLens: camera.lens, initialMode: camera.mode })} style={[styles.cameraModeChip, { backgroundColor: colors.surfaceElevated, borderRadius: radii.input }]}><Text style={[styles.cameraModeChipText, { color: colors.ink }]}>{camera.label}</Text></Pressable>)}
+          </View> : null}
+        </View>
 
-            <View style={styles.quickNavRow}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open Memories Calendar"
-                onPress={() => router.navigate('/(tabs)/memories')}
-                style={[
-                  styles.quickNavPill,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text pointerEvents="none" style={[styles.quickNavText, { color: colors.ink }]}>Memories</Text>
-              </Pressable>
+        <StatusHeaderCard
+          partnerName={partnerName}
+          partnerStatus={statusQuery.data?.partner ?? null}
+          myStatus={statusQuery.data?.mine ?? null}
+          isPartnerPaired={isPartnerPaired}
+          latestNudge={nudgesQuery.data?.[0] ?? null}
+          currentUserId={user?.id}
+          nudging={nudging}
+          nudgeFeedback={nudgeFeedback}
+          loading={statusQuery.isLoading}
+          statusError={statusQuery.isError ? 'Could not refresh statuses. Previously loaded statuses may be out of date.' : null}
+          nudgeError={nudgesQuery.isError ? 'Could not load recent nudges.' : null}
+          onRetryStatus={() => void statusQuery.refetch()}
+          onRetryNudges={() => void nudgesQuery.refetch()}
+          onSendNudge={isPartnerPaired ? () => void handleSendNudge() : undefined}
+          onPressPair={() => router.navigate('/(auth)/pair')}
+          onOpenStatusSheet={() => router.push('/status-sheet')}
+        />
 
-              {/* DMs are directly in the bottom dock; keep header utilities focused on Memories, Settings, and Pairing */}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open Settings"
-                onPress={() => router.navigate('/(tabs)/settings')}
-                style={[
-                  styles.quickNavPill,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text pointerEvents="none" style={[styles.quickNavText, { color: colors.inkMuted }]}>Settings</Text>
-              </Pressable>
-
-              {!isPartnerPaired ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Optional: Pair with a Partner"
-                  onPress={() => router.navigate('/(auth)/pair')}
-                  style={[
-                    styles.quickNavPill,
-                    {
-                      backgroundColor: colors.accentSoft,
-                      borderColor: colors.accent,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text pointerEvents="none" style={[styles.quickNavText, { color: colors.ink }]}>
-                    + Pair Partner
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-        </RevealOnAppear>
-
-        <RevealOnAppear revealKey="home-status">
-          <StatusHeaderCard
-            partnerName={partnerName}
-            partnerStatus={statusQuery.data?.partner ?? null}
-            myStatus={statusQuery.data?.mine ?? null}
-            isPartnerPaired={isPartnerPaired}
-            latestNudge={nudgesQuery.data?.[0] ?? null}
-            currentUserId={user?.id}
-            nudging={nudging}
-            nudgeFeedback={nudgeFeedback}
-            onSendNudge={isPartnerPaired ? () => void handleSendNudge() : undefined}
-            onPressPair={() => router.navigate('/(auth)/pair')}
-            onOpenStatusSheet={() => router.push('/status-sheet')}
-          />
-        </RevealOnAppear>
-
-        <RevealOnAppear revealKey="home-daily-quota">
-          <View
-            style={[
-              styles.quotaCard,
-              {
-                backgroundColor: colors.surface,
-                borderColor:
-                  countdown.phase === 'late' && dailyPostCount === 0
-                    ? colors.warning
-                    : colors.border,
-                borderRadius: radii.group,
-                padding: spacing.lg,
-              },
-            ]}>
-            <View style={styles.quotaTopRow}>
-              <View style={styles.flex}>
-                <Text style={[styles.quotaTitle, { color: colors.ink }]}>
-                  Today’s Moments: {dailyPostCount} / {maxDailyPosts} posted
-                </Text>
-                <Text style={[styles.quotaSubtitle, { color: colors.inkMuted }]}>
-                  {countdown.phase === 'live'
-                    ? `Live window open · ${countdown.formattedTimer}`
-                    : countdown.phase === 'upcoming'
-                      ? `Next window in ${countdown.formattedTimer}`
-                      : canPostMore
-                        ? `You can capture ${maxDailyPosts - dailyPostCount} more Moment${
-                            maxDailyPosts - dailyPostCount === 1 ? '' : 's'
-                          } today`
-                        : 'All 5 daily slots filled'}
-                </Text>
-              </View>
-
-              <View
-                accessibilityLabel={`${dailyPostCount} of ${maxDailyPosts} daily Moments posted`}
-                style={styles.dotsRow}>
-                {[0, 1, 2, 3, 4].map((slotIdx) => {
-                  const filled = slotIdx < dailyPostCount;
-                  return (
-                    <View
-                      key={slotIdx}
-                      style={[
-                        styles.quotaDot,
-                        {
-                          backgroundColor: filled ? colors.ink : colors.surfaceElevated,
-                          borderColor: filled ? colors.ink : colors.border,
-                        },
-                      ]}
-                    />
-                  );
-                })}
-              </View>
-            </View>
-
-            <KeepItButton
-              label={
-                !canPostMore
-                  ? `Daily Limit Reached (${dailyPostCount}/${maxDailyPosts})`
-                  : dailyPostCount === 0
-                    ? `Capture Moment (${dailyPostCount}/${maxDailyPosts})`
-                    : `Take Another Photo (+) · ${dailyPostCount}/${maxDailyPosts}`
-              }
-              disabled={!canPostMore}
-              onPress={() => openCameraModal()}
-            />
-
-            {canPostMore ? (
-              <View style={styles.quickCameraChipsRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Launch Front Camera"
-                  onPress={() =>
-                    openCameraModal({ initialLens: 'front', initialMode: 'photo' })
-                  }
-                  style={[
-                    styles.cameraModeChip,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text pointerEvents="none" style={[styles.cameraModeChipText, { color: colors.ink }]}>
-                    Front Camera
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Launch Dual Video Camera"
-                  onPress={() =>
-                    openCameraModal({ initialLens: 'back', initialMode: 'video' })
-                  }
-                  style={[
-                    styles.cameraModeChip,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text pointerEvents="none" style={[styles.cameraModeChipText, { color: colors.ink }]}>
-                    Video
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Launch Back Camera"
-                  onPress={() =>
-                    openCameraModal({ initialLens: 'back', initialMode: 'photo' })
-                  }
-                  style={[
-                    styles.cameraModeChip,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text pointerEvents="none" style={[styles.cameraModeChipText, { color: colors.inkMuted }]}>
-                    Back Lens
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-        </RevealOnAppear>
+        <SectionHeader title="Today’s Moments" subtitle={bundle && streakCount > 0 ? `${streakCount}-day streak · Yours, theirs, and your circle` : 'Choose whose day to catch up on.'} />
 
         {actionError || bundleQuery.isError ? (
           <View style={{ gap: spacing.xs }}>
@@ -531,119 +354,14 @@ export default function HomeScreen() {
             ) : null}
           </View>
         ) : null}
-        <View
-          accessibilityRole="tablist"
-          style={[
-            styles.switcherTrack,
-            {
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-              borderRadius: radii.input,
-            },
-          ]}>
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: activeTab === 'partner' }}
-            onPress={() => setSelectedTab('partner')}
-            style={[
-              styles.switcherTab,
-              {
-                backgroundColor:
-                  activeTab === 'partner' ? colors.surfaceElevated : 'transparent',
-                borderRadius: radii.input - 2,
-              },
-            ]}>
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.switcherText,
-                {
-                  color: activeTab === 'partner' ? colors.ink : colors.inkMuted,
-                  fontWeight: activeTab === 'partner' ? '700' : '500',
-                },
-              ]}>
-              Partner
-            </Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: activeTab === 'mine' }}
-            onPress={() => setSelectedTab('mine')}
-            style={[
-              styles.switcherTab,
-              {
-                backgroundColor:
-                  activeTab === 'mine' ? colors.surfaceElevated : 'transparent',
-                borderRadius: radii.input - 2,
-              },
-            ]}>
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.switcherText,
-                {
-                  color: activeTab === 'mine' ? colors.ink : colors.inkMuted,
-                  fontWeight: activeTab === 'mine' ? '700' : '500',
-                },
-              ]}>
-              Yours ({dailyPostCount}/{maxDailyPosts})
-            </Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: activeTab === 'friends' }}
-            onPress={() => setSelectedTab('friends')}
-            style={[
-              styles.switcherTab,
-              {
-                backgroundColor:
-                  activeTab === 'friends' ? colors.surfaceElevated : 'transparent',
-                borderRadius: radii.input - 2,
-              },
-            ]}>
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.switcherText,
-                {
-                  color: activeTab === 'friends' ? colors.ink : colors.inkMuted,
-                  fontWeight: activeTab === 'friends' ? '700' : '500',
-                },
-              ]}>
-              Friends ({friendMomentsToday.length})
-            </Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: activeTab === 'together' }}
-            onPress={() => setSelectedTab('together')}
-            style={[
-              styles.switcherTab,
-              {
-                backgroundColor:
-                  activeTab === 'together' ? colors.surfaceElevated : 'transparent',
-                borderRadius: radii.input - 2,
-              },
-            ]}>
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.switcherText,
-                {
-                  color: activeTab === 'together' ? colors.ink : colors.inkMuted,
-                  fontWeight: activeTab === 'together' ? '700' : '500',
-                },
-              ]}>
-              Together
-            </Text>
-          </Pressable>
+        <View accessibilityRole="tablist" accessibilityLabel="Moment feeds" style={styles.switcherTrack}>
+          {([{ id: 'mine', label: 'Yours' }, { id: 'partner', label: 'Partner' }, { id: 'friends', label: 'Friends' }, { id: 'together', label: 'Together' }] as const).map((tab) => <Pressable key={tab.id} accessibilityRole="tab" accessibilityState={{ selected: activeTab === tab.id }} onPress={() => setSelectedTab(tab.id)} style={[styles.switcherTab, { backgroundColor: activeTab === tab.id ? colors.accent : colors.surface, borderRadius: radii.input }]}><Text style={[styles.switcherText, { color: activeTab === tab.id ? colors.onAccent : colors.ink }]}>{tab.label}</Text></Pressable>)}
         </View>
 
         {bundleQuery.isLoading && !bundle ? (
-          <SkeletonBlock height={360} label="Loading today's Moments..." />
+          <SkeletonBlock height={240} label="Loading today’s Moments…" />
+        ) : bundleQuery.isError && !bundle ? (
+          <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>Your feeds are unavailable until sync succeeds. Retry above to load today’s Moments.</Text>
         ) : activeTab === 'partner' ? (
           partnerMomentsToday.length > 0 ? (
             partnerMomentsToday[0].locked ? (
@@ -668,9 +386,9 @@ export default function HomeScreen() {
                         paddingVertical: spacing.sm,
                       },
                     ]}>
-                    <View style={[styles.unlockedDot, { backgroundColor: colors.success }]} />
+                    <View style={[styles.unlockedDot, { backgroundColor: colors.inkMuted }]} />
                     <Text style={[styles.unlockedBannerText, { color: colors.ink }]}>
-                      Reciprocal Moment unlocked · Both you and {partnerName} posted today
+                      Both you and {partnerName} have shared today
                     </Text>
                   </View>
                   {partnerMomentsToday.map((pm) => (
@@ -941,8 +659,10 @@ export default function HomeScreen() {
         <WidgetPreviewCard
           snapshot={widgetSync.snapshot}
           lastSyncedAt={widgetSync.lastSyncedAt}
+          loading={bundleQuery.isLoading || statusQuery.isLoading}
+          syncError={widgetSync.error}
           onPressCaptureLocked={() => openCameraModal()}
-          onPressOpenApp={() => setSelectedTab('partner')}
+          onPressOpenApp={() => setSelectedTab(widgetSync.snapshot?.partnerName === 'You' ? 'mine' : 'partner')}
           onPressSyncNow={widgetSync.forceSync}
         />
       </ScrollView>
@@ -955,51 +675,13 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: {
     flexGrow: 1,
-    maxWidth: 480,
+    maxWidth: APP_LAYOUT.maxContentWidth,
     width: '100%',
     alignSelf: 'center',
-    gap: 18,
-  },
-  headerBlock: {
-    gap: 12,
-  },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  brandColumn: {
-    gap: 2,
-  },
-  wordmark: {
-    fontSize: 30,
-    fontWeight: '700',
-    letterSpacing: -0.9,
-  },
-  subHeader: {
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: -0.2,
-  },
-  streakBadge: {
-    borderWidth: 1,
-    paddingHorizontal: 13,
-    paddingVertical: 6,
-    borderCurve: 'continuous',
-  },
-  streakText: {
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  quickNavRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 24,
   },
   quickNavPill: {
-    minHeight: 40,
-    borderWidth: 1,
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 8,
     alignItems: 'center',
@@ -1007,29 +689,17 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   quickNavText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   quotaCard: {
-    borderWidth: 1,
     gap: 12,
     borderCurve: 'continuous',
   },
-  quotaTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  quotaTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
   quotaSubtitle: {
     fontSize: 13,
-    marginTop: 2,
+    lineHeight: 20,
     fontVariant: ['tabular-nums'],
   },
   dotsRow: {
@@ -1038,9 +708,9 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   quotaDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    flex: 1,
+    height: 5,
+    borderRadius: 3,
     borderWidth: 1,
   },
   quickCameraChipsRow: {
@@ -1049,8 +719,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cameraModeChip: {
-    minHeight: 40,
-    borderWidth: 1,
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 8,
     alignItems: 'center',
@@ -1058,28 +727,28 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   cameraModeChipText: {
-    fontSize: 12,
+    fontSize: 15,
+    lineHeight: 22,
     fontWeight: '600',
-    letterSpacing: -0.2,
   },
   switcherTrack: {
     flexDirection: 'row',
-    borderWidth: 1,
-    padding: 3,
-    gap: 3,
-    borderCurve: 'continuous',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   switcherTab: {
-    flex: 1,
-    minHeight: 44,
-    paddingHorizontal: 4,
+    flexGrow: 1,
+    flexBasis: 110,
+    minHeight: 48,
+    paddingHorizontal: 12,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
   },
   switcherText: {
-    fontSize: 12,
-    letterSpacing: -0.2,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   feedStack: {
     gap: 18,
@@ -1093,12 +762,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   momentIndexLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '600',
   },
   friendsBanner: {
-    borderWidth: 1,
+    flexWrap: 'wrap',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1111,11 +780,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   friendsBannerSub: {
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 20,
   },
   addFriendBtn: {
-    minHeight: 40,
+    minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 9,
     alignItems: 'center',
@@ -1123,26 +792,25 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   addFriendBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   emptyCard: {
-    borderWidth: 1,
     alignItems: 'center',
     gap: 12,
     borderCurve: 'continuous',
   },
   emptyTitle: {
-    fontSize: 19,
-    fontWeight: '700',
-    letterSpacing: -0.4,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '600',
     textAlign: 'center',
     marginTop: 4,
   },
   emptyBody: {
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: 'center',
   },
   emptyActionsStack: {
@@ -1164,8 +832,8 @@ const styles = StyleSheet.create({
   },
   unlockedBannerText: {
     flex: 1,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '600',
   },
 });

@@ -1,0 +1,278 @@
+import { StatusBar } from 'expo-status-bar';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  AccessibilityInfo,
+  BackHandler,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TextInputProps,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { AppPressable, AppTextInput, PageHeader } from '@/components/ui/ScreenKit';
+import { useSessionStore } from '@/store/sessionStore';
+import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
+
+export function KeepItAuthForm({
+  initialMode,
+  onBack,
+}: {
+  initialMode: 'signup' | 'signin';
+  onBack: () => void;
+}) {
+  const { colors, radii, isDark } = useKeepItTheme();
+  const signUpWithPassword = useSessionStore((s) => s.signUpWithPassword);
+  const signInWithPassword = useSessionStore((s) => s.signInWithPassword);
+  const [mode, setMode] = useState(initialMode);
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
+  const emailInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const passwordInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const confirmInput = useRef<React.ComponentRef<typeof TextInput>>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const handleBack = useCallback(() => {
+    if (submitting.current) return;
+    Keyboard.dismiss();
+    onBack();
+  }, [onBack]);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBack();
+        return true;
+      });
+      return () => subscription.remove();
+    }
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return;
+        event.preventDefault();
+        handleBack();
+      };
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [handleBack]);
+
+  const statusMessage = loading
+    ? mode === 'signup' ? 'Creating your KeepIt account…' : 'Signing in to KeepIt…'
+    : '';
+
+  useEffect(() => {
+    if (Platform.OS === 'ios' && (statusMessage || error)) {
+      AccessibilityInfo.announceForAccessibility(error ?? statusMessage);
+    }
+  }, [error, statusMessage]);
+
+  const updateMode = (nextMode: 'signup' | 'signin') => {
+    if (submitting.current) return;
+    setError(null);
+    setMode(nextMode);
+  };
+
+  const handleSubmit = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setError(null);
+    setLoading(true);
+    Keyboard.dismiss();
+    try {
+      if (mode === 'signup') {
+        await signUpWithPassword({ displayName, email, password, confirmPassword });
+      } else {
+        await signInWithPassword({ email, password });
+      }
+      // NavigationGuard owns routing after the session store authenticates the user.
+    } catch (err) {
+      if (mounted.current) {
+        setError(err instanceof Error ? err.message : 'Authentication failed. Please try again.');
+      }
+    } finally {
+      submitting.current = false;
+      if (mounted.current) setLoading(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}
+        style={styles.flex}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={styles.scrollContent}>
+          <AppPressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to introduction"
+            accessibilityState={{ disabled: loading }}
+            disabled={loading}
+            onPress={handleBack}
+            style={styles.backButton}>
+            <Text style={[styles.modeText, { color: colors.inkMuted }]}>Back to intro</Text>
+          </AppPressable>
+          <PageHeader
+            title={mode === 'signup' ? 'Create your account' : 'Welcome back'}
+            subtitle="Keep every moment, together."
+          />
+          <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group }]}>
+            <View accessibilityRole="tablist" accessibilityLabel="KeepIt account access" style={[styles.modeTrack, { backgroundColor: colors.canvas, borderRadius: radii.input }]}>
+              {(['signup', 'signin'] as const).map((item) => (
+                <AppPressable
+                  key={item}
+                  accessibilityRole="tab"
+                  accessibilityLabel={item === 'signup' ? 'Create Account tab' : 'Sign In tab'}
+                  accessibilityState={{ selected: mode === item, disabled: loading }}
+                  disabled={loading}
+                  onPress={() => updateMode(item)}
+                  style={[styles.modeSegment, { borderRadius: radii.input, backgroundColor: mode === item ? colors.ink : 'transparent', opacity: loading ? 0.6 : 1 }]}>
+                  <Text style={[styles.modeText, { color: mode === item ? colors.canvas : colors.inkMuted }]}>
+                    {item === 'signup' ? 'Create Account' : 'Sign In'}
+                  </Text>
+                </AppPressable>
+              ))}
+            </View>
+
+            {mode === 'signup' ? (
+              <AuthField
+                key="input-first-name"
+                label="Your first name"
+                accessibilityLabel="Your first name"
+                value={displayName}
+                placeholder="Your name"
+                autoCapitalize="words"
+                autoComplete="given-name"
+                maxLength={40}
+                editable={!loading}
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => emailInput.current?.focus()}
+                onChangeText={(value) => { setError(null); setDisplayName(value); }}
+              />
+            ) : null}
+            <AuthField
+              key="input-email"
+              inputRef={emailInput}
+              label="Email"
+              accessibilityLabel="Email address"
+              value={email}
+              placeholder="email@example.com"
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              editable={!loading}
+              returnKeyType="next"
+              submitBehavior="submit"
+              onSubmitEditing={() => passwordInput.current?.focus()}
+              onChangeText={(value) => { setError(null); setEmail(value); }}
+            />
+            <AuthField
+              key="input-password"
+              inputRef={passwordInput}
+              label="Password"
+              accessibilityLabel="Password"
+              value={password}
+              placeholder={mode === 'signup' ? 'At least 6 characters' : 'Your password'}
+              autoCapitalize="none"
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              secureTextEntry
+              editable={!loading}
+              returnKeyType={mode === 'signup' ? 'next' : 'go'}
+              submitBehavior={mode === 'signup' ? 'submit' : 'blurAndSubmit'}
+              onChangeText={(value) => { setError(null); setPassword(value); }}
+              onSubmitEditing={() => {
+                if (mode === 'signup') confirmInput.current?.focus();
+                else void handleSubmit();
+              }}
+            />
+            {mode === 'signup' ? (
+              <AuthField
+                key="input-confirm-password"
+                inputRef={confirmInput}
+                label="Confirm password"
+                accessibilityLabel="Confirm password"
+                value={confirmPassword}
+                placeholder="Re-enter password"
+                autoCapitalize="none"
+                autoComplete="new-password"
+                secureTextEntry
+                editable={!loading}
+                returnKeyType="go"
+                onChangeText={(value) => { setError(null); setConfirmPassword(value); }}
+                onSubmitEditing={() => void handleSubmit()}
+              />
+            ) : null}
+            {error ? <InlineNotice message={error} tone="error" /> : null}
+            <KeepItButton
+              label={mode === 'signup' ? 'Create Account' : 'Sign In'}
+              loading={loading}
+              loadingLabel={mode === 'signup' ? 'Creating Account…' : 'Signing In…'}
+              disabled={loading}
+              onPress={() => void handleSubmit()}
+            />
+            {statusMessage ? (
+              <Text accessibilityLiveRegion="polite" style={[styles.status, { color: colors.inkMuted }]}>{statusMessage}</Text>
+            ) : null}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function AuthField({ label, inputRef, ...inputProps }: TextInputProps & { label: string; inputRef?: React.Ref<React.ComponentRef<typeof TextInput>> }) {
+  const { colors } = useKeepItTheme();
+  return (
+    <View style={styles.fieldGroup}>
+      <Text style={[styles.label, { color: colors.ink }]}>{label}</Text>
+      <AppTextInput ref={inputRef} {...inputProps} autoCorrect={false} style={styles.input} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  flex: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    maxWidth: APP_LAYOUT.maxContentWidth,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: APP_LAYOUT.pageInset,
+    paddingTop: 20,
+    paddingBottom: 32,
+    gap: 28,
+  },
+  backButton: { alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 16 },
+  card: { padding: APP_LAYOUT.cardPadding, gap: 20, borderCurve: 'continuous' },
+  modeTrack: { flexDirection: 'row', padding: 4, gap: 4 },
+  modeSegment: { flex: 1, paddingHorizontal: 4, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
+  modeText: { fontSize: 15, lineHeight: 22, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
+  fieldGroup: { gap: 8 },
+  label: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  input: { minHeight: 52, fontSize: 16, lineHeight: 22 },
+  status: { fontSize: 13, lineHeight: 20, textAlign: 'center' },
+});

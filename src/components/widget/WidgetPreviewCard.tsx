@@ -1,26 +1,15 @@
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
-import { DualFrameMark, RevealOnAppear } from '@/components/ui/Primitives';
-import { useSessionStore } from '@/store/sessionStore';
-import { MOCHY_SPRINGS } from '@/theme/motion';
+import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { AppPressable, SectionHeader } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { WidgetSnapshotPayload } from '@/types/database';
-
-import {
-  isKeepItWidgetPinned,
-  requestPinKeepItWidgetDetailed,
-} from '../../../modules/keepit-widget-bridge';
+import { isKeepItWidgetPinned, requestPinKeepItWidgetDetailed } from '../../../modules/keepit-widget-bridge';
 
 export type WidgetSizePreset = 'small' | 'medium';
-
 export interface WidgetPreviewCardProps {
   snapshot: WidgetSnapshotPayload | null;
   lastSyncedAt?: string | null;
@@ -28,1054 +17,107 @@ export interface WidgetPreviewCardProps {
   onPressCaptureLocked?: () => void;
   onPressSyncNow?: () => void | Promise<void>;
   initialSize?: WidgetSizePreset;
+  loading?: boolean;
+  syncError?: string | null;
 }
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 export function formatRelativeWidgetTime(isoString: string | null | undefined, nowMs = Date.now()): string {
-  if (!isoString) {
-    return 'Waiting';
-  }
+  if (!isoString) return 'Not synced yet';
   const parsed = new Date(isoString).getTime();
-  if (!Number.isFinite(parsed)) {
-    return 'Just now';
-  }
-  const diffSec = Math.max(0, Math.floor((nowMs - parsed) / 1000));
-  if (diffSec < 60) {
-    return 'Just now';
-  }
-  const mins = Math.floor(diffSec / 60);
-  if (mins < 60) {
-    return `${mins}m ago`;
-  }
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  if (!Number.isFinite(parsed)) return 'Time unavailable';
+  const seconds = Math.max(0, Math.floor((nowMs - parsed) / 1000));
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
 }
-
-function getActiveWidgetStatus(
-  snapshot: WidgetSnapshotPayload | null,
-  nowMs: number
-): { emoji: string | null; text: string } | null {
-  if (!snapshot || !snapshot.statusText) {
-    return null;
-  }
-  if (snapshot.statusExpiresAt) {
-    const expiresMs = new Date(snapshot.statusExpiresAt).getTime();
-    if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
-      return null;
-    }
-  }
-  return {
-    emoji: snapshot.statusEmoji,
-    text: snapshot.statusText,
-  };
-}
-
-export function WidgetPreviewCard({
-  snapshot,
-  lastSyncedAt,
-  onPressOpenApp,
-  onPressCaptureLocked,
-  onPressSyncNow,
-  initialSize = 'medium',
-}: WidgetPreviewCardProps) {
-  const { colors, radii, spacing, type } = useKeepItTheme();
-  const motionEnabled = useSessionStore((s) => s.motionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
-
-  const [sizePreset, setSizePreset] = useState<WidgetSizePreset>(initialSize);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+export function WidgetPreviewCard({ snapshot, lastSyncedAt, onPressOpenApp, onPressCaptureLocked, onPressSyncNow, initialSize = 'medium', loading = false, syncError }: WidgetPreviewCardProps) {
+  const { colors, radii } = useKeepItTheme();
+  const [size, setSize] = useState(initialSize);
+  const [now, setNow] = useState(() => Date.now());
   const [syncing, setSyncing] = useState(false);
   const [pinning, setPinning] = useState(false);
-  const [widgetPinned, setWidgetPinned] = useState(false);
-  const [pinStatusMessage, setPinStatusMessage] = useState<string | null>(null);
-  const widgetPopScale = useSharedValue(1);
-  const tapPressScale = useSharedValue(1);
-
-  // Refresh live relative time ("Just now" -> "12m ago") every 30s
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setNowMs(Date.now());
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
+  const [pinned, setPinned] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [failedPhotoUri, setFailedPhotoUri] = useState<string | null>(null);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(timer); }, []);
   useEffect(() => {
     let active = true;
-    void isKeepItWidgetPinned().then((pinned) => {
-      if (active && pinned) {
-        setWidgetPinned(true);
-      }
-    });
-    return () => {
-      active = false;
-    };
+    void isKeepItWidgetPinned().then((value) => { if (active) setPinned(value); }).catch(() => { if (active) setError('Could not check whether your widget is pinned. You can try adding it again.'); });
+    return () => { active = false; };
   }, []);
-
-  const handleSelectSize = (nextSize: WidgetSizePreset) => {
-    if (nextSize === sizePreset) {
-      return;
-    }
-    if (Platform.OS !== 'web') {
-      void Haptics.selectionAsync();
-    }
-    setSizePreset(nextSize);
-    if (motionEnabled) {
-      widgetPopScale.set(0.93);
-      widgetPopScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
-    } else {
-      widgetPopScale.set(1);
-    }
+  const busy = syncing || pinning;
+  const runSync = async () => {
+    if (!onPressSyncNow || busy) return;
+    setSyncing(true); setError(null); setMessage(null);
+    try { await onPressSyncNow(); setFailedPhotoUri(null); setNow(Date.now()); setMessage('Widget sync completed.'); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not sync the widget. Try again.'); }
+    finally { setSyncing(false); }
   };
-
-  const handleWidgetTap = () => {
-    if (Platform.OS !== 'web') {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    if (snapshot?.momentLocked && onPressCaptureLocked) {
-      onPressCaptureLocked();
-      return;
-    }
-    onPressOpenApp?.();
-  };
-
-  const handleManualSync = async () => {
-    if (!onPressSyncNow || syncing) return;
-    if (Platform.OS !== 'web') {
-      void Haptics.selectionAsync();
-    }
-    setSyncing(true);
+  const pin = async () => {
+    if (busy) return;
+    setPinning(true); setError(null); setMessage(null);
     try {
-      await onPressSyncNow();
-      setNowMs(Date.now());
-      if (motionEnabled) {
-        widgetPopScale.set(0.96);
-        widgetPopScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
-      }
-    } finally {
-      setSyncing(false);
-    }
+      await onPressSyncNow?.();
+      const result = await requestPinKeepItWidgetDetailed();
+      setPinned(result.pinned);
+      setMessage(result.pinned ? 'Widget pinned to your Home Screen.' : result.message);
+      if (result.pinned && Platform.OS !== 'web') void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not add the widget. Try again.'); }
+    finally { setPinning(false); }
   };
-
-  const handlePinWidget = async () => {
-    if (pinning) return;
-    if (Platform.OS !== 'web') {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }
-    setPinning(true);
-    try {
-      if (onPressSyncNow) {
-        await onPressSyncNow();
-      }
-      const pinRes = await requestPinKeepItWidgetDetailed();
-      if (pinRes.pinned) {
-        setWidgetPinned(true);
-        setPinStatusMessage(null);
-      } else {
-        setWidgetPinned(false);
-        setPinStatusMessage(pinRes.message);
-      }
-      if (motionEnabled) {
-        widgetPopScale.set(0.95);
-        widgetPopScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
-      }
-    } finally {
-      setPinning(false);
-    }
-  };
-
-  const widgetAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: widgetPopScale.get() * tapPressScale.get() }],
-  }));
-
+  const locked = Boolean(snapshot?.momentLocked);
+  const rawPhoto = !locked ? snapshot?.momentPhotoUri : null;
+  const photo = rawPhoto && !rawPhoto.startsWith('data:image/svg+xml') && rawPhoto !== failedPhotoUri ? rawPhoto : null;
+  const status = snapshot?.statusText && (!snapshot.statusExpiresAt || new Date(snapshot.statusExpiresAt).getTime() > now) ? `${snapshot.statusEmoji ? `${snapshot.statusEmoji} ` : ''}${snapshot.statusText}` : null;
+  const open = locked ? onPressCaptureLocked : onPressOpenApp;
   const partnerName = snapshot?.partnerName ?? 'Your partner';
-  const isLocked = Boolean(snapshot?.momentLocked);
-  const photoUri = !isLocked ? (snapshot?.momentPhotoUri ?? null) : null;
-  const frontPipUri = !isLocked ? (snapshot?.momentFrontPhotoUri ?? null) : null;
-  const activeStatus = getActiveWidgetStatus(snapshot, nowMs);
-
-  const referenceTimeIso = snapshot?.momentPostedAt ?? snapshot?.updatedAt ?? lastSyncedAt ?? null;
-  const timeAgo = formatRelativeWidgetTime(referenceTimeIso, nowMs);
-  const syncedLabel = lastSyncedAt
-    ? `Synced ${formatRelativeWidgetTime(lastSyncedAt, nowMs)}`
-    : 'Live preview';
-
-  const interactiveTargetAvailable = Boolean(
-    (isLocked && onPressCaptureLocked) || onPressOpenApp
-  );
-
-  return (
-    <RevealOnAppear revealKey="home-widget-preview-card">
-      <View
-        style={[
-          styles.outerGroup,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderRadius: radii.group,
-            padding: spacing.lg,
-            gap: spacing.md,
-          },
-        ]}>
-        {/* Header + Size Switcher */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerTitles}>
-            <Text
-              style={[
-                styles.sectionTitle,
-                {
-                  color: colors.ink,
-                  letterSpacing: type.titleTracking,
-                },
-              ]}>
-              Home Screen Widget
-            </Text>
-            <Text
-              style={[
-                styles.sectionSub,
-                {
-                  color: colors.inkMuted,
-                  letterSpacing: type.bodyTracking,
-                },
-              ]}>
-              {syncedLabel} · {partnerName}
-            </Text>
-          </View>
-
-          <View
-            accessibilityRole="tablist"
-            accessibilityLabel="Widget size selector"
-            style={[
-              styles.sizeToggleTrack,
-              {
-                backgroundColor: colors.canvas,
-                borderColor: colors.border,
-                borderRadius: radii.pill,
-              },
-            ]}>
-            <Pressable
-              accessibilityRole="tab"
-              accessibilityState={{ selected: sizePreset === 'small' }}
-              accessibilityLabel="Small 2x2 widget preview"
-              onPress={() => handleSelectSize('small')}
-              style={[
-                styles.sizeTogglePill,
-                {
-                  backgroundColor:
-                    sizePreset === 'small' ? colors.surfaceElevated : 'transparent',
-                  borderRadius: radii.pill,
-                },
-              ]}>
-              <Text
-                pointerEvents="none"
-                style={[
-                  styles.sizeToggleText,
-                  {
-                    color: sizePreset === 'small' ? colors.ink : colors.inkMuted,
-                    fontWeight: sizePreset === 'small' ? '700' : '600',
-                  },
-                ]}>
-                Small 2x2
-              </Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityRole="tab"
-              accessibilityState={{ selected: sizePreset === 'medium' }}
-              accessibilityLabel="Medium 4x2 widget preview"
-              onPress={() => handleSelectSize('medium')}
-              style={[
-                styles.sizeTogglePill,
-                {
-                  backgroundColor:
-                    sizePreset === 'medium' ? colors.surfaceElevated : 'transparent',
-                  borderRadius: radii.pill,
-                },
-              ]}>
-              <Text
-                pointerEvents="none"
-                style={[
-                  styles.sizeToggleText,
-                  {
-                    color: sizePreset === 'medium' ? colors.ink : colors.inkMuted,
-                    fontWeight: sizePreset === 'medium' ? '700' : '600',
-                  },
-                ]}>
-                Medium 4x2
-              </Text>
-            </Pressable>
-          </View>
+  const ownerPossessive = partnerName === 'You' ? 'your' : `${partnerName}’s`;
+  const photoBlock = <View style={[styles.photo, size === 'small' ? styles.smallPhoto : styles.mediumPhoto, { backgroundColor: colors.surfaceElevated, borderRadius: radii.input }]}>
+    {photo ? <><Image accessibilityLabel={`${ownerPossessive} widget photo`} source={{ uri: photo }} contentFit="cover" style={StyleSheet.absoluteFill} onError={() => setFailedPhotoUri(photo)} />{snapshot?.momentFrontPhotoUri && !snapshot.momentFrontPhotoUri.startsWith('data:image/svg+xml') ? <Image accessibilityLabel="Other camera view" source={{ uri: snapshot.momentFrontPhotoUri }} contentFit="cover" style={[styles.pip, { borderColor: colors.canvas }]} /> : null}</> : <Text style={[styles.secondary, { color: colors.inkMuted, textAlign: 'center' }]}>{locked ? 'Moment locked' : rawPhoto ? 'Photo unavailable' : 'No Moment photo'}</Text>}
+  </View>;
+  return <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group }]}>
+    <SectionHeader title="Your Home Screen widget" subtitle={lastSyncedAt ? `Last synced ${formatRelativeWidgetTime(lastSyncedAt, now).toLowerCase()}` : 'Preview only. No successful sync recorded yet.'} />
+    <View accessibilityRole="tablist" accessibilityLabel="Widget preview size" style={styles.tabs}>
+      {(['small', 'medium'] as const).map((option) => <AppPressable key={option} accessibilityRole="tab" accessibilityState={{ selected: size === option }} onPress={() => { setSize(option); if (Platform.OS !== 'web') void Haptics.selectionAsync(); }} style={[styles.tab, { backgroundColor: size === option ? colors.accent : colors.surfaceElevated, borderRadius: radii.input }]}><Text style={[styles.actionText, { color: size === option ? colors.onAccent : colors.ink }]}>{option === 'small' ? 'Small · 2×2' : 'Medium · 4×2'}</Text></AppPressable>)}
+    </View>
+    <View style={[styles.stage, { backgroundColor: colors.canvas, borderRadius: radii.card }]}>
+      {loading && !snapshot ? <Text accessibilityLiveRegion="polite" style={[styles.body, { color: colors.inkMuted }]}>Loading widget content…</Text> : !snapshot ? <View style={styles.empty}>
+        <Text style={[styles.title, { color: colors.ink }]}>No widget content yet</Text><Text style={[styles.body, { color: colors.inkMuted }]}>Sync to load the Moment and status currently available to your account. A preview is not proof that a widget is installed.</Text>
+      </View> : <AppPressable accessibilityRole="button" accessibilityLabel={locked ? `Capture your Moment to unlock ${ownerPossessive} widget photo` : `Open ${ownerPossessive} Moment from widget preview`} disabled={!open} onPress={open} style={[styles.preview, size === 'small' ? styles.small : styles.medium, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+        {photoBlock}
+        <View style={styles.copy}>
+          <Text numberOfLines={2} style={[styles.title, { color: colors.ink }]}>{partnerName}</Text>
+          <Text numberOfLines={3} style={[styles.body, { color: colors.ink }]}>{locked ? 'Post yours to unlock this Moment.' : status ?? snapshot.momentCaption ?? 'No active status or Moment caption.'}</Text>
+          <Text style={[styles.secondary, { color: colors.inkMuted }]}>{snapshot.momentPostedAt ? formatRelativeWidgetTime(snapshot.momentPostedAt, now) : 'No Moment posted yet'}</Text>
+          {snapshot.streakCount > 0 ? <Text style={[styles.secondary, { color: colors.inkMuted }]}>{snapshot.streakCount}-day streak</Text> : null}
         </View>
-
-        {/* Home Screen Stage */}
-        <View
-          style={[
-            styles.stageWell,
-            {
-              backgroundColor: colors.sheetSurface,
-              borderColor: colors.border,
-              borderRadius: radii.photo,
-              padding: spacing.lg,
-            },
-          ]}>
-          <AnimatedPressable
-            disabled={!interactiveTargetAvailable}
-            accessibilityRole="button"
-            accessibilityLabel={
-              isLocked
-                ? `${partnerName}'s widget Moment is locked. Tap to open camera and post yours`
-                : `${partnerName}'s Home Screen widget preview. Tap to open KeepIt`
-            }
-            onPressIn={() => {
-              if (!motionEnabled || !interactiveTargetAvailable) return;
-              tapPressScale.set(withSpring(0.975, MOCHY_SPRINGS.pressIn(motionSpeed)));
-            }}
-            onPressOut={() => {
-              if (!motionEnabled || !interactiveTargetAvailable) return;
-              tapPressScale.set(withSpring(1, MOCHY_SPRINGS.pressRelease(motionSpeed)));
-            }}
-            onPress={handleWidgetTap}
-            style={[
-              sizePreset === 'small' ? styles.smallWidgetShell : styles.mediumWidgetShell,
-              {
-                backgroundColor: colors.canvas,
-                borderColor: colors.border,
-                borderRadius: radii.photo,
-              },
-              widgetAnimatedStyle,
-            ]}>
-            {!snapshot ? (
-              <View style={styles.emptyShell}>
-                <Text
-                  style={[
-                    styles.emptyTitle,
-                    { color: colors.ink, letterSpacing: type.titleTracking },
-                  ]}>
-                  Pair to activate widget
-                </Text>
-                <Text
-                  style={[
-                    styles.emptyBody,
-                    { color: colors.inkMuted, letterSpacing: type.bodyTracking },
-                  ]}
-                  numberOfLines={sizePreset === 'small' ? 3 : 2}>
-                  Once paired, your partner’s daily Moment and live status appear right here.
-                </Text>
-              </View>
-            ) : sizePreset === 'small' ? (
-              /* Small 2x2 Widget Surface */
-              <View style={styles.smallInner}>
-                {photoUri ? (
-                  <>
-                    <Image
-                      source={{ uri: photoUri }}
-                      contentFit="cover"
-                      style={StyleSheet.absoluteFill}
-                    />
-                    <View style={styles.photoScrim} />
-                  </>
-                ) : (
-                  <View
-                    style={[
-                      StyleSheet.absoluteFill,
-                      {
-                        backgroundColor: isLocked ? colors.surfaceElevated : '#5B3427',
-                      },
-                    ]}>
-                    {!isLocked ? <View style={styles.stylizedSunGlow} /> : null}
-                  </View>
-                )}
-
-                {/* Top row: partner name + relative time */}
-                <View style={styles.smallTopBar}>
-                  <Text
-                    numberOfLines={1}
-                    style={[
-                      styles.smallPartnerName,
-                      {
-                        color: photoUri ? '#FFFFFF' : colors.ink,
-                        letterSpacing: type.bodyTracking,
-                      },
-                    ]}>
-                    {partnerName}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.timeAgoBadgeText,
-                      { color: photoUri ? 'rgba(255,255,255,0.78)' : colors.inkMuted },
-                    ]}>
-                    {timeAgo}
-                  </Text>
-                </View>
-
-                {/* Center locked motif when Moment is locked */}
-                {isLocked ? (
-                  <View style={styles.smallLockedCenter}>
-                    <View
-                      style={[
-                        styles.lockedSilhouetteMini,
-                        {
-                          backgroundColor: colors.accentSoft,
-                          borderColor: colors.accent,
-                        },
-                      ]}
-                    />
-                  </View>
-                ) : null}
-
-                {/* Bottom row: locked callout, status pill, or caption */}
-                <View style={styles.smallBottomBar}>
-                  {isLocked ? (
-                    <View>
-                      <Text
-                        style={[
-                          styles.lockedHeadlineSmall,
-                          { color: colors.ink, letterSpacing: type.bodyTracking },
-                        ]}>
-                        Moment locked
-                      </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.lockedSubSmall, { color: colors.inkMuted }]}>
-                        Tap to capture yours
-                      </Text>
-                    </View>
-                  ) : activeStatus ? (
-                    <View
-                      style={[
-                        styles.widgetStatusChip,
-                        {
-                          backgroundColor: photoUri ? 'rgba(20, 20, 22, 0.88)' : colors.surface,
-                          borderColor: photoUri ? 'rgba(255, 255, 255, 0.12)' : colors.border,
-                          borderRadius: radii.pill,
-                        },
-                      ]}>
-                      <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.widgetStatusText,
-                          { color: photoUri ? '#FFFFFF' : colors.ink },
-                        ]}>
-                        {activeStatus.emoji ? `${activeStatus.emoji} ` : ''}
-                        {activeStatus.text}
-                      </Text>
-                    </View>
-                  ) : snapshot.momentCaption ? (
-                    <Text
-                      numberOfLines={2}
-                      style={[
-                        styles.smallCaption,
-                        { color: photoUri ? '#FFFFFF' : colors.ink },
-                      ]}>
-                      {snapshot.momentCaption}
-                    </Text>
-                  ) : (
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.lockedSubSmall,
-                        { color: photoUri ? 'rgba(255,255,255,0.78)' : colors.inkMuted },
-                      ]}>
-                      {photoUri ? 'Tap to view Moment' : 'No Moment posted yet'}
-                    </Text>
-                  )}
-                  <View style={styles.smallWatermarkRow}>
-                    <View style={styles.watermarkPill}>
-                      <Text style={styles.watermarkText}>#KeepIt</Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            ) : (
-              /* Medium 4x2 Widget Surface */
-              <View style={styles.mediumInner}>
-                {/* Left Moment Photo Squircle */}
-                <View
-                  style={[
-                    styles.mediumPhotoTile,
-                    {
-                      backgroundColor: colors.surface,
-                      borderColor: colors.border,
-                      borderRadius: radii.card,
-                    },
-                  ]}>
-                  {isLocked ? (
-                    <View style={styles.lockedTileContent}>
-                      <View
-                        style={[
-                          styles.lockedSilhouetteMini,
-                          {
-                            backgroundColor: colors.accentSoft,
-                            borderColor: colors.accent,
-                          },
-                        ]}
-                      />
-                      <Text style={[styles.lockedTileLabel, { color: colors.ink }]}>Locked</Text>
-                    </View>
-                  ) : photoUri ? (
-                    <>
-                      <Image
-                        source={{ uri: photoUri }}
-                        contentFit="cover"
-                        style={StyleSheet.absoluteFill}
-                      />
-                      {frontPipUri ? (
-                        <View
-                          style={[
-                            styles.miniPipFrame,
-                            {
-                              backgroundColor: colors.surfaceElevated,
-                              borderColor: colors.canvas,
-                            },
-                          ]}>
-                          <Image
-                            source={{ uri: frontPipUri }}
-                            contentFit="cover"
-                            style={StyleSheet.absoluteFill}
-                          />
-                        </View>
-                      ) : null}
-                      <View style={styles.photoCornerWatermark}>
-                        <Text style={styles.watermarkText}>#KeepIt</Text>
-                      </View>
-                    </>
-                  ) : (
-                    <View style={[styles.stylizedFallbackTile, { backgroundColor: colors.surfaceElevated }]}>
-                      <DualFrameMark size={36} />
-                      <View style={styles.photoCornerWatermark}>
-                        <Text style={styles.watermarkText}>#KeepIt</Text>
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Right Status & Moment Details */}
-                <View style={styles.mediumRightCol}>
-                  <View style={styles.mediumTopRow}>
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.mediumPartnerName,
-                        {
-                          color: colors.ink,
-                          letterSpacing: type.titleTracking,
-                        },
-                      ]}>
-                      {partnerName}
-                    </Text>
-
-                    {snapshot.streakCount > 0 ? (
-                      <View
-                        style={[
-                          styles.streakMiniPill,
-                          {
-                            backgroundColor: colors.accentSoft,
-                            borderRadius: radii.pill,
-                          },
-                        ]}>
-                        <Text style={[styles.streakMiniText, { color: colors.accent }]}>
-                          {snapshot.streakCount}d
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-
-                  {activeStatus ? (
-                    <View
-                      style={[
-                        styles.widgetStatusChip,
-                        {
-                          backgroundColor: colors.surface,
-                          borderColor: colors.border,
-                          borderRadius: radii.pill,
-                          alignSelf: 'flex-start',
-                        },
-                      ]}>
-                      <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.widgetStatusText, { color: colors.ink }]}>
-                        {activeStatus.emoji ? `${activeStatus.emoji} ` : ''}
-                        {activeStatus.text}
-                      </Text>
-                    </View>
-                  ) : (
-                    <Text style={[styles.noStatusText, { color: colors.inkMuted }]}>
-                      No active status
-                    </Text>
-                  )}
-
-                  <View style={styles.mediumSpacer} />
-
-                  <Text
-                    numberOfLines={2}
-                    style={[
-                      styles.mediumCaptionLine,
-                      {
-                        color: isLocked
-                          ? colors.inkMuted
-                          : snapshot.momentCaption
-                            ? colors.ink
-                            : colors.inkMuted,
-                        letterSpacing: type.bodyTracking,
-                      },
-                    ]}>
-                    {isLocked
-                      ? `Post your Moment to unlock ${partnerName}’s photo.`
-                      : snapshot.momentCaption
-                        ? snapshot.momentCaption
-                        : photoUri
-                          ? 'Captured today’s Moment.'
-                          : 'Waiting for today’s daily window.'}
-                  </Text>
-
-                  <View style={styles.mediumFooterRow}>
-                    <Text style={[styles.timeAgoBadgeText, { color: colors.inkMuted }]}>
-                      {timeAgo}
-                    </Text>
-                    <Text style={[styles.dotSeparator, { color: colors.inkMuted }]}>·</Text>
-                    <Text style={[styles.tapActionHint, { color: colors.accent }]}>
-                      {isLocked ? 'Tap to capture' : 'Tap to open'}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            )}
-          </AnimatedPressable>
-        </View>
-
-        {/* Confirmation Badge when Pinned */}
-        {widgetPinned ? (
-          <View
-            style={[
-              styles.pinnedConfirmationBadge,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.success,
-                borderRadius: radii.pill,
-              },
-            ]}>
-            <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
-            <Text style={[styles.pinnedConfirmationText, { color: colors.ink }]}>
-              Widget pinned & active on Home Screen
-            </Text>
-          </View>
-        ) : pinStatusMessage ? (
-          <View
-            style={[
-              styles.pinnedConfirmationBadge,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.border,
-                borderRadius: radii.card,
-              },
-            ]}>
-            <Text style={[styles.pinnedConfirmationText, { color: colors.inkMuted }]}>
-              {pinStatusMessage}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Bottom Actions: Pin Widget to Home Screen + Sync Widget Now */}
-        <View style={styles.footerRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Pin Widget to Home Screen"
-            disabled={pinning}
-            onPress={() => {
-              void handlePinWidget();
-            }}
-            style={[
-              styles.pinWidgetButton,
-              {
-                backgroundColor: colors.badgeBg,
-                borderRadius: radii.pill,
-                opacity: pinning ? 0.65 : 1,
-              },
-            ]}>
-            <Text pointerEvents="none" style={[styles.pinWidgetButtonText, { color: colors.badgeFg }]}>
-              {pinning
-                ? 'Pinning…'
-                : widgetPinned
-                  ? 'Pinned to Home Screen'
-                  : 'Pin Widget to Home Screen'}
-            </Text>
-          </Pressable>
-
-          {onPressSyncNow ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Sync Widget Now"
-              disabled={syncing}
-              onPress={() => {
-                void handleManualSync();
-              }}
-              style={[
-                styles.syncChip,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.border,
-                  borderRadius: radii.pill,
-                  opacity: syncing ? 0.6 : 1,
-                },
-              ]}>
-              <Text pointerEvents="none" style={[styles.syncChipText, { color: colors.ink }]}>
-                {syncing ? 'Syncing…' : 'Sync Widget Now'}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-    </RevealOnAppear>
-  );
+      </AppPressable>}
+    </View>
+    <Text style={[styles.secondary, { color: colors.inkMuted }]}>Preview size does not change the size installed on your device. Resize it on your Home Screen.</Text>
+    {error || syncError ? <InlineNotice tone="error" message={error ?? syncError!} /> : null}
+    {message ? <Text accessibilityLiveRegion="polite" style={[styles.body, { color: colors.ink }]}>{message}</Text> : null}
+    {pinned ? <Text style={[styles.secondary, { color: colors.ink }]}>Widget pin confirmed on this device.</Text> : null}
+    <KeepItButton label={pinned ? 'Add another widget' : 'Add to Home Screen'} loadingLabel="Requesting widget…" variant="secondary" loading={pinning} disabled={busy || loading} onPress={() => void pin()} />
+    {onPressSyncNow ? <KeepItButton label={error || syncError ? 'Retry widget sync' : 'Sync widget now'} loadingLabel="Syncing widget…" variant="secondary" loading={syncing} disabled={busy || loading} onPress={() => void runSync()} /> : null}
+  </View>;
 }
-
 const styles = StyleSheet.create({
-  outerGroup: {
-    borderWidth: 1,
-    borderCurve: 'continuous',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    flexWrap: 'wrap',
-  },
-  headerTitles: {
-    flexShrink: 1,
-    gap: 2,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  sectionSub: {
-    fontSize: 12,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  sizeToggleTrack: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 3,
-    borderWidth: 1,
-  },
-  sizeTogglePill: {
-    minHeight: 38,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sizeToggleText: {
-    fontSize: 12,
-    letterSpacing: -0.25,
-  },
-  stageWell: {
-    borderWidth: 1,
-    borderCurve: 'continuous',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  smallWidgetShell: {
-    width: 164,
-    height: 164,
-    borderWidth: 1,
-    borderCurve: 'continuous',
-    overflow: 'hidden',
-  },
-  mediumWidgetShell: {
-    width: '100%',
-    minHeight: 154,
-    borderWidth: 1,
-    borderCurve: 'continuous',
-    overflow: 'hidden',
-  },
-  emptyShell: {
-    flex: 1,
-    padding: 14,
-    justifyContent: 'center',
-    gap: 6,
-  },
-  emptyTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  emptyBody: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  smallInner: {
-    flex: 1,
-    padding: 12,
-    justifyContent: 'space-between',
-  },
-  photoScrim: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.42)',
-  },
-  smallTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
-  smallPartnerName: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  smallLockedCenter: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lockedSilhouetteMini: {
-    width: 30,
-    height: 38,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderCurve: 'continuous',
-  },
-  smallBottomBar: {
-    gap: 4,
-  },
-  lockedHeadlineSmall: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  lockedSubSmall: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  smallCaption: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-  },
-  widgetStatusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderWidth: 1,
-    maxWidth: '100%',
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  widgetStatusText: {
-    flexShrink: 1,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  mediumInner: {
-    flex: 1,
-    flexDirection: 'row',
-    padding: 12,
-    gap: 12,
-  },
-  mediumPhotoTile: {
-    width: 108,
-    minHeight: 128,
-    borderWidth: 1,
-    borderCurve: 'continuous',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  miniPipFrame: {
-    position: 'absolute',
-    top: 7,
-    left: 7,
-    width: 30,
-    height: 40,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderCurve: 'continuous',
-    overflow: 'hidden',
-  },
-  lockedTileContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    padding: 8,
-  },
-  lockedTileLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  emptyFrameOutline: {
-    width: 26,
-    height: 34,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderCurve: 'continuous',
-  },
-  emptyTileLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  mediumRightCol: {
-    flex: 1,
-    gap: 6,
-  },
-  mediumTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  mediumPartnerName: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  streakMiniPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  streakMiniText: {
-    fontSize: 11,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  noStatusText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  mediumSpacer: {
-    flex: 1,
-    minHeight: 2,
-  },
-  mediumCaptionLine: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  mediumFooterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  timeAgoBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  dotSeparator: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  tapActionHint: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  smallWatermarkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  watermarkPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(18, 16, 20, 0.72)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.16)',
-  },
-  photoCornerWatermark: {
-    position: 'absolute',
-    left: 7,
-    bottom: 7,
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(18, 16, 20, 0.72)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.16)',
-  },
-  watermarkText: {
-    color: '#FFF8EC',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.25,
-  },
-  stylizedFallbackTile: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#5B3427',
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  stylizedSunGlow: {
-    position: 'absolute',
-    top: -18,
-    right: -18,
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(246, 178, 107, 0.42)',
-  },
-  stylizedCupEmoji: {
-    fontSize: 22,
-    marginBottom: 10,
-  },
-  pinnedConfirmationBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 7,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderWidth: 1,
-  },
-  pinnedConfirmationText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  footerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  pinWidgetButton: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pinWidgetButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  syncChip: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  syncChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  card: { padding: 20, gap: 16 },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tab: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 12 },
+  stage: { padding: 12, alignItems: 'center' },
+  preview: { padding: 12, gap: 14, maxWidth: '100%' },
+  small: { width: 220 },
+  medium: { width: '100%', flexDirection: 'row', flexWrap: 'wrap' },
+  photo: { overflow: 'hidden', alignItems: 'center', justifyContent: 'center', padding: 12 },
+  smallPhoto: { width: '100%', aspectRatio: 1.4 },
+  mediumPhoto: { flexBasis: 110, flexGrow: 1, aspectRatio: 1 },
+  pip: { position: 'absolute', top: 8, left: 8, width: 34, height: 46, borderWidth: 2, borderRadius: 8 },
+  copy: { flexGrow: 1, flexBasis: 120, gap: 6, minWidth: 0 },
+  empty: { padding: 8, gap: 10 },
+  title: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
+  body: { fontSize: 15, lineHeight: 22 },
+  secondary: { fontSize: 13, lineHeight: 20 },
+  actionText: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
 });
