@@ -17,8 +17,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
 import {
   buildSimulatedDualPhotos,
   fetchTodayMomentBundle,
@@ -35,6 +40,7 @@ import {
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
+import { MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 import {
   MAX_DAILY_MOMENTS_PER_DAY,
@@ -79,9 +85,21 @@ export default function CameraModalScreen() {
   const user = useSessionStore((s) => s.user);
   const partner = useSessionStore((s) => s.partner);
   const couple = useSessionStore((s) => s.couple);
+  const motionEnabled = useSessionStore((s) => s.motionEnabled);
+  const motionSpeed = useSessionStore((s) => s.motionSpeed);
 
   const [permission, requestPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
+  const [pipSwapped, setPipSwapped] = useState(false);
+  const pipRevealScale = useSharedValue(1);
+  const shutterFlashOpacity = useSharedValue(0);
+
+  const pipAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pipRevealScale.get() }],
+  }));
+  const shutterFlashStyle = useAnimatedStyle(() => ({
+    opacity: shutterFlashOpacity.get(),
+  }));
   const cameraRef = useRef<CameraView | null>(null);
   const cameraReadyResolverRef = useRef<(() => void) | null>(null);
   const activeRecordingPromiseRef = useRef<Promise<{ uri: string } | undefined> | null>(null);
@@ -166,9 +184,7 @@ export default function CameraModalScreen() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    if (Platform.OS !== 'web' && permission && !permission.granted && permission.canAskAgain) {
-      void requestPermission().catch(() => {});
-    }
+    // Do not fire cold OS permission prompt on mount: let user see in-viewfinder primer first
     return () => {
       isMountedRef.current = false;
       clearInterval(recordingTimerRef.current);
@@ -195,7 +211,7 @@ export default function CameraModalScreen() {
 
   /**
    * Fixes Bug #1 ("when start from front camera its not working (only opposite is working)"):
-   * Captures the CURRENT active lens first (`facing` — whether 'front' or 'back'),
+   * Captures the CURRENT active lens first (`facing` - whether 'front' or 'back'),
    * then switches to the opposite lens (`oppositeLens = firstLens === 'front' ? 'back' : 'front'`),
    * waits for `onCameraReady` + ISP stabilization, captures the second lens, and assigns
    * `backUri` / `frontUri` accurately regardless of starting lens.
@@ -292,6 +308,11 @@ export default function CameraModalScreen() {
           setBackUri(resolvedBack);
           setFrontUri(resolvedFront);
           setCapturedAtIso(captureTimestamp);
+          setPipSwapped(false);
+          if (motionEnabled) {
+            pipRevealScale.set(0.65);
+            pipRevealScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+          }
           setStage('preview');
           return;
         }
@@ -302,14 +323,21 @@ export default function CameraModalScreen() {
 
     if (!isMountedRef.current) return;
     setStage('capturing_first');
+    if (motionEnabled) {
+      shutterFlashOpacity.set(0.35);
+      shutterFlashOpacity.set(withTiming(0, mochyTiming(180, undefined, motionEnabled, motionSpeed)));
+    }
     await waitMs(150);
     if (!isMountedRef.current) return;
     setStage('switching_lens');
     setFacing(secondLens);
-    await waitMs(200);
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync();
+    }
+    await waitMs(220);
     if (!isMountedRef.current) return;
     setStage('capturing_second');
-    await waitMs(120);
+    await waitMs(140);
     if (!isMountedRef.current) return;
 
     const simulated = buildSimulatedDualPhotos({
@@ -330,6 +358,11 @@ export default function CameraModalScreen() {
     setBackUri(simulated.backUri);
     setFrontUri(simulated.frontUri);
     setCapturedAtIso(captureTimestamp);
+    setPipSwapped(false);
+    if (motionEnabled) {
+      pipRevealScale.set(0.65);
+      pipRevealScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+    }
     setStage('preview');
   };
 
@@ -811,21 +844,81 @@ export default function CameraModalScreen() {
                     </Text>
 
                     {permission && !permission.granted && Platform.OS !== 'web' ? (
-                      <KeepItButton
-                        label="Grant Camera Access"
-                        variant="secondary"
-                        onPress={() => {
-                          if (permission.canAskAgain) {
-                            void requestPermission();
-                          } else {
-                            void Linking.openSettings();
+                      <View style={styles.permissionPrimerBox}>
+                        <Text style={[styles.permissionPrimerText, { color: colors.inkMuted }]}>
+                          KeepIt uses your front and back cameras together to capture both sides of your Moment. You can also capture a simulated dual frame below without granting camera access.
+                        </Text>
+                        <KeepItButton
+                          label={
+                            permission.canAskAgain
+                              ? 'Allow Front & Back Camera'
+                              : 'Open System Camera Settings'
                           }
-                        }}
-                      />
+                          variant="secondary"
+                          onPress={() => {
+                            if (permission.canAskAgain) {
+                              void requestPermission();
+                            } else {
+                              void Linking.openSettings();
+                            }
+                          }}
+                        />
+                      </View>
                     ) : null}
                   </View>
                 )}
 
+                {/* Shutter Flash Feedback Layer */}
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFill,
+                    { backgroundColor: '#FFFFFF' },
+                    shutterFlashStyle,
+                  ]}
+                />
+
+                {/* Signature 2-Step Dual Capture Progress Banner */}
+                {stage === 'capturing_first' ||
+                stage === 'switching_lens' ||
+                stage === 'capturing_second' ? (
+                  <View
+                    style={[
+                      styles.dualCaptureBanner,
+                      {
+                        backgroundColor: colors.chromeGlass,
+                        borderColor: colors.accent,
+                        borderRadius: radii.pill,
+                      },
+                    ]}>
+                    <View style={styles.dualStepDots}>
+                      <View
+                        style={[
+                          styles.dualStepDot,
+                          { backgroundColor: colors.accent },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.dualStepDot,
+                          {
+                            backgroundColor:
+                              stage === 'capturing_second'
+                                ? colors.accent
+                                : colors.border,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={[styles.dualCaptureBannerText, { color: colors.ink }]}>
+                      {stage === 'capturing_first'
+                        ? `1/2 Capturing ${captureOriginLens === 'front' ? 'Front Selfie' : 'Back Scene'}…`
+                        : stage === 'switching_lens'
+                          ? 'Flipping to companion lens…'
+                          : `2/2 Capturing ${captureOriginLens === 'front' ? 'Back PIP' : 'Front PIP'}…`}
+                    </Text>
+                  </View>
+                ) : null}
                 {/* Live Filter Color Grade Overlay */}
                 {activeFilterMeta.tintOverlay !== 'transparent' ? (
                   <View
@@ -847,6 +940,7 @@ export default function CameraModalScreen() {
               {/* Filter Carousel Strip */}
               <ScrollView
                 horizontal
+                style={{ flexGrow: 0 }}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.filterStrip}>
                 {MOMENT_FILTER_PRESETS.map((preset) => {
@@ -953,9 +1047,9 @@ export default function CameraModalScreen() {
                     borderRadius: radii.photo,
                   },
                 ]}>
-                {backUri ? (
+                {backUri && frontUri ? (
                   <Image
-                    source={{ uri: backUri }}
+                    source={{ uri: pipSwapped ? frontUri : backUri }}
                     contentFit="cover"
                     style={[
                       styles.full,
@@ -976,21 +1070,35 @@ export default function CameraModalScreen() {
                   />
                 ) : null}
 
-                {frontUri ? (
-                  <View
-                    style={[
-                      styles.previewPip,
-                      {
-                        backgroundColor: colors.surfaceElevated,
-                        borderColor: colors.canvas,
-                      },
-                    ]}>
-                    <Image
-                      source={{ uri: frontUri }}
-                      contentFit="cover"
-                      style={styles.full}
-                    />
-                  </View>
+                {frontUri && backUri ? (
+                  <Animated.View style={[styles.previewPipAnchor, pipAnimatedStyle]}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Swap front and back preview lenses"
+                      onPress={() => {
+                        if (Platform.OS !== 'web') {
+                          void Haptics.selectionAsync();
+                        }
+                        if (motionEnabled) {
+                          pipRevealScale.set(0.86);
+                          pipRevealScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+                        }
+                        setPipSwapped((prev) => !prev);
+                      }}
+                      style={[
+                        styles.previewPip,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.canvas,
+                        },
+                      ]}>
+                      <Image
+                        source={{ uri: pipSwapped ? backUri : frontUri }}
+                        contentFit="cover"
+                        style={styles.full}
+                      />
+                    </Pressable>
+                  </Animated.View>
                 ) : null}
 
                 {/* On-Photo Emoji Stickers & Text Overlays (Tap to select, long-press to remove) */}
@@ -1031,7 +1139,7 @@ export default function CameraModalScreen() {
                             {
                               backgroundColor:
                                 ov.bgStyle === 'neon'
-                                  ? '#A855F7'
+                                  ? '#282830'
                                   : ov.bgStyle === 'solid'
                                     ? '#141416'
                                     : 'rgba(20, 20, 22, 0.78)',
@@ -1110,21 +1218,21 @@ export default function CameraModalScreen() {
                   {selectedMusic ? (
                     <View style={styles.photoMusicBadge}>
                       <Text numberOfLines={1} style={styles.photoMusicBadgeText}>
-                        🎵 {selectedMusic.title} · {selectedMusic.artist}
+                        Track: {selectedMusic.title} · {selectedMusic.artist}
                       </Text>
                     </View>
                   ) : null}
                   {locationLabel ? (
                     <View style={styles.photoMusicBadge}>
                       <Text numberOfLines={1} style={styles.photoMusicBadgeText}>
-                        📍 {locationLabel}
+                        {locationLabel}
                       </Text>
                     </View>
                   ) : null}
                   {taggedUsers.length > 0 ? (
                     <View style={styles.photoMusicBadge}>
                       <Text numberOfLines={1} style={styles.photoMusicBadgeText}>
-                        🏷️ {taggedUsers.map((t) => `@${t.username}`).join(' ')}
+                        {taggedUsers.map((t) => `@${t.username}`).join(' ')}
                       </Text>
                     </View>
                   ) : null}
@@ -1140,6 +1248,7 @@ export default function CameraModalScreen() {
               {/* Post-Capture Filter Switcher */}
               <ScrollView
                 horizontal
+                style={{ flexGrow: 0 }}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.filterStrip}>
                 {MOMENT_FILTER_PRESETS.map((preset) => {
@@ -1194,7 +1303,7 @@ export default function CameraModalScreen() {
                     },
                   ]}>
                   <Text style={[styles.toolChipText, { color: colors.ink }]}>
-                    ✨ Emoji / Text {overlays.length > 0 ? `(${overlays.length})` : ''}
+                    Stickers / Text {overlays.length > 0 ? `(${overlays.length})` : ''}
                   </Text>
                 </Pressable>
 
@@ -1214,7 +1323,7 @@ export default function CameraModalScreen() {
                     },
                   ]}>
                   <Text style={[styles.toolChipText, { color: colors.ink }]}>
-                    📍 {locationLabel ? locationLabel.split('·')[0].trim() : 'Location'}
+                    {locationLabel ? locationLabel.split('·')[0].trim() : 'Location'}
                   </Text>
                 </Pressable>
 
@@ -1234,7 +1343,7 @@ export default function CameraModalScreen() {
                     },
                   ]}>
                   <Text style={[styles.toolChipText, { color: colors.ink }]}>
-                    🎵 {selectedMusic ? selectedMusic.title : 'Music'}
+                    {selectedMusic ? selectedMusic.title : 'Music'}
                   </Text>
                 </Pressable>
 
@@ -1254,7 +1363,7 @@ export default function CameraModalScreen() {
                     },
                   ]}>
                   <Text style={[styles.toolChipText, { color: colors.ink }]}>
-                    🏷️ Tag {taggedUsers.length > 0 ? `(${taggedUsers.length})` : 'People'}
+                    Tag {taggedUsers.length > 0 ? `(${taggedUsers.length})` : 'People'}
                   </Text>
                 </Pressable>
               </View>
@@ -1418,7 +1527,7 @@ export default function CameraModalScreen() {
                         },
                       ]}>
                       <Text style={[styles.presetChipText, { color: colors.ink }]}>
-                        📍 Use Current GPS
+                        Use Current GPS
                       </Text>
                     </Pressable>
                     {QUICK_LOCATION_PRESETS.map((loc) => (
@@ -1751,9 +1860,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   topButton: {
-    minHeight: 40,
+    minHeight: 44,
+    minWidth: 44,
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
   },
   topButtonText: {
     fontSize: 14,
@@ -1762,7 +1872,7 @@ const styles = StyleSheet.create({
   timerPill: {
     borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
   },
   timerText: {
     fontSize: 13,
@@ -1771,6 +1881,7 @@ const styles = StyleSheet.create({
   },
   modeSwitchRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
@@ -1783,8 +1894,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   modeTab: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    minHeight: 38,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 999,
   },
   modeTabText: {
@@ -1792,9 +1906,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   lensPill: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lensPillText: {
     fontSize: 12,
@@ -1867,16 +1984,18 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   filterStrip: {
+    alignItems: 'center',
     gap: 8,
     paddingVertical: 2,
   },
   filterChip: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
   filterSwatch: {
     width: 10,
@@ -1916,10 +2035,13 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 8,
   },
-  previewPip: {
+  previewPipAnchor: {
     position: 'absolute',
     top: 16,
     left: 16,
+    zIndex: 5,
+  },
+  previewPip: {
     width: 108,
     height: 144,
     borderRadius: 16,
@@ -1988,9 +2110,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   toolChip: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   toolChipText: {
     fontSize: 12,
@@ -2006,8 +2131,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   emojiStickerBtn: {
-    width: 42,
-    height: 42,
+    width: 44,
+    height: 44,
     borderRadius: 12,
     borderWidth: 1,
     alignItems: 'center',
@@ -2020,12 +2145,17 @@ const styles = StyleSheet.create({
   },
   styleSwitchRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
   },
   smallChoicePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   wrapRow: {
     flexDirection: 'row',
@@ -2033,9 +2163,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   presetChip: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   presetChipText: {
     fontSize: 12,
@@ -2076,9 +2209,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   audienceChip: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   captionWrap: {
     gap: 6,
@@ -2096,5 +2232,43 @@ const styles = StyleSheet.create({
   previewActions: {
     gap: 10,
     marginTop: 4,
+  },
+  permissionPrimerBox: {
+    width: '100%',
+    gap: 10,
+    marginTop: 6,
+    alignItems: 'center',
+  },
+  permissionPrimerText: {
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  dualCaptureBanner: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    zIndex: 8,
+  },
+  dualStepDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  dualStepDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  dualCaptureBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
 });

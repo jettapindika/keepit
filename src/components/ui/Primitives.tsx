@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -111,7 +111,7 @@ export function MochyCard({
   const motionEnabled = useSessionStore((s) => s.motionEnabled);
   const motionSpeed = useSessionStore((s) => s.motionSpeed);
   const scale = useSharedValue(1);
-
+  const [focused, setFocused] = useState(false);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.get() }],
   }));
@@ -137,6 +137,8 @@ export function MochyCard({
     <AnimatedPressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       onPressIn={() => {
         if (!motionEnabled) return;
         scale.set(withSpring(0.985, MOCHY_SPRINGS.pressIn(motionSpeed)));
@@ -155,7 +157,7 @@ export function MochyCard({
         styles.cardBase,
         {
           backgroundColor: colors.surface,
-          borderColor: colors.border,
+          borderColor: focused ? colors.accent : colors.border,
           borderRadius: radii.card,
         },
         animatedStyle,
@@ -192,6 +194,7 @@ export function KeepItButton({
   const motionEnabled = useSessionStore((s) => s.motionEnabled);
   const motionSpeed = useSessionStore((s) => s.motionSpeed);
   const scale = useSharedValue(1);
+  const [focused, setFocused] = useState(false);
   const isDisabled = disabled || loading;
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -233,8 +236,9 @@ export function KeepItButton({
     ghost: colors.inkMuted,
   }[variant];
 
-  const borderColor =
-    variant === 'secondary'
+  const borderColor = focused
+    ? colors.ink
+    : variant === 'secondary'
       ? colors.border
       : variant === 'danger'
         ? colors.danger
@@ -246,6 +250,8 @@ export function KeepItButton({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: isDisabled, busy: loading }}
       disabled={isDisabled}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       onPress={handlePress}
@@ -255,16 +261,16 @@ export function KeepItButton({
           backgroundColor: bgByVariant,
           borderRadius: radii.pill,
           borderColor,
-          borderWidth: variant === 'secondary' || variant === 'danger' ? 1 : 0,
+          borderWidth: focused ? 2 : variant === 'secondary' || variant === 'danger' ? 1 : 0,
           opacity: isDisabled ? 0.45 : 1,
         },
         animatedStyle,
         style,
       ]}>
       {loading ? (
-        <ActivityIndicator size="small" color={textByVariant} />
+        <ActivityIndicator pointerEvents="none" size="small" color={textByVariant} />
       ) : (
-        <Text numberOfLines={1} style={[styles.buttonText, { color: textByVariant }]}>
+        <Text pointerEvents="none" numberOfLines={1} style={[styles.buttonText, { color: textByVariant }]}>
           {label}
         </Text>
       )}
@@ -347,6 +353,51 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
   );
 }
 
+/**
+ * Flat structural skeleton block for perceived performance while loading queries (R-27)
+ */
+export function SkeletonBlock({
+  height = 120,
+  borderRadius,
+  label = 'Loading content...',
+  style,
+}: {
+  height?: number;
+  borderRadius?: number;
+  label?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const { colors, radii } = useKeepItTheme();
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityLabel={label}
+      style={[
+        styles.skeletonBase,
+        {
+          height,
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+          borderRadius: borderRadius ?? radii.group,
+        },
+        style,
+      ]}>
+      <View
+        style={[
+          styles.skeletonLinePrimary,
+          { backgroundColor: colors.surfaceElevated, borderRadius: radii.pill },
+        ]}
+      />
+      <View
+        style={[
+          styles.skeletonLineSecondary,
+          { backgroundColor: colors.surfaceElevated, borderRadius: radii.pill },
+        ]}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   cardBase: {
     borderWidth: 1,
@@ -377,5 +428,21 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '600',
     letterSpacing: -0.2,
+  },
+  skeletonBase: {
+    width: '100%',
+    borderWidth: 1,
+    padding: 20,
+    justifyContent: 'center',
+    gap: 10,
+    borderCurve: 'continuous',
+  },
+  skeletonLinePrimary: {
+    width: '54%',
+    height: 14,
+  },
+  skeletonLineSecondary: {
+    width: '36%',
+    height: 11,
   },
 });

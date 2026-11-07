@@ -152,7 +152,7 @@ export function StatusHeaderCard({
               },
               nudgeStyle,
             ]}>
-            <Text style={[styles.nudgeText, { color: colors.ink }]}>
+            <Text pointerEvents="none" style={[styles.nudgeText, { color: colors.ink }]}>
               {nudging ? 'Sending...' : 'Nudge'}
             </Text>
           </AnimatedPressable>
@@ -221,7 +221,7 @@ export function StatusHeaderCard({
           },
           myRowStyle,
         ]}>
-        <View style={styles.flex}>
+        <View pointerEvents="none" style={styles.flex}>
           <Text style={[styles.myTitle, { color: colors.ink }]}>
             {myActive
               ? `You: ${myActive.emoji} ${myActive.text}`
@@ -235,6 +235,7 @@ export function StatusHeaderCard({
         </View>
 
         <View
+          pointerEvents="none"
           style={[
             styles.actionChip,
             {
@@ -285,9 +286,9 @@ const styles = StyleSheet.create({
   },
   nudgePill: {
     borderWidth: 1,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
-    minHeight: 34,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
     borderCurve: 'continuous',
@@ -336,9 +337,9 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   actionChip: {
-    paddingHorizontal: 13,
-    paddingVertical: 7,
-    minHeight: 32,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    minHeight: 38,
     justifyContent: 'center',
     borderCurve: 'continuous',
   },

@@ -379,13 +379,12 @@ export function InteractiveCoupleMap({
   }
 
   const friendScreenPins = showFriends
-    ? activeFriends.map((friend, index) => {
+    ? activeFriends.map((friend) => {
         const pos = projectLatLng(friend.lat!, friend.lng!);
-        const palette = index % 2 === 0 ? '#A855F7' : '#0EA5E9';
         return {
           record: friend,
           pos,
-          color: palette,
+          color: colors.badgeBg,
           name: friend.display_name ?? 'Friend',
         };
       })
@@ -536,7 +535,7 @@ export function InteractiveCoupleMap({
         subtitle: friend.place_name ?? 'Sharing with Friends Circle',
         distanceText: friendDist,
         updatedText: `Updated ${formatRelativeTimeAgo(friend.location_updated_at)}`,
-        accentColor: '#A855F7',
+        accentColor: colors.accent,
       };
     }
 
@@ -797,7 +796,7 @@ export function InteractiveCoupleMap({
                     transform: [{ scale: isSelected ? 1.12 : 1 }],
                   },
                 ]}>
-                <Text style={styles.friendPinInitial}>
+                <Text style={[styles.friendPinInitial, { color: colors.badgeFg }]}>
                   {(name.trim().slice(0, 1) || 'F').toUpperCase()}
                 </Text>
               </View>
@@ -1231,6 +1230,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pinPressable: {
+    minWidth: 44,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1352,8 +1353,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   inspectCloseBtn: {
-    width: 24,
-    height: 24,
+    minWidth: 44,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1364,9 +1365,10 @@ const styles = StyleSheet.create({
   bottomBarRow: {
     position: 'absolute',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: 6,
     zIndex: 40,
   },
   scalePill: {
@@ -1392,18 +1394,25 @@ const styles = StyleSheet.create({
   },
   controlsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 5,
   },
   controlChip: {
+    minHeight: 44,
+    minWidth: 44,
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   controlChipCompact: {
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   controlChipText: {
     fontSize: 11,

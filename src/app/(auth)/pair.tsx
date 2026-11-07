@@ -79,7 +79,7 @@ export default function PairScreen() {
         setInviteRecord(record);
         if (record.state === 'active') {
           await useSessionStore.getState().refreshPairing();
-          router.replace('/(tabs)');
+          router.navigate('/(tabs)');
         }
       } catch (err) {
         setInviteError(err instanceof Error ? err.message : 'Could not generate invite code.');
@@ -100,7 +100,7 @@ export default function PairScreen() {
         setInviteRecord(record);
         if (record.state === 'active') {
           await useSessionStore.getState().refreshPairing();
-          router.replace('/(tabs)');
+          router.navigate('/(tabs)');
         }
       })
       .catch((err) => {
@@ -184,7 +184,7 @@ export default function PairScreen() {
             void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
           setPairing(payload.couple, payload.joinerProfile);
-          router.replace('/(tabs)');
+          router.navigate('/(tabs)');
         });
       })
       .subscribe((status) => {
@@ -236,7 +236,7 @@ export default function PairScreen() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
       setPairing(snapshot.couple, snapshot.partner);
-      router.replace('/(tabs)');
+      router.navigate('/(tabs)');
     } catch (err) {
       if (Platform.OS !== 'web') {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -396,7 +396,13 @@ export default function PairScreen() {
           <KeepItButton
             label="Continue Solo / Without Partner"
             variant="secondary"
-            onPress={() => router.replace('/(tabs)')}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/(tabs)');
+              }
+            }}
           />
           <KeepItButton
             label="Sign Out"

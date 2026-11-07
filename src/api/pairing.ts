@@ -364,7 +364,7 @@ export async function upsertUserProfile(params: {
     banner_color:
       params.bannerColor !== undefined
         ? params.bannerColor
-        : (existing?.banner_color ?? '#D95D39'),
+        : (existing?.banner_color ?? '#1C1C1E'),
     website:
       params.website !== undefined
         ? params.website.trim().slice(0, 80)

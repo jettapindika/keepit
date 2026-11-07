@@ -203,6 +203,7 @@ function CenterCameraShutter({ onPress }: { onPress: () => void }) {
           animatedStyle,
         ]}>
         <View
+          pointerEvents="none"
           style={[
             styles.cameraInnerCore,
             {
@@ -335,6 +336,10 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
         navigateToTab(route.key);
         return;
       }
+      if (navigation?.navigate) {
+        navigation.navigate(route.name, route.params);
+        return;
+      }
       const href = route.name === 'index' ? '/(tabs)' : (`/(tabs)/${route.name}` as never);
       router.navigate(href);
     };
@@ -356,7 +361,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
 
   return (
     <View
-      pointerEvents="box-none"
+      pointerEvents="none"
       style={[
         styles.outerWrap,
         {
@@ -364,6 +369,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
         },
       ]}>
       <View
+        pointerEvents="auto"
         onLayout={handleLayout}
         style={[
           styles.pillChrome,
@@ -414,7 +420,6 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'visible',
     borderCurve: 'continuous',
-    boxShadow: '0px 8px 24px rgba(0, 0, 0, 0.28)',
   },
   slidingHighlight: {
     position: 'absolute',
@@ -456,7 +461,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
-    boxShadow: '0px 6px 18px rgba(0, 0, 0, 0.36)',
   },
   cameraInnerCore: {
     width: '100%',

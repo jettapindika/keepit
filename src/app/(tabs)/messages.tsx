@@ -24,7 +24,7 @@ import {
   sendDirectMessage,
   toggleDirectMessageReaction,
 } from '@/api/social';
-import { InlineNotice, RevealOnAppear } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { DirectMessageRecord } from '@/types/database';
@@ -32,10 +32,11 @@ import { DirectMessageRecord } from '@/types/database';
 const DM_REACTION_EMOJIS = ['❤️', '🔥', '🥹', '😂', '👍'] as const;
 
 const QUICK_NUDGE_CHIPS = [
-  'Miss you ❤️',
-  'Post your #KeepIt! 📸',
-  'Where are you? 📍',
+  'Miss you',
+  'Post your #KeepIt',
+  'Where are you?',
 ] as const;
+
 
 interface PeerOption {
   id: string;
@@ -88,7 +89,7 @@ export default function MessagesScreen() {
         displayName: partner?.display_name ?? 'Partner',
         username: partner?.username ?? 'partner',
         roleLabel: 'Partner',
-        accentColor: partner?.banner_color ?? '#D95D39',
+        accentColor: '#1E1E21',
         avatarPath: partner?.avatar_path ?? null,
         isPartner: true,
       });
@@ -101,7 +102,7 @@ export default function MessagesScreen() {
         displayName: fr.friend_profile.display_name,
         username: fr.friend_profile.username ?? fr.friend_id,
         roleLabel: fr.relationship === 'bestie' ? 'Bestie' : 'Friend',
-        accentColor: fr.friend_profile.banner_color ?? '#8B5CF6',
+        accentColor: '#1E1E21',
         avatarPath: fr.friend_profile.avatar_path ?? null,
         isPartner: false,
       });
@@ -113,11 +114,12 @@ export default function MessagesScreen() {
         displayName: params.peerName ?? 'Friend',
         username: (params.peerName ?? 'friend').toLowerCase().replace(/[^a-z0-9]/g, ''),
         roleLabel: 'Friend',
-        accentColor: '#0EA5E9',
+        accentColor: '#1E1E21',
         avatarPath: null,
         isPartner: false,
       });
     }
+
 
 
     return list;
@@ -308,6 +310,7 @@ export default function MessagesScreen() {
     }
   };
 
+
   const handleToggleReaction = async (messageId: string, emoji: string) => {
     triggerHaptic();
     try {
@@ -358,8 +361,9 @@ export default function MessagesScreen() {
             <View style={styles.headerActions}>
               <Pressable
                 accessibilityRole="button"
+
                 accessibilityLabel="Open Profile & Friends"
-                onPress={() => router.push('/(tabs)/profile' as never)}
+                onPress={() => router.navigate('/(tabs)/profile' as never)}
                 style={[
                   styles.iconPillButton,
                   {
@@ -368,7 +372,7 @@ export default function MessagesScreen() {
                     borderRadius: radii.pill,
                   },
                 ]}>
-                <Text style={[styles.iconPillText, { color: colors.ink }]}>👤</Text>
+                <Text pointerEvents="none" style={[styles.iconPillText, { color: colors.ink }]}>Friends</Text>
               </Pressable>
             </View>
           </View>
@@ -453,12 +457,26 @@ export default function MessagesScreen() {
           </View>
         ) : null}
 
-        {errorMsg ? (
-          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm }}>
-            <InlineNotice message={errorMsg} tone="error" />
+        {errorMsg || messagesQuery.isError ? (
+          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.xs }}>
+            <InlineNotice
+              message={
+                errorMsg ??
+                (messagesQuery.error instanceof Error
+                  ? messagesQuery.error.message
+                  : 'Could not load conversation messages.')
+              }
+              tone="error"
+            />
+            {messagesQuery.isError ? (
+              <KeepItButton
+                label="Retry Messages"
+                variant="secondary"
+                onPress={() => void messagesQuery.refetch()}
+              />
+            ) : null}
           </View>
         ) : null}
-
         {/* Chat Message Thread */}
         <ScrollView
           ref={scrollRef as never}
@@ -504,7 +522,7 @@ export default function MessagesScreen() {
                 Say hi to {activePeer.displayName}
               </Text>
               <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
-                Send a note, react with emojis, or toggle 🔥 15s for a disappearing Snap Once message.
+                Send a note, react to a message, or toggle 15s Snap for a disappearing message.
               </Text>
             </View>
           ) : (
@@ -549,7 +567,7 @@ export default function MessagesScreen() {
                       <Text
                         numberOfLines={2}
                         style={[styles.momentReplyLabel, { color: colors.inkMuted }]}>
-                        📸 Replied to Moment · {msg.reply_moment_preview}
+                        Replied to Moment · {msg.reply_moment_preview}
                       </Text>
                     </View>
                   ) : null}
@@ -584,21 +602,21 @@ export default function MessagesScreen() {
                           backgroundColor: hasViewerOpened
                             ? colors.surface
                             : isRevealedNow
-                              ? '#2A1410'
+                              ? colors.surfaceElevated
                               : isMine
-                                ? '#D95D39'
+                                ? colors.accentSoft
                                 : colors.surfaceElevated,
                           borderColor: isRevealedNow
-                            ? '#F97316'
+                            ? colors.warning
                             : hasViewerOpened
                               ? colors.border
-                              : '#F97316',
+                              : colors.warning,
                           borderRadius: radii.card,
                         },
                       ]}>
                       {hasViewerOpened && !isRevealedNow ? (
                         <View style={styles.snapRow}>
-                          <Text style={styles.snapIcon}>💨</Text>
+                          <Text style={[styles.snapIcon, { color: colors.inkMuted }]}>15s</Text>
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.snapStatusTitle, { color: colors.inkMuted }]}>
                               Opened · Expired
@@ -611,25 +629,27 @@ export default function MessagesScreen() {
                       ) : isRevealedNow ? (
                         <View style={{ gap: 6 }}>
                           <View style={styles.snapCountdownHeader}>
-                            <Text style={styles.snapLiveBadge}>
-                              {isMine ? '🔥 YOUR SNAP PREVIEW (TAP TO HIDE)' : '🔥 SNAP ONCE'}
+                            <Text style={[styles.snapLiveBadge, { color: colors.warning }]}>
+                              {isMine ? 'YOUR SNAP PREVIEW (TAP TO HIDE)' : 'SNAP ONCE'}
                             </Text>
                             {!isMine && activeRemainingSecs !== undefined ? (
-                              <View style={styles.countdownPill}>
-                                <Text style={styles.countdownPillText}>{activeRemainingSecs}s</Text>
+                              <View style={[styles.countdownPill, { backgroundColor: colors.warning }]}>
+                                <Text style={[styles.countdownPillText, { color: '#000000' }]}>
+                                  {activeRemainingSecs}s
+                                </Text>
                               </View>
                             ) : null}
                           </View>
-                          <Text style={styles.snapRevealedText}>{msg.text}</Text>
+                          <Text style={[styles.snapRevealedText, { color: colors.ink }]}>{msg.text}</Text>
                         </View>
                       ) : (
                         <View style={styles.snapRow}>
-                          <Text style={styles.snapIcon}>🔥</Text>
+                          <Text style={[styles.snapIcon, { color: colors.warning }]}>15s</Text>
                           <View style={{ flex: 1 }}>
                             <Text
                               style={[
                                 styles.snapStatusTitle,
-                                { color: isMine ? '#FFFFFF' : colors.ink },
+                                { color: colors.ink },
                               ]}>
                               {isMine
                                 ? peerOpenedMine
@@ -640,7 +660,7 @@ export default function MessagesScreen() {
                             <Text
                               style={[
                                 styles.snapHintText,
-                                { color: isMine ? 'rgba(255,255,255,0.82)' : colors.inkMuted },
+                                { color: colors.inkMuted },
                               ]}>
                               Disappears 15 seconds after opening
                             </Text>
@@ -884,6 +904,7 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
@@ -891,6 +912,7 @@ const styles = StyleSheet.create({
   },
   headerTitleCol: {
     flex: 1,
+    minWidth: 160,
     gap: 2,
   },
   screenTitle: {
@@ -908,26 +930,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  simButton: {
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderCurve: 'continuous',
-  },
-  simButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.2,
-  },
   iconPillButton: {
     borderWidth: 1,
-    width: 36,
-    height: 36,
+    minWidth: 44,
+    minHeight: 44,
+    paddingHorizontal: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconPillText: {
-    fontSize: 15,
+    fontSize: 12,
+    fontWeight: '700',
   },
   switcherWrap: {
     borderBottomWidth: 1,
@@ -937,12 +950,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   peerPill: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     paddingVertical: 6,
-    paddingLeft: 7,
-    paddingRight: 13,
+    paddingLeft: 8,
+    paddingRight: 14,
     gap: 8,
     borderCurve: 'continuous',
   },
@@ -1024,7 +1038,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   snapIcon: {
-    fontSize: 20,
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   snapStatusTitle: {
     fontSize: 14,
@@ -1117,9 +1133,12 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   nudgeChip: {
+    minHeight: 40,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   nudgeChipText: {
@@ -1134,8 +1153,8 @@ const styles = StyleSheet.create({
   },
   snapToggleBtn: {
     borderWidth: 1,
-    paddingHorizontal: 11,
-    height: 42,
+    paddingHorizontal: 12,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1146,13 +1165,13 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     borderWidth: 1,
-    height: 42,
+    minHeight: 44,
     paddingHorizontal: 15,
     fontSize: 14,
     fontWeight: '500',
   },
   sendBtn: {
-    height: 42,
+    minHeight: 44,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',

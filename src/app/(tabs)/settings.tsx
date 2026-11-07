@@ -52,7 +52,6 @@ export default function SettingsScreen() {
 
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'your partner';
-
   const executeUnpair = async () => {
     if (!user) return;
     setError(null);
@@ -137,7 +136,7 @@ export default function SettingsScreen() {
           {
             paddingHorizontal: spacing.xl,
             paddingTop: spacing.xl,
-            paddingBottom: 118,
+            paddingBottom: 148,
           },
         ]}>
         <RevealOnAppear revealKey="settings-header">
@@ -433,7 +432,7 @@ const styles = StyleSheet.create({
   },
   segmentOption: {
     flex: 1,
-    minHeight: 40,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
@@ -455,9 +454,11 @@ const styles = StyleSheet.create({
   },
   speedChip: {
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    minHeight: 32,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
   },

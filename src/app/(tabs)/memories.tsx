@@ -216,7 +216,7 @@ export default function MemoriesScreen() {
           {
             paddingHorizontal: spacing.xl,
             paddingTop: spacing.xl,
-            paddingBottom: 116,
+            paddingBottom: 148,
           },
         ]}>
         {/* Top Title + Streak Summary Pill */}
@@ -277,7 +277,7 @@ export default function MemoriesScreen() {
                   borderRadius: radii.pill,
                 },
               ]}>
-              <Text style={[styles.monthNavText, { color: colors.ink }]}>{'< Prev'}</Text>
+              <Text pointerEvents="none" style={[styles.monthNavText, { color: colors.ink }]}>{'< Prev'}</Text>
             </Pressable>
 
             <Text
@@ -303,7 +303,7 @@ export default function MemoriesScreen() {
                   opacity: isAtCurrentMonth ? 0.36 : 1,
                 },
               ]}>
-              <Text style={[styles.monthNavText, { color: colors.ink }]}>{'Next >'}</Text>
+              <Text pointerEvents="none" style={[styles.monthNavText, { color: colors.ink }]}>{'Next >'}</Text>
             </Pressable>
           </View>
         </RevealOnAppear>
@@ -727,8 +727,8 @@ const styles = StyleSheet.create({
   },
   monthNavBtn: {
     paddingHorizontal: 14,
-    paddingVertical: 9,
-    minHeight: 38,
+    paddingVertical: 10,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',

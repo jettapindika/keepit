@@ -356,9 +356,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   closeBtn: {
-    minHeight: 36,
-    paddingHorizontal: 8,
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 12,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   closeText: {
     fontSize: 14,
@@ -439,6 +441,7 @@ const styles = StyleSheet.create({
   },
   durationSegment: {
     flex: 1,
+    minHeight: 44,
     borderWidth: 1,
     paddingVertical: 10,
     paddingHorizontal: 6,

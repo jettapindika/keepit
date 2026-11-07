@@ -326,7 +326,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       if (error || !data?.user) {
         if (error && /Email not confirmed/i.test(error.message)) {
-          // Email confirmation is disabled for now — allow signing in without inbox verification
+          // Email confirmation is disabled for now: allow signing in without inbox verification
           const savedRaw = await AsyncStorage.getItem(SESSION_STORAGE_KEY).catch(() => null);
           const savedSlice: Partial<PersistedSessionSlice> | null = savedRaw
             ? JSON.parse(savedRaw)

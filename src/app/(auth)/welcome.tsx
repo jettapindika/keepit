@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
   },
   modeSegment: {
     flex: 1,
-    minHeight: 40,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',

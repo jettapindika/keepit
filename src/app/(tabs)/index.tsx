@@ -20,6 +20,7 @@ import {
   InlineNotice,
   KeepItButton,
   RevealOnAppear,
+  SkeletonBlock,
 } from '@/components/ui/Primitives';
 import { WidgetPreviewCard } from '@/components/widget/WidgetPreviewCard';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
@@ -282,7 +283,7 @@ export default function HomeScreen() {
           {
             paddingHorizontal: spacing.xl,
             paddingTop: spacing.xl,
-            paddingBottom: 128,
+            paddingBottom: 148,
           },
         ]}>
         <RevealOnAppear revealKey="home-header">
@@ -293,7 +294,7 @@ export default function HomeScreen() {
                 <Text style={[styles.subHeader, { color: colors.inkMuted }]}>
                   {isPartnerPaired
                     ? `${user?.display_name ?? 'You'} & ${partnerName}`
-                    : `${user?.display_name ?? 'You'} · ${user?.is_private ? '🔒 Private Dump' : 'Solo & Friends Circle'}`}
+                    : `${user?.display_name ?? 'You'} · ${user?.is_private ? 'Private Dump' : 'Solo & Friends Circle'}`}
                 </Text>
               </View>
 
@@ -316,7 +317,7 @@ export default function HomeScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open Memories Calendar"
-                onPress={() => router.push('/(tabs)/memories')}
+                onPress={() => router.navigate('/(tabs)/memories')}
                 style={[
                   styles.quickNavPill,
                   {
@@ -325,28 +326,14 @@ export default function HomeScreen() {
                     borderRadius: radii.pill,
                   },
                 ]}>
-                <Text style={[styles.quickNavText, { color: colors.ink }]}>Memories</Text>
+                <Text pointerEvents="none" style={[styles.quickNavText, { color: colors.ink }]}>Memories</Text>
               </Pressable>
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open Direct Messages"
-                onPress={() => router.push('/(tabs)/messages' as never)}
-                style={[
-                  styles.quickNavPill,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.quickNavText, { color: colors.ink }]}>DMs</Text>
-              </Pressable>
-
+              {/* DMs are directly in the bottom dock; keep header utilities focused on Memories, Settings, and Pairing */}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open Settings"
-                onPress={() => router.push('/(tabs)/settings')}
+                onPress={() => router.navigate('/(tabs)/settings')}
                 style={[
                   styles.quickNavPill,
                   {
@@ -355,14 +342,14 @@ export default function HomeScreen() {
                     borderRadius: radii.pill,
                   },
                 ]}>
-                <Text style={[styles.quickNavText, { color: colors.inkMuted }]}>Settings</Text>
+                <Text pointerEvents="none" style={[styles.quickNavText, { color: colors.inkMuted }]}>Settings</Text>
               </Pressable>
 
               {!isPartnerPaired ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Optional: Pair with a Partner"
-                  onPress={() => router.push('/(auth)/pair')}
+                  onPress={() => router.navigate('/(auth)/pair')}
                   style={[
                     styles.quickNavPill,
                     {
@@ -371,7 +358,7 @@ export default function HomeScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.quickNavText, { color: colors.ink }]}>
+                  <Text pointerEvents="none" style={[styles.quickNavText, { color: colors.ink }]}>
                     + Pair Partner
                   </Text>
                 </Pressable>
@@ -477,7 +464,7 @@ export default function HomeScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.cameraModeChipText, { color: colors.ink }]}>
+                  <Text pointerEvents="none" style={[styles.cameraModeChipText, { color: colors.ink }]}>
                     Front Camera
                   </Text>
                 </Pressable>
@@ -496,7 +483,7 @@ export default function HomeScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.cameraModeChipText, { color: colors.ink }]}>
+                  <Text pointerEvents="none" style={[styles.cameraModeChipText, { color: colors.ink }]}>
                     Video
                   </Text>
                 </Pressable>
@@ -515,7 +502,7 @@ export default function HomeScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.cameraModeChipText, { color: colors.inkMuted }]}>
+                  <Text pointerEvents="none" style={[styles.cameraModeChipText, { color: colors.inkMuted }]}>
                     Back Lens
                   </Text>
                 </Pressable>
@@ -524,8 +511,26 @@ export default function HomeScreen() {
           </View>
         </RevealOnAppear>
 
-        {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
-
+        {actionError || bundleQuery.isError ? (
+          <View style={{ gap: spacing.xs }}>
+            <InlineNotice
+              message={
+                actionError ??
+                (bundleQuery.error instanceof Error
+                  ? bundleQuery.error.message
+                  : 'Could not sync today’s Moments.')
+              }
+              tone="error"
+            />
+            {bundleQuery.isError ? (
+              <KeepItButton
+                label="Retry Sync"
+                variant="secondary"
+                onPress={() => void bundleQuery.refetch()}
+              />
+            ) : null}
+          </View>
+        ) : null}
         <View
           accessibilityRole="tablist"
           style={[
@@ -637,7 +642,9 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        {activeTab === 'partner' ? (
+        {bundleQuery.isLoading && !bundle ? (
+          <SkeletonBlock height={360} label="Loading today's Moments..." />
+        ) : activeTab === 'partner' ? (
           partnerMomentsToday.length > 0 ? (
             partnerMomentsToday[0].locked ? (
               <LockedMomentCard
@@ -648,28 +655,46 @@ export default function HomeScreen() {
                 onCaptureMine={() => openCameraModal()}
               />
             ) : (
-              <View style={styles.feedStack}>
-                {partnerMomentsToday.map((pm) => (
-                  <DualMomentCard
-                    key={pm.id}
-                    moment={pm}
-                    authorName={pm.author_name ?? partnerName}
-                    backPhotoUrl={pm.back_photo_url ?? pm.back_photo_path ?? ''}
-                    frontPhotoUrl={pm.front_photo_url ?? pm.front_photo_path ?? ''}
-                    blurhash={pm.back_blurhash || DEFAULT_WARM_BLURHASH}
-                    caption={pm.caption}
-                    postedAtIso={pm.posted_at}
-                    lateBySeconds={pm.late_by_seconds}
-                    isLate={pm.is_late}
-                    retakeCount={pm.retake_count}
-                    currentUserId={user?.id}
-                    coupleId={couple?.id}
-                    isOwner={false}
-                    onUpdated={refreshMoments}
-                    onDeleted={refreshMoments}
-                  />
-                ))}
-              </View>
+              <RevealOnAppear revealKey={`partner-unlocked-${partnerMomentsToday[0].id}`}>
+                <View style={styles.feedStack}>
+                  <View
+                    style={[
+                      styles.unlockedBanner,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderColor: colors.border,
+                        borderRadius: radii.card,
+                        paddingHorizontal: spacing.md,
+                        paddingVertical: spacing.sm,
+                      },
+                    ]}>
+                    <View style={[styles.unlockedDot, { backgroundColor: colors.success }]} />
+                    <Text style={[styles.unlockedBannerText, { color: colors.ink }]}>
+                      Reciprocal Moment unlocked · Both you and {partnerName} posted today
+                    </Text>
+                  </View>
+                  {partnerMomentsToday.map((pm) => (
+                    <DualMomentCard
+                      key={pm.id}
+                      moment={pm}
+                      authorName={pm.author_name ?? partnerName}
+                      backPhotoUrl={pm.back_photo_url ?? pm.back_photo_path ?? ''}
+                      frontPhotoUrl={pm.front_photo_url ?? pm.front_photo_path ?? ''}
+                      blurhash={pm.back_blurhash || DEFAULT_WARM_BLURHASH}
+                      caption={pm.caption}
+                      postedAtIso={pm.posted_at}
+                      lateBySeconds={pm.late_by_seconds}
+                      isLate={pm.is_late}
+                      retakeCount={pm.retake_count}
+                      currentUserId={user?.id}
+                      coupleId={couple?.id}
+                      isOwner={false}
+                      onUpdated={refreshMoments}
+                      onDeleted={refreshMoments}
+                    />
+                  ))}
+                </View>
+              </RevealOnAppear>
             )
           ) : (
             <View
@@ -807,7 +832,7 @@ export default function HomeScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add Friend"
-                onPress={() => router.push('/(tabs)/profile' as never)}
+                onPress={() => router.navigate('/(tabs)/profile' as never)}
                 style={[
                   styles.addFriendBtn,
                   {
@@ -860,7 +885,7 @@ export default function HomeScreen() {
                 <KeepItButton
                   label="Add Friend"
                   variant="secondary"
-                  onPress={() => router.push('/(tabs)/profile' as never)}
+                  onPress={() => router.navigate('/(tabs)/profile' as never)}
                 />
               </View>
             )}
@@ -973,9 +998,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   quickNavPill: {
+    minHeight: 40,
     borderWidth: 1,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   quickNavText: {
@@ -1021,9 +1049,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cameraModeChip: {
+    minHeight: 40,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   cameraModeChipText: {
@@ -1040,7 +1071,7 @@ const styles = StyleSheet.create({
   },
   switcherTab: {
     flex: 1,
-    minHeight: 40,
+    minHeight: 44,
     paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1084,8 +1115,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   addFriendBtn: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    minHeight: 40,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   addFriendBtnText: {
@@ -1115,5 +1149,23 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 10,
     marginTop: 4,
+  },
+  unlockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderCurve: 'continuous',
+  },
+  unlockedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  unlockedBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
 });

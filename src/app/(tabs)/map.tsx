@@ -8,7 +8,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   computeDistanceMeters,
-  FALLBACK_LIVE_COORDS,
   fetchCoupleLocations,
   formatDistanceApart,
   formatLocationModeLabel,
@@ -17,7 +16,7 @@ import {
 } from '@/api/locations';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InteractiveCoupleMap } from '@/components/map/InteractiveCoupleMap';
-import { InlineNotice, RevealOnAppear } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { LocationMode } from '@/types/database';
@@ -87,14 +86,15 @@ export default function MapScreen() {
   const partner = useSessionStore((s) => s.partner);
   const couple = useSessionStore((s) => s.couple);
 
+  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const [updatingMode, setUpdatingMode] = useState(false);
+  const [gpsPrimed, setGpsPrimed] = useState(false);
+  const [pendingGpsAction, setPendingGpsAction] = useState<'live_mode' | 'checkin_gps' | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' | 'success' } | null>(
     null
   );
 
-  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'Partner';
-
   const locationQuery = useQuery({
     queryKey: ['couple-locations', couple?.id, user?.id],
     enabled: Boolean(couple?.id && user?.id),
@@ -148,7 +148,7 @@ export default function MapScreen() {
   const partnerShare = bundle?.partner ?? null;
   const friends = bundle?.friends ?? [];
   const events = bundle?.events ?? [];
-  const currentMode: LocationMode = mine?.mode ?? 'live';
+  const currentMode: LocationMode = mine?.mode ?? 'ghost';
 
   const bothHaveCoords = Boolean(
     mine &&
@@ -165,8 +165,14 @@ export default function MapScreen() {
     ? computeDistanceMeters(mine!.lat!, mine!.lng!, partnerShare!.lat!, partnerShare!.lng!)
     : null;
 
-  const handleSelectMode = async (nextMode: LocationMode) => {
+  const handleSelectMode = async (nextMode: LocationMode, skipPrimer = false) => {
     if (!couple || !user || updatingMode) return;
+
+    if (nextMode === 'live' && mine?.lat === null && mine?.lng === null && !gpsPrimed && !skipPrimer) {
+      setPendingGpsAction('live_mode');
+      return;
+    }
+
     setUpdatingMode(true);
     setNotice(null);
 
@@ -174,10 +180,13 @@ export default function MapScreen() {
       let lat: number | null = mine?.lat ?? null;
       let lng: number | null = mine?.lng ?? null;
       let accuracyM: number | null = mine?.accuracy_m ?? null;
+      let resolvedPlaceName: string | null = nextMode === 'ghost' ? null : (mine?.place_name ?? null);
 
       if (nextMode === 'live' && (lat === null || lng === null)) {
+        let gpsGranted = false;
         try {
           const perm = await Location.requestForegroundPermissionsAsync();
+          setGpsPrimed(true);
           if (perm.status === 'granted') {
             const pos = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
@@ -185,15 +194,20 @@ export default function MapScreen() {
             lat = pos.coords.latitude;
             lng = pos.coords.longitude;
             accuracyM = pos.coords.accuracy ?? 18;
-          } else {
-            lat = FALLBACK_LIVE_COORDS.lat;
-            lng = FALLBACK_LIVE_COORDS.lng;
-            accuracyM = FALLBACK_LIVE_COORDS.accuracyM;
+            resolvedPlaceName = resolvedPlaceName ?? `Live GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+            gpsGranted = true;
           }
         } catch {
-          lat = FALLBACK_LIVE_COORDS.lat;
-          lng = FALLBACK_LIVE_COORDS.lng;
-          accuracyM = FALLBACK_LIVE_COORDS.accuracyM;
+          gpsGranted = false;
+        }
+
+        if (!gpsGranted && lat === null) {
+          setNotice({
+            text: 'GPS access was declined or unavailable. Pick a place below to share a manual check-in pin, or stay in Ghost mode.',
+            tone: 'info',
+          });
+          setUpdatingMode(false);
+          return;
         }
       }
 
@@ -201,10 +215,10 @@ export default function MapScreen() {
         coupleId: couple.id,
         userId: user.id,
         mode: nextMode,
-        lat,
-        lng,
-        accuracyM,
-        placeName: nextMode === 'ghost' ? null : (mine?.place_name ?? FALLBACK_LIVE_COORDS.placeName),
+        lat: nextMode === 'ghost' ? null : lat,
+        lng: nextMode === 'ghost' ? null : lng,
+        accuracyM: nextMode === 'ghost' ? null : accuracyM,
+        placeName: nextMode === 'ghost' ? null : resolvedPlaceName,
       });
 
       if (Platform.OS !== 'web') {
@@ -229,20 +243,28 @@ export default function MapScreen() {
     }
   };
 
-  const handleQuickCheckIn = async (option: QuickCheckInOption) => {
+  const handleQuickCheckIn = async (option: QuickCheckInOption, skipPrimer = false) => {
     if (!couple || !user || updatingMode) return;
+
+    if (option.useGps && !gpsPrimed && !skipPrimer) {
+      setPendingGpsAction('checkin_gps');
+      return;
+    }
+
     setUpdatingMode(true);
     setNotice(null);
 
     try {
-      let lat = option.lat ?? FALLBACK_LIVE_COORDS.lat;
-      let lng = option.lng ?? FALLBACK_LIVE_COORDS.lng;
+      let lat = option.lat;
+      let lng = option.lng;
       let accuracyM = 16;
       let resolvedPlaceName = option.placeName;
 
       if (option.useGps) {
+        let gpsSucceeded = false;
         try {
           const perm = await Location.requestForegroundPermissionsAsync();
+          setGpsPrimed(true);
           if (perm.status === 'granted') {
             const pos = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
@@ -251,9 +273,19 @@ export default function MapScreen() {
             lng = pos.coords.longitude;
             accuracyM = Math.round(pos.coords.accuracy ?? 18);
             resolvedPlaceName = `Live GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+            gpsSucceeded = true;
           }
         } catch {
-          resolvedPlaceName = 'Live GPS · SF Downtown';
+          gpsSucceeded = false;
+        }
+
+        if (!gpsSucceeded || lat === null || lng === null) {
+          setNotice({
+            text: 'GPS coordinates are unavailable on this device. Tap one of the named spots to check in manually.',
+            tone: 'info',
+          });
+          setUpdatingMode(false);
+          return;
         }
       }
 
@@ -300,7 +332,7 @@ export default function MapScreen() {
           {
             paddingHorizontal: spacing.xl,
             paddingTop: spacing.xl,
-            paddingBottom: 124,
+            paddingBottom: 148,
           },
         ]}>
         {/* Header */}
@@ -329,6 +361,152 @@ export default function MapScreen() {
             </View>
           </View>
         </RevealOnAppear>
+
+        {/* Trust-Critical Location Status & 1-Tap Pause Banner */}
+        <RevealOnAppear revealKey="map-trust-banner">
+          <View
+            style={[
+              styles.trustBanner,
+              {
+                backgroundColor: currentMode === 'ghost' ? colors.surface : colors.surfaceElevated,
+                borderColor: currentMode === 'ghost' ? colors.border : colors.success,
+                borderRadius: radii.card,
+                padding: spacing.lg,
+              },
+            ]}>
+            <View style={styles.trustBannerLeft}>
+              <View
+                style={[
+                  styles.trustDot,
+                  {
+                    backgroundColor: currentMode === 'ghost' ? colors.inkMuted : colors.success,
+                  },
+                ]}
+              />
+              <View style={styles.flex}>
+                <Text style={[styles.trustTitle, { color: colors.ink }]}>
+                  {currentMode === 'ghost'
+                    ? 'Location paused · Ghost mode'
+                    : currentMode === 'live'
+                      ? `Sharing Live Location${mine?.place_name ? ` · ${mine.place_name}` : ''}`
+                      : 'Sharing On-Moment Location'}
+                </Text>
+                <Text style={[styles.trustSub, { color: colors.inkMuted }]}>
+                  {currentMode === 'ghost'
+                    ? 'Nobody can see your coordinates right now.'
+                    : isPartnerPaired
+                      ? `Visible to ${partnerName}${friends.length > 0 ? ` and ${friends.length} circle friends` : ''}.`
+                      : `Visible to your Friends Circle (${friends.length}).`}
+                </Text>
+              </View>
+            </View>
+
+            {currentMode !== 'ghost' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Pause location sharing and enter Ghost mode"
+                disabled={updatingMode}
+                onPress={() => void handleSelectMode('ghost', true)}
+                style={[
+                  styles.pauseTrustBtn,
+                  {
+                    backgroundColor: colors.canvas,
+                    borderColor: colors.border,
+                    borderRadius: radii.pill,
+                  },
+                ]}>
+                <Text pointerEvents="none" style={[styles.pauseTrustBtnText, { color: colors.ink }]}>
+                  Pause (Ghost)
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Resume On-Moment location sharing"
+                disabled={updatingMode}
+                onPress={() => void handleSelectMode('on_moment', true)}
+                style={[
+                  styles.pauseTrustBtn,
+                  {
+                    backgroundColor: colors.accent,
+                    borderColor: colors.accent,
+                    borderRadius: radii.pill,
+                  },
+                ]}>
+                <Text pointerEvents="none" style={[styles.pauseTrustBtnText, { color: colors.onAccent }]}>
+                  Share On-Moment
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </RevealOnAppear>
+
+        {/* Permission Primer before OS Location Prompt */}
+        {pendingGpsAction ? (
+          <View
+            style={[
+              styles.groupCard,
+              {
+                backgroundColor: colors.surfaceElevated,
+                borderColor: colors.accent,
+                borderRadius: radii.card,
+                padding: spacing.lg,
+                gap: spacing.md,
+              },
+            ]}>
+            <Text style={[styles.sectionTitle, { color: colors.ink }]}>
+              Allow foreground location access?
+            </Text>
+            <Text style={[styles.disclosureText, { color: colors.inkMuted }]}>
+              KeepIt only reads your GPS while the app is open when you choose Live mode or a GPS check-in. You can pause sharing in one tap with Ghost mode anytime.
+            </Text>
+            <View style={styles.primerActionsRow}>
+              <KeepItButton
+                label="Continue to OS Prompt"
+                onPress={() => {
+                  const action = pendingGpsAction;
+                  setPendingGpsAction(null);
+                  setGpsPrimed(true);
+                  if (action === 'live_mode') {
+                    void handleSelectMode('live', true);
+                  } else {
+                    const gpsOpt = QUICK_CHECKIN_PLACES.find((p) => p.useGps);
+                    if (gpsOpt) void handleQuickCheckIn(gpsOpt, true);
+                  }
+                }}
+                style={styles.flex}
+              />
+              <KeepItButton
+                label="Not Now"
+                variant="secondary"
+                onPress={() => setPendingGpsAction(null)}
+                style={styles.flex}
+              />
+            </View>
+          </View>
+        ) : null}
+
+        {locationQuery.isError ? (
+          <View style={{ gap: spacing.sm }}>
+            <InlineNotice
+              message={
+                locationQuery.error instanceof Error
+                  ? locationQuery.error.message
+                  : 'Could not load couple locations.'
+              }
+              tone="error"
+            />
+            <KeepItButton
+              label="Retry Map Sync"
+              variant="secondary"
+              onPress={() => void locationQuery.refetch()}
+            />
+          </View>
+        ) : null}
+
+        {locationQuery.isLoading && !bundle ? (
+          <SkeletonBlock height={388} label="Loading live couple map..." />
+        ) : null}
 
         {/* Latest Notification Banner */}
         {notice ? (
@@ -405,11 +583,12 @@ export default function MapScreen() {
                       },
                     ]}>
                     <Text
+                      pointerEvents="none"
                       style={[
                         styles.placeChipText,
                         { color: isCurrent ? colors.onAccent : colors.ink },
                       ]}>
-                      {place.useGps ? '◎ ' : '📍 '}
+                      {place.useGps ? 'GPS: ' : ''}
                       {place.label}
                     </Text>
                   </Pressable>
@@ -530,8 +709,6 @@ export default function MapScreen() {
                       computeDistanceMeters(mine.lat, mine.lng, friend.lat, friend.lng)
                     )
                   : 'Live pin';
-              const badgeColor = index % 2 === 0 ? '#A855F7' : '#0EA5E9';
-
               return (
                 <View
                   key={friend.user_id}
@@ -543,8 +720,8 @@ export default function MapScreen() {
                       borderRadius: radii.card,
                     },
                   ]}>
-                  <View style={[styles.personAvatar, { backgroundColor: badgeColor }]}>
-                    <Text style={[styles.personAvatarText, { color: '#FFFFFF' }]}>
+                  <View style={[styles.personAvatar, { backgroundColor: colors.badgeBg }]}>
+                    <Text style={[styles.personAvatarText, { color: colors.badgeFg }]}>
                       {(friendName.trim().slice(0, 1) || 'F').toUpperCase()}
                     </Text>
                   </View>
@@ -581,7 +758,7 @@ export default function MapScreen() {
                       if (Platform.OS !== 'web') {
                         void Haptics.selectionAsync();
                       }
-                      router.push('/(tabs)/messages' as never);
+                      router.navigate('/(tabs)/messages' as never);
                     }}
                     style={[
                       styles.messageBtn,
@@ -667,6 +844,7 @@ export default function MapScreen() {
                         },
                       ]}>
                       <Text
+                        pointerEvents="none"
                         style={[
                           styles.modeLabel,
                           {
@@ -792,9 +970,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   placeChip: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   placeChipText: {
@@ -853,8 +1033,9 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   messageBtn: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
@@ -908,6 +1089,7 @@ const styles = StyleSheet.create({
   },
   modeOption: {
     flex: 1,
+    minHeight: 44,
     borderWidth: 1,
     paddingVertical: 10,
     paddingHorizontal: 6,
@@ -939,5 +1121,52 @@ const styles = StyleSheet.create({
   eventTime: {
     fontSize: 12,
     fontVariant: ['tabular-nums'],
+  },
+  trustBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    gap: 12,
+    borderCurve: 'continuous',
+  },
+  trustBannerLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  trustDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  trustTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: -0.25,
+  },
+  trustSub: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  pauseTrustBtn: {
+    minHeight: 44,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderCurve: 'continuous',
+  },
+  pauseTrustBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  primerActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
 });

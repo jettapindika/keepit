@@ -564,6 +564,7 @@ export async function fetchConversationMessages(params: {
       (m.sender_id === params.peerId && m.recipient_id === params.userId)
   );
 
+
   return filtered
     .map((m) => redactExpiredSnapDm(m, params.userId, nowMs))
     .sort((a, b) => (a.created_at > b.created_at ? 1 : -1));

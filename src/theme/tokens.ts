@@ -41,7 +41,7 @@ export const DARK_PALETTE: KeepItPalette = {
   chromeHighlight: 'rgba(255, 255, 255, 0.11)',
   ink: '#FFFFFF',
   inkMuted: '#9A9AA0',
-  placeholder: '#77777D',
+  placeholder: '#94949C',
   accent: '#E0E0E0',
   accentSoft: '#282830',
   onAccent: '#000000',
@@ -66,7 +66,7 @@ export const LIGHT_PALETTE: KeepItPalette = {
   chromeHighlight: 'rgba(0, 0, 0, 0.08)',
   ink: '#000000',
   inkMuted: '#55555C',
-  placeholder: '#77777D',
+  placeholder: '#686870',
   accent: '#141416',
   accentSoft: '#E5E5EA',
   onAccent: '#FFFFFF',
@@ -99,6 +99,8 @@ export const SPACING = {
 export const MOCHY_TYPE = {
   titleTracking: -0.7,
   bodyTracking: -0.35,
+  fontSans: "'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  fontMono: "'Geist Mono', 'SFMono-Regular', Menlo, monospace",
 } as const;
 
 export function useKeepItTheme() {

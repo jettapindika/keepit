@@ -38,7 +38,7 @@ import {
   MOMENT_FILTER_PRESETS,
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
-import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { DualFrameMark, InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -821,7 +821,7 @@ export function DualMomentCard({
                 styles.snapIconCircle,
                 { backgroundColor: colors.dangerSoft, borderColor: colors.danger },
               ]}>
-              <Text style={styles.snapIconEmoji}>🔥</Text>
+              <Text style={[styles.snapIconEmoji, { color: colors.danger }]}>15s</Text>
             </View>
             <Text style={[styles.snapOverlayTitle, { color: colors.ink }]}>
               Snap Once Expired · Viewed for 15s
@@ -844,10 +844,10 @@ export function DualMomentCard({
                 styles.snapIconCircle,
                 { backgroundColor: colors.accentSoft, borderColor: colors.warning },
               ]}>
-              <Text style={styles.snapIconEmoji}>🔥</Text>
+              <Text style={[styles.snapIconEmoji, { color: colors.warning }]}>15s</Text>
             </View>
             <Text style={[styles.snapOverlayTitle, { color: colors.ink }]}>
-              🔥 Snap Once · Tap to view for 15s
+              Snap Once · Tap to view for 15s
             </Text>
             <Text style={[styles.snapOverlaySub, { color: colors.inkMuted }]}>
               {authorName} sent a 15-second disappearing Moment. Tap when ready!
@@ -939,7 +939,7 @@ export function DualMomentCard({
                       {
                         backgroundColor:
                           ov.bgStyle === 'neon'
-                            ? '#A855F7'
+                            ? '#282830'
                             : ov.bgStyle === 'solid'
                               ? '#141416'
                               : 'rgba(20, 20, 22, 0.80)',
@@ -964,7 +964,7 @@ export function DualMomentCard({
                     },
                   ]}>
                   <Text style={[styles.statusPillText, { color: '#000000' }]}>
-                    🔥 {snapSecondsLeft}s left
+                    15s · {snapSecondsLeft}s left
                   </Text>
                 </View>
               ) : null}
@@ -980,7 +980,7 @@ export function DualMomentCard({
                     },
                   ]}>
                   <Text style={[styles.statusPillText, { color: colors.warning }]}>
-                    🔥 Snap Once · 15s
+                    Snap Once · 15s
                   </Text>
                 </View>
               ) : null}
@@ -999,7 +999,7 @@ export function DualMomentCard({
                     },
                   ]}>
                   <Text style={[styles.statusPillText, { color: colors.ink }]}>
-                    {videoPlaying ? '⏸' : '▶'} VIDEO · {videoDurationSec}s
+                    {videoPlaying ? 'PAUSE' : 'PLAY'} VIDEO · {videoDurationSec}s
                   </Text>
                 </Pressable>
               ) : null}
@@ -1015,7 +1015,7 @@ export function DualMomentCard({
                     },
                   ]}>
                   <Text style={[styles.statusPillText, { color: colors.ink }]}>
-                    ✨ {filterMeta.label}
+                    {filterMeta.label}
                   </Text>
                 </View>
               ) : null}
@@ -1126,7 +1126,7 @@ export function DualMomentCard({
                   },
                 ]}>
                 <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  📍 {localLocationLabel}
+                  {localLocationLabel}
                 </Text>
               </View>
             ) : null}
@@ -1149,9 +1149,9 @@ export function DualMomentCard({
                   },
                 ]}>
                 <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  {musicPlaying ? '⏸ Stop · ' : '▶ '}🎵 {localMusicTrack.title} ·{' '}
-                  {localMusicTrack.artist}
-                  {musicPlaying ? '  ♫ Playing synth loop' : ''}
+                  {musicPlaying ? 'Stop · ' : 'Play · '}
+                  {localMusicTrack.title} · {localMusicTrack.artist}
+                  {musicPlaying ? ' · Playing loop' : ''}
                 </Text>
               </Pressable>
             ) : null}
@@ -1168,7 +1168,7 @@ export function DualMomentCard({
                   },
                 ]}>
                 <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  🏷️ @{person.username}
+                  @{person.username}
                 </Text>
               </View>
             ))}
@@ -1314,7 +1314,7 @@ export function DualMomentCard({
                           styles.optionPillText,
                           { color: active ? colors.onAccent : colors.ink },
                         ]}>
-                        📍 {loc.label}
+                        {loc.label}
                       </Text>
                     </Pressable>
                   );
@@ -1370,7 +1370,7 @@ export function DualMomentCard({
                           styles.optionPillText,
                           { color: active ? colors.onAccent : colors.ink },
                         ]}>
-                        🎵 {trk.title} · {trk.artist}
+                        {trk.title} · {trk.artist}
                       </Text>
                     </Pressable>
                   );
@@ -1407,7 +1407,7 @@ export function DualMomentCard({
                           styles.optionPillText,
                           { color: active ? colors.onAccent : colors.ink },
                         ]}>
-                        🏷️ @{person.username} {active ? '✓' : '+'}
+                        @{person.username} {active ? '✓' : '+'}
                       </Text>
                     </Pressable>
                   );
@@ -1524,7 +1524,7 @@ export function DualMomentCard({
             <View style={styles.snapSwitchRow}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.editorSectionTitle, { color: colors.ink, fontSize: 14 }]}>
-                  🔥 Snap Once (15s Disappearing)
+                  Snap Once (15s Disappearing)
                 </Text>
                 <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
                   Expires 15 seconds after your partner or friend opens it
@@ -1587,7 +1587,7 @@ export function DualMomentCard({
                 </View>
               ) : (
                 <KeepItButton
-                  label="🗑 Delete Post"
+                  label="Delete Post"
                   variant="danger"
                   disabled={savingCrud}
                   onPress={() => setConfirmingDelete(true)}
@@ -1626,7 +1626,7 @@ export function DualMomentCard({
                     },
                   ]}>
                   <Text style={[styles.smallActionText, { color: colors.ink }]}>
-                    ✏️ Edit / Manage
+                    Edit / Manage
                   </Text>
                 </Pressable>
               ) : null}
@@ -1719,7 +1719,7 @@ export function DualMomentCard({
                         accessibilityRole="button"
                         accessibilityLabel="Delete comment"
                         onPress={() => void handleDeleteComment(cmt.id)}
-                        style={{ paddingHorizontal: 6, paddingVertical: 2 }}>
+                        style={{ minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' }}>
                         <Text style={{ color: colors.danger, fontSize: 12, fontWeight: '700' }}>
                           ✕
                         </Text>
@@ -1796,7 +1796,7 @@ export function DualMomentCard({
                 },
               ]}>
               <Text style={[styles.exportActionText, { color: colors.ink }]}>
-                {savingPhoto ? 'Saving…' : '⬇ Save Photo'}
+                {savingPhoto ? 'Saving…' : 'Save Photo'}
               </Text>
             </Pressable>
 
@@ -1813,7 +1813,7 @@ export function DualMomentCard({
                 },
               ]}>
               <Text style={[styles.exportActionText, { color: colors.ink }]}>
-                📱 Share 9:16 Story
+                Share 9:16 Story
               </Text>
             </Pressable>
           </View>
@@ -1965,15 +1965,9 @@ export function LockedMomentCard({
           padding: spacing.xl,
         },
       ]}>
-      <View
-        style={[
-          styles.lockedPipSilhouette,
-          {
-            backgroundColor: colors.accentSoft,
-            borderColor: colors.accent,
-          },
-        ]}
-      />
+      <View style={styles.lockedTopMotif}>
+        <DualFrameMark size={52} />
+      </View>
 
       <View style={styles.lockedCenter}>
         <View
@@ -2026,10 +2020,9 @@ const styles = StyleSheet.create({
     width: 102,
     height: 136,
     borderRadius: 16,
-    borderWidth: 2,
+    borderWidth: 2.5,
     overflow: 'hidden',
     borderCurve: 'continuous',
-    boxShadow: '0px 6px 16px rgba(0, 0, 0, 0.25)',
   },
   overlayItemAnchor: {
     position: 'absolute',
@@ -2127,7 +2120,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   snapIconEmoji: {
-    fontSize: 28,
+    fontSize: 16,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   snapOverlayTitle: {
     fontSize: 18,
@@ -2179,9 +2174,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   attachmentChip: {
+    minHeight: 38,
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   attachmentChipText: {
@@ -2202,9 +2199,9 @@ const styles = StyleSheet.create({
   },
   smallActionChip: {
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    minHeight: 34,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
     borderCurve: 'continuous',
@@ -2232,9 +2229,12 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   OptionPill: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   optionPillText: {
@@ -2250,9 +2250,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   emojiStickerBtn: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emojiStickerBtnText: {
     fontSize: 13,
@@ -2297,12 +2300,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   reactionChip: {
+    minHeight: 44,
+    minWidth: 44,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 5,
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
     borderCurve: 'continuous',
   },
   reactionEmoji: {
@@ -2337,17 +2343,17 @@ const styles = StyleSheet.create({
   },
   commentInput: {
     flex: 1,
-    minHeight: 38,
+    minHeight: 44,
     borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 8,
     fontSize: 13,
     borderCurve: 'continuous',
   },
   postCommentBtn: {
     borderWidth: 1,
-    paddingHorizontal: 14,
-    minHeight: 38,
+    paddingHorizontal: 16,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
@@ -2363,9 +2369,9 @@ const styles = StyleSheet.create({
   exportActionBtn: {
     flex: 1,
     borderWidth: 1,
-    minHeight: 38,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
@@ -2415,13 +2421,8 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderCurve: 'continuous',
   },
-  lockedPipSilhouette: {
-    width: 84,
-    height: 112,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    opacity: 0.65,
-    borderCurve: 'continuous',
+  lockedTopMotif: {
+    alignSelf: 'flex-start',
   },
   lockedCenter: {
     gap: 14,

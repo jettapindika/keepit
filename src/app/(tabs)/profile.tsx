@@ -33,25 +33,23 @@ import {
   removeFriend,
 } from '@/api/social';
 import { DualMomentCard } from '@/components/moment/MomentCards';
-import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
 
 const BANNER_COLOR_SWATCHES = [
+  '#1C1C1E',
+  '#282830',
+  '#3A3A3C',
   '#D95D39',
-  '#8B5CF6',
-  '#0EA5E9',
-  '#10B981',
-  '#EC4899',
-  '#F59E0B',
 ] as const;
 
 const PRONOUN_PRESETS = ['she/her', 'he/him', 'they/them'] as const;
 
-function makeAvatarSvgDataUri(bgHex: string, emoji: string, label: string): string {
+function makeAvatarSvgDataUri(bgHex: string, glyph: string, label: string): string {
   const safeLabel = label.replace(/[<>"'&]/g, '');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><rect width="240" height="240" rx="120" fill="${bgHex}"/><circle cx="120" cy="120" r="106" fill="none" stroke="rgba(255,255,255,0.26)" stroke-width="5"/><text x="120" y="138" text-anchor="middle" font-size="86">${emoji}</text><text x="120" y="205" text-anchor="middle" font-family="system-ui, sans-serif" font-size="18" font-weight="800" fill="#FFFFFF" opacity="0.9">${safeLabel}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><rect width="240" height="240" rx="120" fill="${bgHex}"/><circle cx="120" cy="120" r="106" fill="none" stroke="rgba(255,255,255,0.26)" stroke-width="5"/><text x="120" y="138" text-anchor="middle" font-family="system-ui, sans-serif" font-size="78" font-weight="800" fill="#FFFFFF">${glyph}</text><text x="120" y="205" text-anchor="middle" font-family="system-ui, sans-serif" font-size="18" font-weight="800" fill="#FFFFFF" opacity="0.9">${safeLabel}</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
@@ -59,30 +57,24 @@ const AVATAR_PRESETS = [
   {
     id: 'sunset_cam',
     label: 'Sunset Lens',
-    uri: makeAvatarSvgDataUri('#D95D39', '📸', 'KEEPIT'),
+    uri: makeAvatarSvgDataUri('#D95D39', 'K', 'KEEPIT'),
   },
   {
-    id: 'violet_vinyl',
-    label: 'Vinyl Vibe',
-    uri: makeAvatarSvgDataUri('#8B5CF6', '🎧', 'VIBES'),
+    id: 'obsidian_dual',
+    label: 'Obsidian Frame',
+    uri: makeAvatarSvgDataUri('#1C1C1E', 'II', 'DUAL'),
   },
   {
-    id: 'ocean_matcha',
-    label: 'Matcha Run',
-    uri: makeAvatarSvgDataUri('#10B981', '🍵', 'MATCHA'),
+    id: 'slate_vinyl',
+    label: 'Slate Studio',
+    uri: makeAvatarSvgDataUri('#282830', 'M', 'MOMENT'),
   },
   {
-    id: 'pink_spark',
-    label: 'Soft Spark',
-    uri: makeAvatarSvgDataUri('#EC4899', '✨', 'SPARK'),
-  },
-  {
-    id: 'sky_skate',
-    label: 'Blue Hour',
-    uri: makeAvatarSvgDataUri('#0EA5E9', '🌊', 'WAVE'),
+    id: 'graphite_film',
+    label: '35mm Graphite',
+    uri: makeAvatarSvgDataUri('#3A3A3C', '35', 'FILM'),
   },
 ] as const;
-
 type ProfileSubTab = 'posts' | 'friends';
 
 export default function ProfileScreen() {
@@ -177,7 +169,7 @@ export default function ProfileScreen() {
     user?.username || buildDefaultUsername(displayName, userId);
   const friendCode =
     user?.friend_code || buildFriendCode(userId, displayName) || 'KPT-204';
-  const bannerColor = user?.banner_color ?? '#D95D39';
+  const bannerColor = user?.banner_color ?? '#1C1C1E';
   const pronouns = user?.pronouns ?? '';
   const bio = user?.bio ?? '';
   const moodSong = user?.mood_song ?? '';
@@ -219,7 +211,7 @@ export default function ProfileScreen() {
     setDraftBio(user?.bio ?? '');
     setDraftPronouns(user?.pronouns ?? '');
     setDraftMoodSong(user?.mood_song ?? '');
-    setDraftBannerColor(user?.banner_color ?? '#D95D39');
+    setDraftBannerColor(user?.banner_color ?? '#1C1C1E');
     setDraftWebsite(user?.website ?? '');
     setDraftAvatarUri(user?.avatar_path ?? '');
     setDraftIsPrivate(Boolean(user?.is_private));
@@ -339,7 +331,7 @@ export default function ProfileScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{
-          paddingBottom: 124,
+          paddingBottom: 148,
         }}>
         {/* Top Banner & Quick Action Bar */}
         <RevealOnAppear revealKey="profile-banner">
@@ -355,10 +347,10 @@ export default function ProfileScreen() {
                   accessibilityLabel="Open Memories Calendar"
                   onPress={() => {
                     triggerHaptic();
-                    router.push('/(tabs)/memories');
+                    router.navigate('/(tabs)/memories');
                   }}
                   style={styles.bannerQuickBtn}>
-                  <Text style={styles.bannerQuickBtnText}>🗓️ Memories</Text>
+                  <Text pointerEvents="none" style={styles.bannerQuickBtnText}>Memories</Text>
                 </Pressable>
 
                 <Pressable
@@ -366,10 +358,10 @@ export default function ProfileScreen() {
                   accessibilityLabel="Open Settings"
                   onPress={() => {
                     triggerHaptic();
-                    router.push('/(tabs)/settings');
+                    router.navigate('/(tabs)/settings');
                   }}
                   style={styles.bannerQuickBtn}>
-                  <Text style={styles.bannerQuickBtnText}>⚙️ Settings</Text>
+                  <Text pointerEvents="none" style={styles.bannerQuickBtnText}>Settings</Text>
                 </Pressable>
               </View>
             </View>
@@ -409,7 +401,7 @@ export default function ProfileScreen() {
                     borderColor: colors.canvas,
                   },
                 ]}>
-                <Text style={styles.avatarEmojiBadgeText}>✨</Text>
+                <Text style={[styles.avatarEmojiBadgeText, { color: colors.ink }]}>+</Text>
               </View>
             </Pressable>
 
@@ -426,8 +418,8 @@ export default function ProfileScreen() {
                     borderRadius: radii.pill,
                   },
                 ]}>
-                <Text style={[styles.friendCodeLabel, { color: colors.inkMuted }]}>CODE</Text>
-                <Text style={[styles.friendCodeValue, { color: colors.ink }]}>
+                <Text pointerEvents="none" style={[styles.friendCodeLabel, { color: colors.inkMuted }]}>CODE</Text>
+                <Text pointerEvents="none" style={[styles.friendCodeValue, { color: colors.ink }]}>
                   {copiedCode ? 'Copied ✓' : friendCode}
                 </Text>
               </Pressable>
@@ -443,7 +435,7 @@ export default function ProfileScreen() {
                     borderRadius: radii.pill,
                   },
                 ]}>
-                <Text style={[styles.editProfilePillText, { color: colors.canvas }]}>
+                <Text pointerEvents="none" style={[styles.editProfilePillText, { color: colors.canvas }]}>
                   Edit Profile
                 </Text>
               </Pressable>
@@ -478,7 +470,7 @@ export default function ProfileScreen() {
                     },
                   ]}>
                   <Text style={[styles.pronounsText, { color: colors.warning }]}>
-                    🔒 Private
+                    Private
                   </Text>
                 </View>
               ) : null}
@@ -493,7 +485,7 @@ export default function ProfileScreen() {
                     },
                   ]}>
                   <Text style={[styles.pronounsText, { color: colors.ink }]}>
-                    🎞️ Dump Acc
+                    Dump Acc
                   </Text>
                 </View>
               ) : null}
@@ -518,7 +510,7 @@ export default function ProfileScreen() {
                     },
                   ]}>
                   <Text style={[styles.metaBadgeText, { color: colors.ink }]}>
-                    🎵 {moodSong}
+                    Track: {moodSong}
                   </Text>
                 </View>
               ) : null}
@@ -536,8 +528,8 @@ export default function ProfileScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.metaBadgeText, { color: bannerColor }]}>
-                    🔗 {website.replace(/^https?:\/\//i, '')}
+                  <Text style={[styles.metaBadgeText, { color: colors.ink }]}>
+                    {website.replace(/^https?:\/\//i, '')}
                   </Text>
                 </Pressable>
               ) : null}
@@ -566,7 +558,7 @@ export default function ProfileScreen() {
               <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
 
               <View style={styles.statCol}>
-                <Text style={[styles.statValue, { color: colors.ink }]}>🔥 {streakCount}</Text>
+                <Text style={[styles.statValue, { color: colors.ink }]}>{streakCount}d</Text>
                 <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Day Streak</Text>
               </View>
 
@@ -586,13 +578,13 @@ export default function ProfileScreen() {
                 }
                 onPress={() => {
                   triggerHaptic();
-                  router.push('/(auth)/pair');
+                  router.navigate('/(auth)/pair');
                 }}
                 style={[styles.statCol, { flex: 1.35 }]}>
                 <Text
                   numberOfLines={1}
-                  style={[styles.statPartnerValue, { color: bannerColor }]}>
-                  {isPartnerPaired ? `❤️ ${partnerName}` : '+ Pair Partner'}
+                  style={[styles.statPartnerValue, { color: colors.ink }]}>
+                  {isPartnerPaired ? partnerName : '+ Pair Partner'}
                 </Text>
                 <Text numberOfLines={1} style={[styles.statLabel, { color: colors.inkMuted }]}>
                   {isPartnerPaired ? `Paired with ${partnerName}` : 'Solo / Optional'}
@@ -622,8 +614,8 @@ export default function ProfileScreen() {
               <View style={{ flex: 1, gap: 2 }}>
                 <Text style={{ color: colors.ink, fontSize: 14, fontWeight: '700' }}>
                   {isPrivateAccount
-                    ? '🔒 Private Dump Account Active'
-                    : '🌐 Public / Circle Account'}
+                    ? 'Private Dump Account Active'
+                    : 'Public / Circle Account'}
                 </Text>
                 <Text style={{ color: colors.inkMuted, fontSize: 12 }}>
                   {isPrivateAccount
@@ -643,8 +635,8 @@ export default function ProfileScreen() {
                   }).then(() => {
                     showTemporaryFeedback(
                       nextVal
-                        ? '🔒 Switched to Private Dump Account mode.'
-                        : '🌐 Profile is now visible to your circle.'
+                        ? 'Switched to Private Dump Account mode.'
+                        : 'Profile is now visible to your circle.'
                     );
                   });
                 }}
@@ -693,6 +685,7 @@ export default function ProfileScreen() {
                 },
               ]}>
               <Text
+                pointerEvents="none"
                 style={[
                   styles.subTabText,
                   { color: subTab === 'posts' ? colors.canvas : colors.inkMuted },
@@ -717,6 +710,7 @@ export default function ProfileScreen() {
                 },
               ]}>
               <Text
+                pointerEvents="none"
                 style={[
                   styles.subTabText,
                   { color: subTab === 'friends' ? colors.canvas : colors.inkMuted },
@@ -750,11 +744,31 @@ export default function ProfileScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={styles.newPostButtonText}>+ New Post</Text>
+                  <Text pointerEvents="none" style={styles.newPostButtonText}>+ New Post</Text>
                 </Pressable>
               </View>
 
-              {myPosts.length === 0 ? (
+              {userPostsQuery.isError ? (
+                <View style={{ gap: spacing.sm }}>
+                  <InlineNotice
+                    message={
+                      userPostsQuery.error instanceof Error
+                        ? userPostsQuery.error.message
+                        : 'Could not load your Moments.'
+                    }
+                    tone="error"
+                  />
+                  <KeepItButton
+                    label="Retry Posts"
+                    variant="secondary"
+                    onPress={() => void userPostsQuery.refetch()}
+                  />
+                </View>
+              ) : null}
+
+              {userPostsQuery.isLoading && myPosts.length === 0 ? (
+                <SkeletonBlock height={280} label="Loading your posted Moments..." />
+              ) : myPosts.length === 0 ? (
                 <View
                   style={[
                     styles.emptyFeedCard,
@@ -864,7 +878,7 @@ export default function ProfileScreen() {
                             styles.relOptionText,
                             { color: active ? colors.canvas : colors.ink },
                           ]}>
-                          {tier === 'bestie' ? '✨ Bestie' : '👋 Friend'}
+                          {tier === 'bestie' ? 'Bestie' : 'Friend'}
                         </Text>
                       </Pressable>
                     );
@@ -953,7 +967,7 @@ export default function ProfileScreen() {
                           styles.tierBadge,
                           { backgroundColor: bannerColor, borderRadius: radii.pill },
                         ]}>
-                        <Text style={styles.tierBadgeText}>❤️ Partner</Text>
+                        <Text style={styles.tierBadgeText}>Partner</Text>
                       </View>
                     </View>
                     <Text style={[styles.friendHandleText, { color: colors.inkMuted }]}>
@@ -970,7 +984,7 @@ export default function ProfileScreen() {
                     )}
                     {partner?.mood_song ? (
                       <Text style={[styles.friendSongText, { color: colors.inkMuted }]}>
-                        🎵 {partner.mood_song}
+                        Track: {partner.mood_song}
                       </Text>
                     ) : null}
                   </View>
@@ -982,7 +996,7 @@ export default function ProfileScreen() {
                     accessibilityLabel={`Message ${partnerName}`}
                     onPress={() => {
                       triggerHaptic();
-                      router.push({
+                      router.navigate({
                         pathname: '/(tabs)/messages' as never,
                         params: {
                           peerId: partner?.id ?? 'partner_default',
@@ -998,7 +1012,7 @@ export default function ProfileScreen() {
                       },
                     ]}>
                     <Text style={[styles.friendMsgBtnText, { color: colors.canvas }]}>
-                      💬 Message
+                      Message
                     </Text>
                   </Pressable>
                 </View>
@@ -1028,7 +1042,7 @@ export default function ProfileScreen() {
                 const fp = fr.friend_profile;
                 const fName = fp.display_name;
                 const fHandle = fp.username ?? buildDefaultUsername(fName, fr.friend_id);
-                const fColor = fp.banner_color ?? '#8B5CF6';
+                const fColor = colors.surfaceElevated;
                 return (
                   <View
                     key={fr.id}
@@ -1054,7 +1068,7 @@ export default function ProfileScreen() {
                             style={styles.friendAvatarImg}
                           />
                         ) : (
-                          <Text style={styles.friendAvatarLetter}>
+                          <Text style={[styles.friendAvatarLetter, { color: colors.ink }]}>
                             {fName.slice(0, 1).toUpperCase()}
                           </Text>
                         )}
@@ -1076,7 +1090,7 @@ export default function ProfileScreen() {
                               },
                             ]}>
                             <Text style={[styles.tierBadgeText, { color: colors.ink }]}>
-                              {fr.relationship === 'bestie' ? '✨ Bestie' : '👋 Friend'}
+                              {fr.relationship === 'bestie' ? 'Bestie' : 'Friend'}
                             </Text>
                           </View>
                         </View>
@@ -1093,7 +1107,7 @@ export default function ProfileScreen() {
 
                         {fp.mood_song ? (
                           <Text style={[styles.friendSongText, { color: colors.inkMuted }]}>
-                            🎵 {fp.mood_song}
+                            Track: {fp.mood_song}
                           </Text>
                         ) : null}
                       </View>
@@ -1105,7 +1119,7 @@ export default function ProfileScreen() {
                         accessibilityLabel={`Message ${fName}`}
                         onPress={() => {
                           triggerHaptic();
-                          router.push({
+                          router.navigate({
                             pathname: '/(tabs)/messages' as never,
                             params: {
                               peerId: fr.friend_id,
@@ -1121,7 +1135,7 @@ export default function ProfileScreen() {
                           },
                         ]}>
                         <Text style={[styles.friendMsgBtnText, { color: colors.canvas }]}>
-                          💬 Message
+                          Message
                         </Text>
                       </Pressable>
 
@@ -1180,7 +1194,7 @@ export default function ProfileScreen() {
               accessibilityLabel="Save profile changes"
               disabled={savingProfile}
               onPress={() => void handleSaveProfile()}>
-              <Text style={[styles.modalSaveText, { color: draftBannerColor }]}>
+              <Text style={[styles.modalSaveText, { color: colors.ink }]}>
                 {savingProfile ? 'Saving…' : 'Save'}
               </Text>
             </Pressable>
@@ -1444,14 +1458,14 @@ export default function ProfileScreen() {
             {/* Profile Mood Song */}
             <View style={{ gap: spacing.xs }}>
               <Text style={[styles.fieldLabel, { color: colors.ink }]}>
-                🎵 Profile Mood Song
+                Profile Mood Song
               </Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
                 {CURATED_MUSIC_TRACKS.map((trk) => {
-                  const label = `${trk.title} — ${trk.artist}`;
+                  const label = `${trk.title} · ${trk.artist}`;
                   const selected = draftMoodSong === label || draftMoodSong === trk.title;
                   return (
                     <Pressable
@@ -1465,17 +1479,17 @@ export default function ProfileScreen() {
                       style={[
                         styles.songPresetChip,
                         {
-                          backgroundColor: selected ? trk.coverColor : colors.surface,
-                          borderColor: selected ? trk.coverColor : colors.border,
+                          backgroundColor: selected ? colors.accent : colors.surface,
+                          borderColor: selected ? colors.accent : colors.border,
                           borderRadius: radii.pill,
                         },
                       ]}>
                       <Text
                         style={[
                           styles.songPresetChipText,
-                          { color: selected ? '#FFFFFF' : colors.ink },
+                          { color: selected ? colors.onAccent : colors.ink },
                         ]}>
-                        🎵 {trk.title} · {trk.artist}
+                        {trk.title} · {trk.artist}
                       </Text>
                     </Pressable>
                   );
@@ -1542,7 +1556,7 @@ export default function ProfileScreen() {
                 }}>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={[styles.fieldLabel, { color: colors.ink }]}>
-                    🔒 Private Profile
+                    Private Profile
                   </Text>
                   <Text style={{ color: colors.inkMuted, fontSize: 12 }}>
                     Require approval before anyone can see your posts or dump grid.
@@ -1566,7 +1580,7 @@ export default function ProfileScreen() {
                 }}>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={[styles.fieldLabel, { color: colors.ink }]}>
-                    🎞️ Dump Account Badge
+                    Dump Account Badge
                   </Text>
                   <Text style={{ color: colors.inkMuted, fontSize: 12 }}>
                     Label this profile as your casual photo dump account (up to 5x/day).
@@ -1625,9 +1639,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   bannerQuickBtn: {
+    minHeight: 44,
     backgroundColor: 'rgba(0, 0, 0, 0.42)',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 999,
   },
   bannerQuickBtnText: {
@@ -1688,11 +1705,12 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   friendCodePill: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
     gap: 6,
   },
   friendCodeLabel: {
@@ -1706,8 +1724,11 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   editProfilePill: {
-    paddingHorizontal: 15,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   editProfilePillText: {
     fontSize: 13,
@@ -1798,6 +1819,7 @@ const styles = StyleSheet.create({
   },
   subTabBtn: {
     flex: 1,
+    minHeight: 44,
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1823,8 +1845,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   newPostButton: {
-    paddingHorizontal: 15,
-    paddingVertical: 9,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   newPostButtonText: {
     color: '#FFFFFF',
@@ -1854,9 +1879,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   relOptionPill: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 13,
-    paddingVertical: 6,
+    paddingHorizontal: 15,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   relOptionText: {
     fontSize: 12,
@@ -1954,17 +1982,23 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   friendMsgBtn: {
-    paddingHorizontal: 15,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   friendMsgBtnText: {
     fontSize: 13,
     fontWeight: '800',
   },
   friendRemoveBtn: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   friendRemoveBtnText: {
     fontSize: 12,
@@ -2013,9 +2047,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   colorSwatch: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2026,11 +2060,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   avatarPresetChip: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
     gap: 7,
   },
   presetMiniAvatar: {
@@ -2061,18 +2096,24 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   presetSmallChip: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   presetSmallChipText: {
     fontSize: 12,
     fontWeight: '700',
   },
   songPresetChip: {
+    minHeight: 44,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   songPresetChipText: {
     fontSize: 12,

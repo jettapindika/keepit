@@ -8,7 +8,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
-import { RevealOnAppear } from '@/components/ui/Primitives';
+import { DualFrameMark, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -271,6 +271,7 @@ export function WidgetPreviewCard({
                 },
               ]}>
               <Text
+                pointerEvents="none"
                 style={[
                   styles.sizeToggleText,
                   {
@@ -296,6 +297,7 @@ export function WidgetPreviewCard({
                 },
               ]}>
               <Text
+                pointerEvents="none"
                 style={[
                   styles.sizeToggleText,
                   {
@@ -543,9 +545,8 @@ export function WidgetPreviewCard({
                       </View>
                     </>
                   ) : (
-                    <View style={styles.stylizedFallbackTile}>
-                      <View style={styles.stylizedSunGlow} />
-                      <Text style={styles.stylizedCupEmoji}>☕✨</Text>
+                    <View style={[styles.stylizedFallbackTile, { backgroundColor: colors.surfaceElevated }]}>
+                      <DualFrameMark size={36} />
                       <View style={styles.photoCornerWatermark}>
                         <Text style={styles.watermarkText}>#KeepIt</Text>
                       </View>
@@ -697,12 +698,12 @@ export function WidgetPreviewCard({
                 opacity: pinning ? 0.65 : 1,
               },
             ]}>
-            <Text style={[styles.pinWidgetButtonText, { color: colors.badgeFg }]}>
+            <Text pointerEvents="none" style={[styles.pinWidgetButtonText, { color: colors.badgeFg }]}>
               {pinning
                 ? 'Pinning…'
                 : widgetPinned
-                  ? '📌 Pinned to Home Screen'
-                  : '📌 Pin Widget to Home Screen'}
+                  ? 'Pinned to Home Screen'
+                  : 'Pin Widget to Home Screen'}
             </Text>
           </Pressable>
 
@@ -723,7 +724,7 @@ export function WidgetPreviewCard({
                   opacity: syncing ? 0.6 : 1,
                 },
               ]}>
-              <Text style={[styles.syncChipText, { color: colors.ink }]}>
+              <Text pointerEvents="none" style={[styles.syncChipText, { color: colors.ink }]}>
                 {syncing ? 'Syncing…' : 'Sync Widget Now'}
               </Text>
             </Pressable>
@@ -766,8 +767,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   sizeTogglePill: {
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    minHeight: 38,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sizeToggleText: {
     fontSize: 12,
@@ -1052,17 +1056,23 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   pinWidgetButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pinWidgetButtonText: {
     fontSize: 12,
     fontWeight: '700',
   },
   syncChip: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   syncChipText: {
     fontSize: 12,
