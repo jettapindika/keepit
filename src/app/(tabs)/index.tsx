@@ -15,6 +15,7 @@ import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { DualMomentCard, LockedMomentCard } from '@/components/moment/MomentCards';
 import { StatusHeaderCard } from '@/components/status/StatusHeaderCard';
+import { SharedPulseCard } from '@/components/streak/SharedPulseCard';
 import {
   DualFrameMark,
   InlineNotice,
@@ -332,7 +333,21 @@ export default function HomeScreen() {
           onOpenStatusSheet={() => router.push('/status-sheet')}
         />
 
-        <SectionHeader title="Today’s Moments" subtitle={bundle && streakCount > 0 ? `${streakCount}-day streak · Yours, theirs, and your circle` : 'Choose whose day to catch up on.'} />
+        <SharedPulseCard
+          streak={bundle?.streak}
+          myMoment={myMoment}
+          partnerMoment={partnerMoment}
+          myName={user?.display_name ?? 'You'}
+          partnerName={partnerName}
+          isPartnerPaired={isPartnerPaired}
+          nudging={nudging}
+          onCaptureMine={() => openCameraModal()}
+          onNudgePartner={isPartnerPaired ? () => void handleSendNudge() : undefined}
+          onOpenMemories={() => router.navigate('/(tabs)/memories' as never)}
+          onPressPair={() => router.navigate('/(auth)/pair')}
+        />
+
+        <SectionHeader title="Today’s Moments" subtitle={bundle && streakCount > 0 ? `${streakCount}-day pulse · Yours, theirs, and your circle` : 'Choose whose day to catch up on.'} />
 
         {actionError || bundleQuery.isError ? (
           <View style={{ gap: spacing.xs }}>
@@ -616,6 +631,7 @@ export default function HomeScreen() {
             myName={user?.display_name ?? 'You'}
             partnerName={partnerName}
             streakCount={streakCount}
+            longestStreakCount={bundle?.streak?.longest_count}
             revealKey={`home-together-${bundle!.prompt.id}`}
           />
         ) : (

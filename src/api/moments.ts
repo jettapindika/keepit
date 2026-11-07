@@ -21,6 +21,7 @@ import {
   TaggedPerson,
   TodayMomentBundle,
 } from '@/types/database';
+import { advanceStreakOnDualPost, enrichStreakWithRecentChain } from '@/utils/streakEngine';
 
 const LOCAL_MOMENTS_KEY = 'keepit.local_moments.v1';
 
@@ -601,12 +602,19 @@ export async function fetchTodayMomentBundle(params: {
     })
     .map((m) => redactExpiredSnapMomentForViewer(m, params.userId, nowMs));
 
-  const streak = state.streaks[params.coupleId] ?? {
+  const rawStreak = state.streaks[params.coupleId] ?? {
     couple_id: params.coupleId,
     current_count: unlocked ? 1 : 0,
     longest_count: unlocked ? 1 : 0,
     last_completed_date: unlocked ? today : null,
   };
+  const streak = enrichStreakWithRecentChain({
+    streak: rawStreak,
+    coupleId: params.coupleId,
+    userId: params.userId,
+    todayDate: today,
+    moments: allUnique,
+  });
 
   return {
     prompt,
@@ -873,35 +881,21 @@ export async function submitDailyMoment(params: {
   state.moments[`${prompt.id}:${params.userId}`] = record;
 
   // Advance streak if both partners have posted today
-  const distinctPosters = new Set(
-    Object.values(state.moments)
-      .filter(
-        (m) =>
-          m.couple_id === params.coupleId &&
-          !m.user_id.startsWith('friend_') &&
-          momentLocalDateString(m) === today
-      )
-      .map((m) => m.user_id)
+  const todayCoupleMoments = Object.values(state.moments).filter(
+    (m) =>
+      m.couple_id === params.coupleId &&
+      !m.user_id.startsWith('friend_') &&
+      momentLocalDateString(m) === today
   );
+  const distinctPosters = new Set(todayCoupleMoments.map((m) => m.user_id));
   if (distinctPosters.size >= 2) {
-    const prev = state.streaks[params.coupleId] ?? {
-      couple_id: params.coupleId,
-      current_count: 0,
-      longest_count: 0,
-      last_completed_date: null,
-    };
-    if (prev.last_completed_date !== today) {
-      const yesterdayDate = new Date(nowMs - 86_400_000);
-      const yesterday = todayLocalDateString(yesterdayDate);
-      const nextCount = prev.last_completed_date === yesterday ? prev.current_count + 1 : 1;
-      state.streaks[params.coupleId] = {
-        couple_id: params.coupleId,
-        current_count: nextCount,
-        longest_count: Math.max(prev.longest_count, nextCount),
-        last_completed_date: today,
-        updated_at: new Date().toISOString(),
-      };
-    }
+    const bothOnTime = todayCoupleMoments.every((m) => !m.is_late);
+    state.streaks[params.coupleId] = advanceStreakOnDualPost({
+      previous: state.streaks[params.coupleId],
+      coupleId: params.coupleId,
+      todayDate: today,
+      bothOnTime,
+    });
   }
 
   await writeLocalMoments(state);

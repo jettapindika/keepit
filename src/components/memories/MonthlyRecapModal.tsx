@@ -28,14 +28,15 @@ function RecapDeck({ onClose, monthLabel, days, streak, myName, partnerName, loa
   const [stepIndex, setStepIndex] = useState(0);
   const metrics = useMemo(() => {
     const highlights = days.filter((day): day is MemoryDayRecord & { mine: NonNullable<MemoryDayRecord['mine']>; partner: NonNullable<MemoryDayRecord['partner']> } => Boolean(day.mine && day.partner)).sort((a, b) => a.prompt_date.localeCompare(b.prompt_date));
-    let total = 0; let onTime = 0; let monthBest = 0; let run = 0; let previous: number | null = null;
+    let total = 0; let onTime = 0; let monthBest = 0; let run = 0; let previous: number | null = null; let goldenDays = 0;
     for (const day of days) for (const moment of [day.mine, day.partner]) if (moment) { total += 1; if (!moment.is_late) onTime += 1; }
     for (const day of highlights) {
+      if (!day.mine.is_late && !day.partner.is_late) goldenDays += 1;
       const epoch = new Date(`${day.prompt_date}T00:00:00Z`).getTime() / 86_400_000;
       run = previous !== null && epoch - previous === 1 ? run + 1 : 1;
       monthBest = Math.max(monthBest, run); previous = epoch;
     }
-    return { highlights: highlights.reverse(), total, onTimePct: total ? Math.round(onTime / total * 100) : null, monthBest };
+    return { highlights: highlights.reverse(), total, onTimePct: total ? Math.round(onTime / total * 100) : null, monthBest, goldenDays };
   }, [days]);
   const totalSlides = 1 + metrics.highlights.length;
   const step = Math.min(stepIndex, totalSlides - 1);
@@ -73,12 +74,14 @@ function RecapDeck({ onClose, monthLabel, days, streak, myName, partnerName, loa
           <SectionHeader title={paired ? `${myName} & ${partnerName}` : `${myName}'s archive`} subtitle={`${days.length} archived ${days.length === 1 ? 'day' : 'days'} in ${monthLabel}.`} />
           <View style={styles.heroMetric}><Text style={[styles.bigNumber, { color: colors.ink, fontFamily: type.fontSans }]}>{metrics.highlights.length}</Text><Text style={[styles.sectionTitle, { color: colors.ink }]}>Together collages</Text><Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.total} total {metrics.total === 1 ? 'post' : 'posts'} in your monthly archive.</Text></View>
           <View style={[styles.metricList, { borderTopColor: colors.border }]}>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Best Together streak this month</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.monthBest} days</Text></View>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>All-time best streak</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.longest_count ?? 0} days</Text></View>
+            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Best Together streak this month</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.monthBest} {metrics.monthBest === 1 ? 'day' : 'days'}</Text></View>
+            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>All-time best streak</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.longest_count ?? 0} {(streak?.longest_count ?? 0) === 1 ? 'day' : 'days'}</Text></View>
+            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Golden Sync days (both on time)</Text><Text style={[styles.metricValue, { color: colors.success }]}>{Math.max(metrics.goldenDays, streak?.golden_sync_count ?? 0)}</Text></View>
+            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Grace Shields ready</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.grace_shields ?? 0}</Text></View>
             <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Posted on time</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.onTimePct === null ? 'No posts' : `${metrics.onTimePct}%`}</Text></View>
           </View>
-          <Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.highlights.length ? 'Revisit your Together days. Each highlight lets you swap cameras and save the original Moments.' : 'Post on the same day together to make a Together collage. Individual Moments remain in your calendar.'}</Text>
-        </View> : active ? <TogetherCollageCard key={active.prompt_id} promptDate={active.prompt_date} myMoment={active.mine} partnerMoment={active.partner} myName={myName} partnerName={partnerName} /> : null}
+          <Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.highlights.length ? 'Revisit your Together days. Each highlight lets you swap cameras, cycle unlocked Milestone Stamps, and save the original Moments.' : 'Post on the same day together to make a Together collage. Individual Moments remain in your calendar.'}</Text>
+        </View> : active ? <TogetherCollageCard key={active.prompt_id} promptDate={active.prompt_date} myMoment={active.mine} partnerMoment={active.partner} myName={myName} partnerName={partnerName} streakCount={streak?.current_count ?? metrics.monthBest} longestStreakCount={streak?.longest_count ?? metrics.monthBest} /> : null}
       </ScrollView>
       <View style={styles.footer}>
         <KeepItButton label="Previous" variant="secondary" disabled={step === 0} onPress={() => changeSlide(step - 1)} style={styles.footerButton} />

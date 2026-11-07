@@ -12,6 +12,7 @@ import {
   MonthMemoriesBundle,
   StreakRecord,
 } from '@/types/database';
+import { enrichStreakWithRecentChain, getUnlockedMilestones } from '@/utils/streakEngine';
 
 const LOCAL_EVENTS_KEY = 'keepit.local_events.v1';
 const LOCAL_MOMENTS_KEY = 'keepit.local_moments.v1';
@@ -177,7 +178,7 @@ export async function fetchMonthMemories(params: {
   year: number;
   month: number; // 1..12
 }): Promise<MonthMemoriesBundle> {
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && supabase && !params.userId.startsWith('local_') && !params.coupleId.startsWith('couple_demo') && !params.coupleId.startsWith('solo_')) {
     const { data, error } = await supabase.rpc('get_month_memories', {
       p_year: params.year,
       p_month: params.month,
@@ -187,6 +188,7 @@ export async function fetchMonthMemories(params: {
       const days = [...(rawBundle.days ?? [])].sort((a, b) =>
         a.prompt_date < b.prompt_date ? 1 : a.prompt_date > b.prompt_date ? -1 : 0
       );
+      if (days.length > 0 || rawBundle.streak) {
       const client = supabase;
       await Promise.all(
         days.map(async (day) => {
@@ -219,15 +221,24 @@ export async function fetchMonthMemories(params: {
           }
         })
       );
-      return {
-        days,
+      const allMomentsInMonth = days.flatMap((d) => [d.mine, d.partner].filter((m): m is MomentRecord => Boolean(m)));
+      const enrichedRemoteStreak = enrichStreakWithRecentChain({
         streak: rawBundle.streak ?? {
           couple_id: params.coupleId,
           current_count: 0,
           longest_count: 0,
           last_completed_date: null,
         },
+        coupleId: params.coupleId,
+        userId: params.userId,
+        todayDate: todayLocalDateString(),
+        moments: allMomentsInMonth,
+      });
+      return {
+        days,
+        streak: enrichedRemoteStreak,
       };
+      }
     }
     if (error && !isSchemaNotMigratedError(error)) throw new Error(error.message);
   }
@@ -303,12 +314,13 @@ export async function fetchMonthMemories(params: {
     a.prompt_date < b.prompt_date ? 1 : a.prompt_date > b.prompt_date ? -1 : 0
   );
 
-  const streak: StreakRecord = state.streaks[params.coupleId] ?? {
-    couple_id: params.coupleId,
-    current_count: 0,
-    longest_count: 0,
-    last_completed_date: null,
-  };
+  const streak = enrichStreakWithRecentChain({
+    streak: state.streaks[params.coupleId],
+    coupleId: params.coupleId,
+    userId: params.userId,
+    todayDate: todayLocal,
+    moments: allUniqueMoments,
+  });
 
   return { days, streak };
 }
@@ -498,12 +510,17 @@ export async function seedSandboxSampleMemories(params: {
       : now.toISOString().slice(0, 10);
 
   const existingStreak = state.streaks[params.coupleId];
+  const nextLongest = Math.max(6, existingStreak?.longest_count ?? 0);
   state.streaks[params.coupleId] = {
     couple_id: params.coupleId,
     current_count: 6,
-    longest_count: Math.max(6, existingStreak?.longest_count ?? 0),
+    longest_count: nextLongest,
     last_completed_date: latestSeededDate,
     updated_at: new Date().toISOString(),
+    grace_shields: 1,
+    shield_used_dates: [],
+    golden_sync_count: Math.max(3, existingStreak?.golden_sync_count ?? 0),
+    unlocked_milestones: getUnlockedMilestones(nextLongest, existingStreak?.unlocked_milestones),
   };
 
   await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));

@@ -12,6 +12,7 @@ import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { DualMomentCard } from '@/components/moment/MomentCards';
+import { StreakMilestoneShelf } from '@/components/streak/SharedPulseCard';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
@@ -82,11 +83,7 @@ export default function MemoriesScreen() {
   return <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
     <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[styles.content, { paddingBottom: APP_LAYOUT.tabBarClearance + insets.bottom }]}>
       <PageHeader title="Memories" subtitle={isPartnerPaired ? `${myName} & ${partnerName}` : `${myName} · Personal archive`} onBack={() => router.replace('/(tabs)')} backLabel="Back to Home" />
-      <View style={[styles.streakRow, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
-        <View style={styles.streakItem}><Text style={[styles.metric, { color: colors.ink, fontFamily: type.fontSans }]}>{memoriesQuery.isLoading ? '…' : memoriesQuery.isError && !streak ? '?' : streak?.current_count ?? 0}</Text><Text style={[styles.secondary, { color: colors.inkMuted }]}>Current day streak</Text></View>
-        <View style={[styles.divider, { backgroundColor: colors.border }]} />
-        <View style={styles.streakItem}><Text style={[styles.metric, { color: colors.ink, fontFamily: type.fontSans }]}>{memoriesQuery.isLoading ? '…' : memoriesQuery.isError && !streak ? '?' : streak?.longest_count ?? 0}</Text><Text style={[styles.secondary, { color: colors.inkMuted }]}>Best day streak</Text></View>
-      </View>
+      <StreakMilestoneShelf streak={streak} />
 
       <View style={styles.monthArea}>
         <Text accessibilityRole="header" style={[styles.monthTitle, { color: colors.ink, fontFamily: type.fontSans }]}>{monthLabel}</Text>
@@ -124,7 +121,7 @@ export default function MemoriesScreen() {
       {!memoriesQuery.isLoading && !memoriesQuery.isError && !days.length ? <EmptyState title={`No Moments in ${monthLabel}`} message="Capture a daily Moment from Home to build your archive." actionLabel="Back to Home" onAction={() => router.replace('/(tabs)')} /> : null}
       {selectedRecord ? <View style={styles.stack}>
         <SectionHeader title={selectedRecord.mine && selectedRecord.partner ? 'Together collage' : 'Day archive'} subtitle={fullDate(selectedRecord.prompt_date)} />
-        {selectedRecord.mine && selectedRecord.partner ? <TogetherCollageCard key={selectedRecord.prompt_id} promptDate={selectedRecord.prompt_date} myMoment={selectedRecord.mine} partnerMoment={selectedRecord.partner} myName={myName} partnerName={partnerName} /> : singleMoment ? <View style={styles.stack}>
+        {selectedRecord.mine && selectedRecord.partner ? <TogetherCollageCard key={selectedRecord.prompt_id} promptDate={selectedRecord.prompt_date} myMoment={selectedRecord.mine} partnerMoment={selectedRecord.partner} myName={myName} partnerName={partnerName} streakCount={streak?.current_count} longestStreakCount={streak?.longest_count} /> : singleMoment ? <View style={styles.stack}>
           <InlineNotice tone="info" message={`Only ${singleName} posted on this date.${isPartnerPaired ? ' Both partners need to post on the same day for a Together collage.' : ''}`} />
           <DualMomentCard authorName={singleName} backPhotoUrl={singleMoment.back_photo_url ?? singleMoment.back_photo_path} frontPhotoUrl={singleMoment.front_photo_url ?? singleMoment.front_photo_path} blurhash={singleMoment.back_blurhash || DEFAULT_WARM_BLURHASH} caption={singleMoment.caption} postedAtIso={singleMoment.posted_at} lateBySeconds={singleMoment.late_by_seconds} isLate={singleMoment.is_late} retakeCount={singleMoment.retake_count} />
         </View> : null}

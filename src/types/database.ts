@@ -230,12 +230,28 @@ export interface PartnerMomentView {
   front_photo_url?: string | null;
 }
 
+export type StreakDayState = 'golden' | 'synced' | 'shield' | 'half' | 'missed';
+
+export interface StreakDayNode {
+  date: string; // YYYY-MM-DD
+  dayLabel: string; // e.g. 'M', 'T', 'W'
+  state: StreakDayState;
+  myPosted: boolean;
+  partnerPosted: boolean;
+  goldenSync?: boolean;
+}
+
 export interface StreakRecord {
   couple_id: string;
   current_count: number;
   longest_count: number;
   last_completed_date: string | null;
   updated_at?: string;
+  grace_shields?: number;
+  shield_used_dates?: string[];
+  golden_sync_count?: number;
+  unlocked_milestones?: number[];
+  recent_chain?: StreakDayNode[];
 }
 
 export interface TodayMomentBundle {

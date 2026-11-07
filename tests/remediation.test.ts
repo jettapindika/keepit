@@ -55,6 +55,12 @@ import {
   buildMomentCompositeSvgDataUri,
   exportAndShareCompositeMoment,
 } from '@/utils/momentExport';
+import {
+  advanceStreakOnDualPost,
+  enrichStreakWithRecentChain,
+  getAvailableCollageStamps,
+  getCurrentAndNextChapter,
+} from '@/utils/streakEngine';
 import { requestPinKeepItWidgetDetailed } from '../modules/keepit-widget-bridge';
 
 
@@ -857,4 +863,77 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.ok(svg9x16.includes('neon vibe'));
   });
 
+});
+
+describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Chapters', () => {
+  beforeEach(async () => {
+    await resetAllState();
+  });
+
+  it('bridges a 1-day missed gap using a Grace Shield, awards +1 shield on 7th day, and tracks Golden Syncs & stamps', async () => {
+    const coupleId = 'couple_pulse_test';
+
+    // Start at day 2 completed on 2026-11-01 with 1 shield
+    let streak = advanceStreakOnDualPost({
+      previous: {
+        couple_id: coupleId,
+        current_count: 2,
+        longest_count: 2,
+        last_completed_date: '2026-11-01',
+        grace_shields: 1,
+        shield_used_dates: [],
+        golden_sync_count: 1,
+        unlocked_milestones: [],
+      },
+      coupleId,
+      todayDate: '2026-11-02',
+      bothOnTime: true,
+    });
+
+    assert.equal(streak.current_count, 3);
+    assert.equal(streak.golden_sync_count, 2);
+    assert.deepEqual(streak.unlocked_milestones, [3]);
+
+    // Skip 2026-11-03 (1-day gap) and post on 2026-11-04 -> Grace Shield bridges the gap!
+    streak = advanceStreakOnDualPost({
+      previous: streak,
+      coupleId,
+      todayDate: '2026-11-04',
+      bothOnTime: false,
+    });
+
+    assert.equal(streak.current_count, 4, 'Grace shield must bridge a 1-day gap to Day 4');
+    assert.equal(streak.grace_shields, 0, 'Grace shield count must decrement by 1');
+    assert.ok(streak.shield_used_dates?.includes('2026-11-03'), 'Missed date must be recorded in shield_used_dates');
+    assert.equal(streak.golden_sync_count, 2, 'Late sync must not increment golden_sync_count');
+
+    // Advance through days 5, 6, 7 -> Day 7 unlocks Weekly Ritual (7d) and awards +1 Grace Shield
+    streak = advanceStreakOnDualPost({ previous: streak, coupleId, todayDate: '2026-11-05', bothOnTime: true });
+    streak = advanceStreakOnDualPost({ previous: streak, coupleId, todayDate: '2026-11-06', bothOnTime: true });
+    streak = advanceStreakOnDualPost({ previous: streak, coupleId, todayDate: '2026-11-07', bothOnTime: true });
+
+    assert.equal(streak.current_count, 7);
+    assert.equal(streak.grace_shields, 1, 'Reaching 7-day multiple must award +1 Grace Shield');
+    assert.deepEqual(streak.unlocked_milestones, [3, 7]);
+
+    const chapterInfo = getCurrentAndNextChapter(streak.current_count);
+    assert.equal(chapterInfo.current?.title, 'Weekly Ritual');
+    assert.equal(chapterInfo.next?.title, 'Fortnight');
+    assert.equal(chapterInfo.daysRemaining, 7);
+
+    const stamps = getAvailableCollageStamps(streak.current_count, streak.longest_count);
+    assert.equal(stamps.length, 3, 'Should have Classic + 3d Spark + 7d Weekly Ritual stamps');
+    assert.ok(stamps[2].watermarkText.includes('WEEKLY RITUAL · DAY 7'));
+
+    const enriched = enrichStreakWithRecentChain({
+      streak,
+      coupleId,
+      userId: 'user_a',
+      todayDate: '2026-11-07',
+      moments: [],
+    });
+    assert.equal(enriched.recent_chain?.length, 7);
+    const bridgedNode = enriched.recent_chain?.find((n) => n.date === '2026-11-03');
+    assert.equal(bridgedNode?.state, 'shield');
+  });
 });
