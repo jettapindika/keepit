@@ -15,6 +15,7 @@ alter table public.users
   add column if not exists pronouns text not null default '',
   add column if not exists mood_song text not null default 'Sunset Lover · Petit Biscuit',
   add column if not exists banner_color text not null default '#D95D39',
+  add column if not exists banner_path text,
   add column if not exists website text not null default '',
   add column if not exists friend_code text,
   add column if not exists is_private boolean not null default false,

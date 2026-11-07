@@ -293,6 +293,7 @@ export async function upsertUserProfile(params: {
   pronouns?: string;
   moodSong?: string;
   bannerColor?: string;
+  bannerPath?: string | null;
   website?: string;
   avatarPath?: string | null;
   isPrivate?: boolean;
@@ -367,6 +368,8 @@ export async function upsertUserProfile(params: {
       params.bannerColor !== undefined
         ? params.bannerColor
         : (existing?.banner_color ?? '#1C1C1E'),
+    banner_path:
+      params.bannerPath !== undefined ? params.bannerPath : (existing?.banner_path ?? null),
     website:
       params.website !== undefined
         ? params.website.trim().slice(0, 80)
@@ -402,6 +405,7 @@ export async function upsertUserProfile(params: {
             pronouns: profile.pronouns,
             mood_song: profile.mood_song,
             banner_color: profile.banner_color,
+            banner_path: profile.banner_path,
             website: profile.website,
             friend_code: profile.friend_code,
             is_private: profile.is_private,

@@ -612,6 +612,46 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
       'Approved Bestie tier can view Private Dump Account friends-visible posts'
     );
   });
+
+  it('persists custom uploaded avatar_path and banner_path across profile updates and clears banner back to null', async () => {
+    await useSessionStore.getState().signUpWithPassword({
+      displayName: 'Aria',
+      email: 'aria@keepit.app',
+      password: 'password123',
+      confirmPassword: 'password123',
+    });
+
+    const customAvatarUri = 'data:image/png;base64,CUSTOM_AVATAR_UPLOAD_BYTES';
+    const customBannerUri = 'data:image/jpeg;base64,CUSTOM_BANNER_UPLOAD_BYTES';
+
+    const updatedWithBoth = await useSessionStore.getState().updateProfile({
+      displayName: 'Aria V.',
+      avatarPath: customAvatarUri,
+      bannerPath: customBannerUri,
+      bannerColor: '#282830',
+    });
+
+    assert.equal(updatedWithBoth.avatar_path, customAvatarUri);
+    assert.equal(updatedWithBoth.banner_path, customBannerUri);
+    assert.equal(updatedWithBoth.banner_color, '#282830');
+    assert.equal(useSessionStore.getState().user?.avatar_path, customAvatarUri);
+    assert.equal(useSessionStore.getState().user?.banner_path, customBannerUri);
+
+    // Updating only displayName preserves existing uploaded avatar_path and banner_path
+    const preservedUpdate = await useSessionStore.getState().updateProfile({
+      displayName: 'Aria Vance',
+    });
+    assert.equal(preservedUpdate.avatar_path, customAvatarUri);
+    assert.equal(preservedUpdate.banner_path, customBannerUri);
+
+    // Clearing bannerPath resets banner_path to null while keeping avatar_path intact
+    const clearedBanner = await useSessionStore.getState().updateProfile({
+      displayName: 'Aria Vance',
+      bannerPath: null,
+    });
+    assert.equal(clearedBanner.banner_path, null);
+    assert.equal(clearedBanner.avatar_path, customAvatarUri);
+  });
 });
 
 describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widget & Watermark', () => {

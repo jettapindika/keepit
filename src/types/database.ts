@@ -21,6 +21,7 @@ export interface UserProfile {
   pronouns?: string;
   mood_song?: string;
   banner_color?: string;
+  banner_path?: string | null;
   website?: string;
   friend_code?: string;
   is_private?: boolean;
