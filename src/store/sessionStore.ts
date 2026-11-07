@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import { fetchPairingSnapshot, upsertUserProfile } from '@/api/pairing';
-import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { getAuthRedirectUrl, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { AnimationSpeed } from '@/theme/motion';
 import { ThemeMode } from '@/theme/tokens';
 import { CoupleRecord, UserProfile } from '@/types/database';
@@ -26,6 +26,44 @@ function buildDeterministicEmailUserId(cleanedEmail: string): string {
   return `local_${cleanedEmail.replace(/[^a-z0-9]/g, '_')}`;
 }
 
+interface SupabaseAuthUserLike {
+  id: string;
+  email?: string | null;
+  email_confirmed_at?: string | null;
+  confirmed_at?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+}
+
+export function isEmailConfirmedUser(user: SupabaseAuthUserLike | null | undefined): boolean {
+  if (!user) return false;
+  const confirmedAt = user.email_confirmed_at ?? user.confirmed_at;
+  return typeof confirmedAt === 'string' && confirmedAt.trim().length > 0;
+}
+
+export function extractAuthRedirectParams(rawUrl: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!rawUrl || typeof rawUrl !== 'string') return out;
+
+  const collectParams = (segment: string) => {
+    if (!segment) return;
+    const sp = new URLSearchParams(segment.replace(/^[?#]/, ''));
+    sp.forEach((value, key) => {
+      if (value) out[key] = value;
+    });
+  };
+
+  const hashIdx = rawUrl.indexOf('#');
+  const queryIdx = rawUrl.indexOf('?');
+  if (queryIdx !== -1) {
+    const queryEnd = hashIdx !== -1 && hashIdx > queryIdx ? hashIdx : rawUrl.length;
+    collectParams(rawUrl.slice(queryIdx + 1, queryEnd));
+  }
+  if (hashIdx !== -1) {
+    collectParams(rawUrl.slice(hashIdx + 1));
+  }
+  return out;
+}
+
 interface PersistedSessionSlice {
   user: UserProfile | null;
   email: string | null;
@@ -45,6 +83,7 @@ interface SessionState {
   motionSpeed: AnimationSpeed;
   pendingInviteCode: string | null;
   hydrate: () => Promise<void>;
+  consumeAuthRedirectUrl: (url: string) => Promise<boolean>;
   signUpWithPassword: (params: {
     displayName: string;
     email: string;
@@ -159,31 +198,78 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           data: { session },
         } = await supabase.auth.getSession();
 
-        if (session?.user) {
+        if (session?.user && isEmailConfirmedUser(session.user)) {
           const { data: profile, error: profileErr } = await supabase
             .from('users')
             .select('*')
             .eq('id', session.user.id)
             .maybeSingle();
 
-          const effectiveProfile: UserProfile | null =
-            !profileErr && profile ? (profile as UserProfile) : (saved?.user ?? null);
+          const fallbackDisplayName =
+            (typeof session.user.user_metadata?.display_name === 'string' &&
+            session.user.user_metadata.display_name.trim()
+              ? session.user.user_metadata.display_name.trim()
+              : null) ??
+            saved?.user?.display_name ??
+            session.user.email?.split('@')[0] ??
+            'KeepIt User';
 
-          if (effectiveProfile) {
-            const pairing = await fetchPairingSnapshot(effectiveProfile.id);
-            const soloFallbackCouple: CoupleRecord =
-              pairing.couple ??
-              buildSoloFallbackCouple(effectiveProfile.id, effectiveProfile.created_at);
-            set({
-              user: effectiveProfile,
-              email: session.user.email ?? saved?.email ?? null,
-              couple: soloFallbackCouple,
-              partner: pairing.partner,
-              hydrated: true,
-            });
-            return;
-          }
+          const effectiveProfile: UserProfile =
+            !profileErr && profile
+              ? (profile as UserProfile)
+              : saved?.user?.id === session.user.id
+                ? saved.user
+                : await upsertUserProfile({
+                    userId: session.user.id,
+                    displayName: fallbackDisplayName,
+                  });
+
+          const pairing = await fetchPairingSnapshot(effectiveProfile.id);
+          const soloFallbackCouple: CoupleRecord =
+            pairing.couple ??
+            buildSoloFallbackCouple(effectiveProfile.id, effectiveProfile.created_at);
+          const effectiveEmail = session.user.email ?? saved?.email ?? null;
+
+          await persistSessionSlice({
+            user: effectiveProfile,
+            email: effectiveEmail,
+            themePreference: get().themePreference,
+            motionEnabled: get().motionEnabled,
+            motionSpeed: get().motionSpeed,
+          });
+
+          set({
+            user: effectiveProfile,
+            email: effectiveEmail,
+            couple: soloFallbackCouple,
+            partner: pairing.partner,
+            hydrated: true,
+          });
+          return;
         }
+
+        if (session?.user && !isEmailConfirmedUser(session.user)) {
+          await supabase.auth.signOut().catch(() => {});
+        }
+
+        if (saved?.user) {
+          await persistSessionSlice({
+            user: null,
+            email: null,
+            themePreference: get().themePreference,
+            motionEnabled: get().motionEnabled,
+            motionSpeed: get().motionSpeed,
+          });
+        }
+
+        set({
+          user: null,
+          email: null,
+          couple: null,
+          partner: null,
+          hydrated: true,
+        });
+        return;
       }
 
       if (saved?.user) {
@@ -204,6 +290,84 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     set({ hydrated: true });
+  },
+
+  consumeAuthRedirectUrl: async (url: string) => {
+    if (!isSupabaseConfigured || !supabase || !url) return false;
+    const params = extractAuthRedirectParams(url);
+    const accessToken = params.access_token;
+    const refreshToken = params.refresh_token;
+    const tokenHash = params.token_hash;
+    const otpType = params.type;
+    const authCode = params.code;
+
+    let sessionUser: SupabaseAuthUserLike | null = null;
+
+    if (accessToken && refreshToken) {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error || !data?.session?.user) return false;
+      sessionUser = data.session.user;
+    } else if (tokenHash && otpType) {
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: otpType as 'signup' | 'email' | 'recovery' | 'invite' | 'magiclink',
+      });
+      if (error || !data?.session?.user) return false;
+      sessionUser = data.session.user;
+    } else if (authCode && authCode.length > 12) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(authCode);
+      if (error || !data?.session?.user) return false;
+      sessionUser = data.session.user;
+    } else {
+      return false;
+    }
+
+    if (!sessionUser || !isEmailConfirmedUser(sessionUser)) {
+      await supabase.auth.signOut().catch(() => {});
+      return false;
+    }
+
+    const cleanedEmail = (sessionUser.email ?? '').trim().toLowerCase() || null;
+    const displayName =
+      (typeof sessionUser.user_metadata?.display_name === 'string' &&
+      sessionUser.user_metadata.display_name.trim()
+        ? sessionUser.user_metadata.display_name.trim()
+        : null) ??
+      (cleanedEmail ? cleanedEmail.split('@')[0] : null) ??
+      'KeepIt User';
+
+    const prevUserId = get().user?.id;
+    if (prevUserId && prevUserId !== sessionUser.id) {
+      await clearAccountSpecificCacheKeys();
+    }
+
+    const profile = await upsertUserProfile({
+      userId: sessionUser.id,
+      displayName,
+    });
+    const pairing = await fetchPairingSnapshot(sessionUser.id);
+    const soloFallbackCouple: CoupleRecord =
+      pairing.couple ?? buildSoloFallbackCouple(sessionUser.id, profile.created_at);
+
+    await persistSessionSlice({
+      user: profile,
+      email: cleanedEmail,
+      themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
+    });
+
+    set({
+      user: profile,
+      email: cleanedEmail,
+      couple: soloFallbackCouple,
+      partner: pairing.partner,
+      hydrated: true,
+    });
+    return true;
   },
 
   signUpWithPassword: async ({ displayName, email, password, confirmPassword }) => {
@@ -230,6 +394,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         email: cleanedEmail,
         password,
         options: {
+          emailRedirectTo: getAuthRedirectUrl(),
           data: { display_name: cleanedName },
         },
       });
@@ -249,27 +414,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         throw new Error('Could not create account. Please try again.');
       }
 
-      if (data.session) {
-        userId = data.user.id;
-      } else {
-        // Session absent => email confirmation is required by the provider.
-        // Try one immediate sign-in; when that fails the user must confirm first.
-        const { data: signInData, error: signInErr } = await supabase.auth
-          .signInWithPassword({
-            email: cleanedEmail,
-            password,
-          })
-          .catch(() => ({ data: null, error: null as never }));
-        if (signInData?.user?.id) {
-          userId = signInData.user.id;
-        } else {
-          const providerHint =
-            signInErr && /Email not confirmed/i.test(signInErr.message)
-              ? 'Check your inbox to confirm your email, then sign in.'
-              : 'Check your inbox to confirm your email, then sign in.';
-          throw new Error(providerHint);
-        }
+      // Supabase returns empty identities[] when an email is already registered and
+      // Confirm Email is enabled (anti-enumeration behavior).
+      if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        throw new Error('An account with this email already exists. Sign in instead.');
       }
+
+      if (!data.session || !isEmailConfirmedUser(data.user)) {
+        if (data.session) {
+          await supabase.auth.signOut().catch(() => {});
+        }
+        throw new Error('Check your inbox to confirm your email, then sign in.');
+      }
+
+      userId = data.user.id;
     } else {
       // Offline / unconfigured Supabase: keep the deterministic local account so the
       // app remains usable, but never mix it with a real Supabase identity.
@@ -331,6 +489,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
         throw new Error('Incorrect email or password.');
       } else {
+        if (!isEmailConfirmedUser(data.user)) {
+          await supabase.auth.signOut().catch(() => {});
+          throw new Error('Confirm your email first. Check your inbox, then sign in.');
+        }
         userId = data.user.id;
         const metaName =
           typeof data.user.user_metadata?.display_name === 'string'

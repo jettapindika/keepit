@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import * as Linking from 'expo-linking';
 import {
   DarkTheme,
   DefaultTheme,
@@ -12,9 +13,10 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 
 import { fetchTodayMomentBundle } from '@/api/moments';
+import { normalizeInviteCode } from '@/api/pairing';
 import { fetchCoupleStatuses } from '@/api/statuses';
 import { useRealtimePairing } from '@/hooks/useRealtimePairing';
 import { KeepItButton } from '@/components/ui/Primitives';
@@ -134,10 +136,9 @@ function NavigationGuard() {
     const inAuthGroup = segmentList[0] === '(auth)';
     const authLeaf = segmentList[1];
 
-    const incomingCode =
-      typeof globalParams.code === 'string' && globalParams.code.trim().length > 0
-        ? globalParams.code.trim()
-        : null;
+    const rawIncomingCode =
+      typeof globalParams.code === 'string' ? normalizeInviteCode(globalParams.code) : '';
+    const incomingCode = rawIncomingCode.length === 6 ? rawIncomingCode : null;
 
     if (!user && incomingCode && incomingCode !== pendingInviteCode) {
       setPendingInviteCode(incomingCode);
@@ -179,14 +180,51 @@ function NavigationGuard() {
 
 export default function RootLayout() {
   const hydrate = useSessionStore((s) => s.hydrate);
+  const consumeAuthRedirectUrl = useSessionStore((s) => s.consumeAuthRedirectUrl);
   const hydrated = useSessionStore((s) => s.hydrated);
   const { colors, isDark } = useKeepItTheme();
   const { reduced } = useAppMotion();
 
   useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
+    const handleIncomingUrl = async (url: string | null) => {
+      if (!url) return;
+      if (
+        url.includes('access_token=') ||
+        url.includes('refresh_token=') ||
+        url.includes('token_hash=') ||
+        url.includes('auth-callback') ||
+        url.includes('type=signup') ||
+        url.includes('type=recovery') ||
+        url.includes('type=magiclink') ||
+        url.includes('type=email')
+      ) {
+        const consumed = await consumeAuthRedirectUrl(url);
+        if (
+          consumed &&
+          Platform.OS === 'web' &&
+          typeof window !== 'undefined' &&
+          window.history?.replaceState
+        ) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    };
 
+    void (async () => {
+      await hydrate();
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.href) {
+        await handleIncomingUrl(window.location.href);
+      } else {
+        const initialUrl = await Linking.getInitialURL().catch(() => null);
+        await handleIncomingUrl(initialUrl);
+      }
+    })();
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      void handleIncomingUrl(url);
+    });
+    return () => subscription.remove();
+  }, [hydrate, consumeAuthRedirectUrl]);
   const navTheme = isDark
     ? {
         ...DarkTheme,

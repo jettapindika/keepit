@@ -20,6 +20,7 @@ const SHIM_MAP = new Map([
   ['expo-modules-core', path.join(SHIMS_DIR, 'expo-modules-core.ts')],
   ['react-native-reanimated', path.join(SHIMS_DIR, 'reanimated.ts')],
   ['react-native-url-polyfill/auto', path.join(SHIMS_DIR, 'empty.ts')],
+  ['expo-linking', path.join(SHIMS_DIR, 'expo-linking.ts')],
 ]);
 
 function tryResolveTsFile(candidateBase) {

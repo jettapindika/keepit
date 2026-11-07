@@ -37,6 +37,7 @@ export function KeepItAuthForm({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const submitting = useRef(false);
   const mounted = useRef(true);
   const emailInput = useRef<React.ComponentRef<typeof TextInput>>(null);
@@ -80,14 +81,16 @@ export function KeepItAuthForm({
     : '';
 
   useEffect(() => {
-    if (Platform.OS === 'ios' && (statusMessage || error)) {
-      AccessibilityInfo.announceForAccessibility(error ?? statusMessage);
+    const announcement = error ?? notice ?? statusMessage;
+    if (Platform.OS === 'ios' && announcement) {
+      AccessibilityInfo.announceForAccessibility(announcement);
     }
-  }, [error, statusMessage]);
+  }, [error, notice, statusMessage]);
 
   const updateMode = (nextMode: 'signup' | 'signin') => {
     if (submitting.current) return;
     setError(null);
+    setNotice(null);
     setMode(nextMode);
   };
 
@@ -95,6 +98,7 @@ export function KeepItAuthForm({
     if (submitting.current) return;
     submitting.current = true;
     setError(null);
+    setNotice(null);
     setLoading(true);
     Keyboard.dismiss();
     try {
@@ -106,7 +110,14 @@ export function KeepItAuthForm({
       // NavigationGuard owns routing after the session store authenticates the user.
     } catch (err) {
       if (mounted.current) {
-        setError(err instanceof Error ? err.message : 'Authentication failed. Please try again.');
+        const msg = err instanceof Error ? err.message : 'Authentication failed. Please try again.';
+        if (mode === 'signup' && /Check your inbox to confirm your email/i.test(msg)) {
+          setMode('signin');
+          setConfirmPassword('');
+          setNotice(msg);
+        } else {
+          setError(msg);
+        }
       }
     } finally {
       submitting.current = false;
@@ -225,6 +236,7 @@ export function KeepItAuthForm({
                 onSubmitEditing={() => void handleSubmit()}
               />
             ) : null}
+            {notice ? <InlineNotice message={notice} tone="success" /> : null}
             {error ? <InlineNotice message={error} tone="error" /> : null}
             <KeepItButton
               label={mode === 'signup' ? 'Create Account' : 'Sign In'}

@@ -50,7 +50,12 @@ import {
 } from '@/api/social';
 import { buildWidgetSnapshotPayload } from '@/hooks/useWidgetSync';
 import { computeCountdownSnapshot } from '@/hooks/useMomentCountdown';
-import { useSessionStore } from '@/store/sessionStore';
+import { getAuthRedirectUrl } from '@/api/supabase';
+import {
+  extractAuthRedirectParams,
+  isEmailConfirmedUser,
+  useSessionStore,
+} from '@/store/sessionStore';
 import {
   buildSynthesizedTrackWavDataUri,
   getActiveMusicPreviewTrackId,
@@ -379,6 +384,33 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
     const joined = await redeemInviteCode(guest.id, refreshed.invite_code);
     assert.equal(joined.couple?.state, 'active');
     assert.equal(joined.partner?.id, host.id);
+  });
+
+  it('parses confirmation email redirect fragments/queries and enforces confirmed email state', () => {
+    Platform.OS = 'ios';
+    assert.equal(getAuthRedirectUrl(), 'keepit://auth-callback');
+
+    const redirectParams = extractAuthRedirectParams(
+      'http://localhost:3000/#access_token=jwt_access_123&expires_at=1794062750&expires_in=3600&refresh_token=ref_456&token_type=bearer&type=signup'
+    );
+    assert.equal(redirectParams.access_token, 'jwt_access_123');
+    assert.equal(redirectParams.refresh_token, 'ref_456');
+    assert.equal(redirectParams.type, 'signup');
+
+    const deepLinkParams = extractAuthRedirectParams(
+      'keepit://auth-callback?token_hash=pkce_hash_999&type=signup#access_token=deep_acc&refresh_token=deep_ref'
+    );
+    assert.equal(deepLinkParams.token_hash, 'pkce_hash_999');
+    assert.equal(deepLinkParams.access_token, 'deep_acc');
+    assert.equal(deepLinkParams.refresh_token, 'deep_ref');
+
+    assert.equal(isEmailConfirmedUser(null), false);
+    assert.equal(isEmailConfirmedUser({ id: 'u1', email_confirmed_at: null }), false);
+    assert.equal(
+      isEmailConfirmedUser({ id: 'u1', email_confirmed_at: '2026-11-07T12:00:00.000Z' }),
+      true
+    );
+    Platform.OS = 'web';
   });
 });
 
