@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import React, { useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
-import { formatLateDuration } from '@/api/moments';
+import { formatLateDuration, isMomentPromptCheckIn } from '@/api/moments';
 import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -36,7 +36,7 @@ function CollageHalfPane({ moment, authorName }: { moment: MomentRecord; authorN
   return <View style={styles.pane}>
     <View style={styles.paneHeading}>
       <Text style={[styles.author, { color: colors.ink }]}>{authorName}</Text>
-      <Text style={[styles.secondary, { color: colors.inkMuted }]}>{new Date(moment.posted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{moment.is_late ? ` · ${formatLateDuration(moment.late_by_seconds)}` : ' · On time'}</Text>
+      <Text style={[styles.secondary, { color: colors.inkMuted }]}>{new Date(moment.posted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{isMomentPromptCheckIn(moment) ? ` · ${formatLateDuration(moment.late_by_seconds)}` : ''}</Text>
     </View>
     <AppPressable accessibilityRole="button" accessibilityLabel={`Swap ${authorName} front and back lens in Together collage`} accessibilityHint={`Currently showing ${swapped ? 'front' : 'back'} camera as the main photo.`} accessibilityState={{ disabled: !canSwap }} disabled={!canSwap} onPress={() => { if (Platform.OS !== 'web') void Haptics.selectionAsync(); setLoading(true); setSwapped((value) => !value); }} style={[styles.photo, { backgroundColor: colors.canvas, borderRadius: radii.input, borderColor: colors.controlBorder }]}>
       {missing ? <View style={styles.imageState}><Text style={[styles.secondary, { color: colors.inkMuted, textAlign: 'center' }]}>Photo unavailable</Text></View> : <>
@@ -85,7 +85,7 @@ export function TogetherCollageCard({ promptDate, myMoment, partnerMoment, myNam
           ) : null}
         </View>
         <Text style={[styles.secondary, { color: colors.inkMuted }]}>
-          {isGoldenSync ? 'Both partners posted within the on-time window' : 'Both Moments archived'}
+          {isMomentPromptCheckIn(myMoment) && isMomentPromptCheckIn(partnerMoment) && isGoldenSync ? 'Both checked in on time' : 'Both Moments archived'}
           {streakCount > 0 ? ` · ${streakCount}-day pulse` : ''}
         </Text>
       </View>

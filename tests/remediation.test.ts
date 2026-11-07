@@ -23,6 +23,10 @@ import {
   deleteMomentComment,
   deleteMomentPost,
   fetchTodayMomentBundle,
+  computeDeterministicPromptTriggerIso,
+  formatLateDuration,
+  isMomentPromptCheckIn,
+  simulateSandboxPromptState,
   getSnapOnceRemainingSeconds,
   isSnapOnceExpiredForViewer,
   markSnapOnceMomentState,
@@ -44,6 +48,7 @@ import {
   toggleDirectMessageReaction,
 } from '@/api/social';
 import { buildWidgetSnapshotPayload } from '@/hooks/useWidgetSync';
+import { computeCountdownSnapshot } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   buildSynthesizedTrackWavDataUri,
@@ -861,6 +866,115 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.ok(svg9x16.includes('Nov 6 · 02:30 PM'));
     assert.ok(svg9x16.includes('@sora.frames'));
     assert.ok(svg9x16.includes('neon vibe'));
+  });
+
+  it('synchronizes daily prompt deterministically, enforces 5m check-in window only on the first post after prompt, and keeps bonus/pre-prompt/solo posts spontaneous', async () => {
+    const coupleId = 'couple_time_system';
+    const aliceId = 'user_alice';
+    const bobId = 'user_bob';
+    const today = todayLocalDateString();
+
+    // 1. Both partners independently compute the exact same daily prompt trigger_at
+    const triggerA = computeDeterministicPromptTriggerIso(coupleId, today);
+    const triggerB = computeDeterministicPromptTriggerIso(coupleId, today);
+    assert.equal(triggerA, triggerB);
+
+    const bundleAlice = await fetchTodayMomentBundle({ coupleId, userId: aliceId });
+    const bundleBob = await fetchTodayMomentBundle({ coupleId, userId: bobId });
+    assert.equal(bundleAlice.prompt.trigger_at, triggerA);
+    assert.equal(bundleBob.prompt.trigger_at, triggerB);
+
+    // 2. Simulate an upcoming prompt (45m in the future) -> early spontaneous post is NOT a prompt check-in and NOT marked late
+    await simulateSandboxPromptState({ coupleId, mode: 'upcoming' });
+    const upcomingBundle = await fetchTodayMomentBundle({ coupleId, userId: aliceId });
+    const upcomingSnap = computeCountdownSnapshot(upcomingBundle.prompt.trigger_at);
+    assert.equal(upcomingSnap.phase, 'upcoming');
+
+    const earlyPost = await submitDailyMoment({
+      coupleId,
+      promptId: upcomingBundle.prompt.id,
+      userId: aliceId,
+      authorName: 'Alice',
+      backUri: 'data:image/jpeg;base64,EARLY_BACK',
+      frontUri: 'data:image/jpeg;base64,EARLY_FRONT',
+      capturedAtIso: new Date().toISOString(),
+    });
+    assert.equal(earlyPost.is_prompt_checkin, false);
+    assert.equal(earlyPost.is_late, false);
+    assert.equal(earlyPost.late_by_seconds, 0);
+    assert.equal(isMomentPromptCheckIn(earlyPost), false);
+
+    // 3. Simulate live window (prompt triggered 3m ago -> within 5-minute window)
+    const liveTriggerMs = Date.now() - 180_000;
+    const liveTriggerIso = new Date(liveTriggerMs).toISOString();
+    const liveSnap = computeCountdownSnapshot(liveTriggerIso);
+    assert.equal(liveSnap.phase, 'live');
+    assert.ok(liveSnap.secondsRemaining >= 115 && liveSnap.secondsRemaining <= 120);
+
+    // Update prompt to 180s ago and have Alice capture her first post AFTER the prompt -> On time check-in!
+    await simulateSandboxPromptState({ coupleId, mode: 'live_window' });
+    const liveBundle = await fetchTodayMomentBundle({ coupleId, userId: aliceId });
+    const checkInOnTime = await submitDailyMoment({
+      coupleId,
+      promptId: liveBundle.prompt.id,
+      userId: aliceId,
+      authorName: 'Alice',
+      backUri: 'data:image/jpeg;base64,CHECKIN_BACK',
+      frontUri: 'data:image/jpeg;base64,CHECKIN_FRONT',
+      capturedAtIso: new Date(
+        new Date(liveBundle.prompt.trigger_at).getTime() + 240_000
+      ).toISOString(), // 4m after trigger (within 5m window)
+    });
+    assert.equal(checkInOnTime.is_prompt_checkin, true);
+    assert.equal(checkInOnTime.is_late, false);
+    assert.equal(checkInOnTime.late_by_seconds, 240);
+    assert.equal(formatLateDuration(checkInOnTime.late_by_seconds), 'On time');
+
+    // 4. Alice's next post (#3 of the day, 3 hours after prompt) is a bonus spontaneous post -> never marked late!
+    const bonusPost = await submitDailyMoment({
+      coupleId,
+      promptId: liveBundle.prompt.id,
+      userId: aliceId,
+      authorName: 'Alice',
+      backUri: 'data:image/jpeg;base64,BONUS_BACK',
+      frontUri: 'data:image/jpeg;base64,BONUS_FRONT',
+      capturedAtIso: new Date(
+        new Date(liveBundle.prompt.trigger_at).getTime() + 3 * 3600_000
+      ).toISOString(),
+    });
+    assert.equal(bonusPost.is_prompt_checkin, false);
+    assert.equal(bonusPost.is_late, false);
+    assert.equal(bonusPost.late_by_seconds, 0);
+    assert.equal(isMomentPromptCheckIn(bonusPost), false);
+
+    // 5. Bob posts his first Moment 17 minutes after the prompt (12m past the 5m window) -> marked as prompt check-in, 12m after prompt
+    const bobLateCheckIn = await submitDailyMoment({
+      coupleId,
+      promptId: liveBundle.prompt.id,
+      userId: bobId,
+      authorName: 'Bob',
+      backUri: 'data:image/jpeg;base64,BOB_LATE_BACK',
+      frontUri: 'data:image/jpeg;base64,BOB_LATE_FRONT',
+      capturedAtIso: new Date(
+        new Date(liveBundle.prompt.trigger_at).getTime() + 17 * 60_000
+      ).toISOString(),
+    });
+    assert.equal(bobLateCheckIn.is_prompt_checkin, true);
+    assert.equal(bobLateCheckIn.is_late, true);
+    assert.equal(formatLateDuration(bobLateCheckIn.late_by_seconds), '12m after prompt');
+
+    // 6. Solo user posts are always spontaneous (never marked late)
+    const soloPost = await submitDailyMoment({
+      coupleId: 'solo_user_1',
+      promptId: `prompt_solo_user_1_${today}`,
+      userId: 'user_1',
+      authorName: 'Solo',
+      backUri: 'data:image/jpeg;base64,SOLO_BACK',
+      frontUri: 'data:image/jpeg;base64,SOLO_FRONT',
+      capturedAtIso: new Date(Date.now() + 8 * 3600_000).toISOString(),
+    });
+    assert.equal(soloPost.is_prompt_checkin, false);
+    assert.equal(soloPost.is_late, false);
   });
 
 });

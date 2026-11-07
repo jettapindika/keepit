@@ -24,6 +24,7 @@ import {
   formatLateDuration,
   getSnapOnceRemainingSeconds,
   isSnapOnceExpiredForViewer,
+  isMomentPromptCheckIn,
   markSnapOnceMomentState,
   toggleMomentReaction,
   updateMomentDetails,
@@ -97,7 +98,7 @@ export function DualMomentCard({
   caption: propCaption,
   postedAtIso: propPostedAtIso,
   lateBySeconds: propLateBySeconds,
-  isLate: propIsLate,
+  isLate: _propIsLate,
   retakeCount: propRetakeCount,
   editableCaption = false,
   onSaveCaption,
@@ -205,7 +206,9 @@ export function DualMomentCard({
 
   const postedAtIso = propPostedAtIso ?? moment?.posted_at ?? new Date().toISOString();
   const lateBySeconds = propLateBySeconds ?? moment?.late_by_seconds ?? 0;
-  const isLate = propIsLate ?? moment?.is_late ?? lateBySeconds > 120;
+  const isPromptCheckIn = moment
+    ? isMomentPromptCheckIn(moment)
+    : !effectiveCoupleId.startsWith('solo_') && !effectiveUserId.startsWith('friend_');
   const retakeCount = propRetakeCount ?? moment?.retake_count ?? 0;
   const mediaType: MomentMediaType = moment?.media_type ?? 'photo';
   const videoDurationSec = moment?.video_duration_seconds ?? 6;
@@ -771,7 +774,10 @@ export function DualMomentCard({
 
   return (
     <View style={{ gap: 12 }}>
-      <SectionHeader title={authorName} subtitle={`${timeFormatted} · ${isLate ? 'Late' : 'On time'}${moment?.daily_index ? ` · Moment ${moment.daily_index} of 5` : ''}`} />
+      <SectionHeader
+        title={authorName}
+        subtitle={`${timeFormatted}${isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}${moment?.daily_index ? ` · Moment ${moment.daily_index} of 5` : ''}`}
+      />
       {/* Main 3:4 Photo Container */}
       <View
         style={[
@@ -1013,23 +1019,25 @@ export function DualMomentCard({
                 </View>
               ) : null}
 
-              <View
-                style={[
-                  styles.statusPill,
-                  {
-                    backgroundColor: colors.canvas,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text
+              {isPromptCheckIn ? (
+                <View
                   style={[
-                    styles.statusPillText,
-                    { color: colors.ink },
+                    styles.statusPill,
+                    {
+                      backgroundColor: colors.canvas,
+                      borderColor: colors.border,
+                      borderRadius: radii.pill,
+                    },
                   ]}>
-                  {formatLateDuration(lateBySeconds)}
-                </Text>
-              </View>
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      { color: colors.ink },
+                    ]}>
+                    {formatLateDuration(lateBySeconds)}
+                  </Text>
+                </View>
+              ) : null}
 
               {retakeCount > 0 ? (
                 <View
@@ -1952,13 +1960,15 @@ export function LockedMomentCard({
   partnerName,
   postedAtIso,
   lateBySeconds,
-  isLate,
+  isLate: _isLate,
+  isPromptCheckIn = true,
   onCaptureMine,
 }: {
   partnerName: string;
   postedAtIso: string;
   lateBySeconds: number;
   isLate: boolean;
+  isPromptCheckIn?: boolean;
   onCaptureMine: () => void;
 }) {
   const { colors, radii, spacing } = useKeepItTheme();
@@ -1993,7 +2003,8 @@ export function LockedMomentCard({
             },
           ]}>
           <Text style={[styles.statusPillText, { color: colors.ink }]}>
-            {partnerName} posted at {timeFormatted} · {formatLateDuration(lateBySeconds)}
+            {partnerName} posted at {timeFormatted}
+            {isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}
           </Text>
         </View>
 

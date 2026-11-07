@@ -123,7 +123,7 @@ export default function MemoriesScreen() {
         <SectionHeader title={selectedRecord.mine && selectedRecord.partner ? 'Together collage' : 'Day archive'} subtitle={fullDate(selectedRecord.prompt_date)} />
         {selectedRecord.mine && selectedRecord.partner ? <TogetherCollageCard key={selectedRecord.prompt_id} promptDate={selectedRecord.prompt_date} myMoment={selectedRecord.mine} partnerMoment={selectedRecord.partner} myName={myName} partnerName={partnerName} streakCount={streak?.current_count} longestStreakCount={streak?.longest_count} /> : singleMoment ? <View style={styles.stack}>
           <InlineNotice tone="info" message={`Only ${singleName} posted on this date.${isPartnerPaired ? ' Both partners need to post on the same day for a Together collage.' : ''}`} />
-          <DualMomentCard authorName={singleName} backPhotoUrl={singleMoment.back_photo_url ?? singleMoment.back_photo_path} frontPhotoUrl={singleMoment.front_photo_url ?? singleMoment.front_photo_path} blurhash={singleMoment.back_blurhash || DEFAULT_WARM_BLURHASH} caption={singleMoment.caption} postedAtIso={singleMoment.posted_at} lateBySeconds={singleMoment.late_by_seconds} isLate={singleMoment.is_late} retakeCount={singleMoment.retake_count} />
+          <DualMomentCard moment={singleMoment} authorName={singleName} backPhotoUrl={singleMoment.back_photo_url ?? singleMoment.back_photo_path} frontPhotoUrl={singleMoment.front_photo_url ?? singleMoment.front_photo_path} blurhash={singleMoment.back_blurhash || DEFAULT_WARM_BLURHASH} caption={singleMoment.caption} postedAtIso={singleMoment.posted_at} lateBySeconds={singleMoment.late_by_seconds} isLate={singleMoment.is_late} retakeCount={singleMoment.retake_count} />
         </View> : null}
       </View> : null}
     </ScrollView>

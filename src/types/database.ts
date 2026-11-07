@@ -149,6 +149,7 @@ export interface DailyPromptRecord {
 }
 
 export const MAX_DAILY_MOMENTS_PER_DAY = 5;
+export const PROMPT_WINDOW_SECONDS = 300;
 
 export interface MomentRecord {
   id: string;
@@ -171,6 +172,7 @@ export interface MomentRecord {
   posted_at: string;
   late_by_seconds: number;
   is_late: boolean;
+  is_prompt_checkin?: boolean;
   retake_count: number;
   daily_index?: number; // 1..5
   lat: number | null;
@@ -210,6 +212,7 @@ export interface PartnerMomentView {
   posted_at: string;
   late_by_seconds: number;
   is_late: boolean;
+  is_prompt_checkin?: boolean;
   retake_count: number;
   daily_index?: number;
   lat?: number | null;

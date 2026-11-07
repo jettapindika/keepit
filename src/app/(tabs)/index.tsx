@@ -9,6 +9,7 @@ import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
   updateMomentCaption,
+  isMomentPromptCheckIn,
 } from '@/api/moments';
 import { fetchCoupleStatuses } from '@/api/statuses';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
@@ -151,6 +152,13 @@ export default function HomeScreen() {
   const maxDailyPosts = bundle?.maxDailyPosts ?? MAX_DAILY_MOMENTS_PER_DAY;
   const canPostMore = dailyPostCount < maxDailyPosts;
 
+  const hasCheckedInToday = myMomentsToday.some((m) => isMomentPromptCheckIn(m));
+  const promptTriggerFormatted = bundle?.prompt.trigger_at
+    ? new Date(bundle.prompt.trigger_at).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null;
   const bothUnlocked = Boolean(myMoment && partnerMoment && !partnerMoment.locked);
   const streakCount = bundle?.streak?.current_count ?? 0;
 
@@ -250,6 +258,7 @@ export default function HomeScreen() {
           posted_at: nonSnapPartnerMoment.posted_at,
           late_by_seconds: nonSnapPartnerMoment.late_by_seconds,
           is_late: nonSnapPartnerMoment.is_late,
+          is_prompt_checkin: nonSnapPartnerMoment.is_prompt_checkin,
           retake_count: nonSnapPartnerMoment.retake_count,
           daily_index: nonSnapPartnerMoment.daily_index,
           lat: nonSnapPartnerMoment.lat ?? null,
@@ -306,7 +315,7 @@ export default function HomeScreen() {
             <View accessibilityLabel={`${dailyPostCount} of ${maxDailyPosts} daily slots used`} style={styles.dotsRow}>
               {Array.from({ length: maxDailyPosts }, (_, index) => <View key={index} style={[styles.quotaDot, { backgroundColor: index < dailyPostCount ? colors.ink : colors.surfaceElevated, borderColor: colors.controlBorder }]} />)}
             </View>
-            <Text style={[styles.quotaSubtitle, { color: colors.inkMuted }]}>{countdown.phase === 'live' ? `Capture window open · ${countdown.formattedTimer}` : countdown.phase === 'upcoming' ? `Next window in ${countdown.formattedTimer}` : canPostMore ? `${maxDailyPosts - dailyPostCount} more Moment${maxDailyPosts - dailyPostCount === 1 ? '' : 's'} available today` : 'Your daily slots are full. Come back tomorrow.'}</Text>
+            <Text style={[styles.quotaSubtitle, { color: colors.inkMuted }]}>{!canPostMore ? 'Your daily slots are full. Come back tomorrow.' : !isPartnerPaired ? `${maxDailyPosts - dailyPostCount} more Moment${maxDailyPosts - dailyPostCount === 1 ? '' : 's'} available today` : countdown.phase === 'live' && !hasCheckedInToday ? `Daily check-in open · ${countdown.formattedTimer} left` : countdown.phase === 'upcoming' && promptTriggerFormatted ? `Daily prompt at ${promptTriggerFormatted} · ${maxDailyPosts - dailyPostCount} slot${maxDailyPosts - dailyPostCount === 1 ? '' : 's'} open now` : `${maxDailyPosts - dailyPostCount} more Moment${maxDailyPosts - dailyPostCount === 1 ? '' : 's'} available today`}</Text>
           </> : null}
           <KeepItButton label={!canPostMore ? 'Daily limit reached' : dailyPostCount ? 'Capture another Moment' : 'Capture your Moment'} disabled={!canPostMore || !bundle || bundleQuery.isLoading} onPress={() => openCameraModal()} />
           {canPostMore && bundle ? <View style={styles.quickCameraChipsRow}>
@@ -385,6 +394,7 @@ export default function HomeScreen() {
                 postedAtIso={partnerMomentsToday[0].posted_at}
                 lateBySeconds={partnerMomentsToday[0].late_by_seconds}
                 isLate={partnerMomentsToday[0].is_late}
+                isPromptCheckIn={isMomentPromptCheckIn(partnerMomentsToday[0])}
                 onCaptureMine={() => openCameraModal()}
               />
             ) : (

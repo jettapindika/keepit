@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { isMomentPromptCheckIn } from '@/api/moments';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, SectionHeader } from '@/components/ui/ScreenKit';
@@ -28,15 +29,25 @@ function RecapDeck({ onClose, monthLabel, days, streak, myName, partnerName, loa
   const [stepIndex, setStepIndex] = useState(0);
   const metrics = useMemo(() => {
     const highlights = days.filter((day): day is MemoryDayRecord & { mine: NonNullable<MemoryDayRecord['mine']>; partner: NonNullable<MemoryDayRecord['partner']> } => Boolean(day.mine && day.partner)).sort((a, b) => a.prompt_date.localeCompare(b.prompt_date));
-    let total = 0; let onTime = 0; let monthBest = 0; let run = 0; let previous: number | null = null; let goldenDays = 0;
-    for (const day of days) for (const moment of [day.mine, day.partner]) if (moment) { total += 1; if (!moment.is_late) onTime += 1; }
+    let total = 0; let checkIns = 0; let onTime = 0; let monthBest = 0; let run = 0; let previous: number | null = null; let goldenDays = 0;
+    for (const day of days) {
+      for (const moment of [day.mine, day.partner]) {
+        if (moment) {
+          total += 1;
+          if (isMomentPromptCheckIn(moment)) {
+            checkIns += 1;
+            if (!moment.is_late) onTime += 1;
+          }
+        }
+      }
+    }
     for (const day of highlights) {
       if (!day.mine.is_late && !day.partner.is_late) goldenDays += 1;
       const epoch = new Date(`${day.prompt_date}T00:00:00Z`).getTime() / 86_400_000;
       run = previous !== null && epoch - previous === 1 ? run + 1 : 1;
       monthBest = Math.max(monthBest, run); previous = epoch;
     }
-    return { highlights: highlights.reverse(), total, onTimePct: total ? Math.round(onTime / total * 100) : null, monthBest, goldenDays };
+    return { highlights: highlights.reverse(), total, onTimePct: checkIns ? Math.round((onTime / checkIns) * 100) : null, monthBest, goldenDays };
   }, [days]);
   const totalSlides = 1 + metrics.highlights.length;
   const step = Math.min(stepIndex, totalSlides - 1);
@@ -78,7 +89,7 @@ function RecapDeck({ onClose, monthLabel, days, streak, myName, partnerName, loa
             <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>All-time best streak</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.longest_count ?? 0} {(streak?.longest_count ?? 0) === 1 ? 'day' : 'days'}</Text></View>
             <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Golden Sync days (both on time)</Text><Text style={[styles.metricValue, { color: colors.success }]}>{Math.max(metrics.goldenDays, streak?.golden_sync_count ?? 0)}</Text></View>
             <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Grace Shields ready</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.grace_shields ?? 0}</Text></View>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Posted on time</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.onTimePct === null ? 'No posts' : `${metrics.onTimePct}%`}</Text></View>
+            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Prompt check-ins on time</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.onTimePct === null ? 'No check-ins' : `${metrics.onTimePct}%`}</Text></View>
           </View>
           <Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.highlights.length ? 'Revisit your Together days. Each highlight lets you swap cameras, cycle unlocked Milestone Stamps, and save the original Moments.' : 'Post on the same day together to make a Together collage. Individual Moments remain in your calendar.'}</Text>
         </View> : active ? <TogetherCollageCard key={active.prompt_id} promptDate={active.prompt_date} myMoment={active.mine} partnerMoment={active.partner} myName={myName} partnerName={partnerName} streakCount={streak?.current_count ?? metrics.monthBest} longestStreakCount={streak?.longest_count ?? metrics.monthBest} /> : null}

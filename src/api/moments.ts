@@ -16,6 +16,7 @@ import {
   MusicTrackAttachment,
   PartnerMomentView,
   PhotoOverlayItem,
+  PROMPT_WINDOW_SECONDS,
   PostVisibility,
   StreakRecord,
   TaggedPerson,
@@ -349,14 +350,65 @@ async function resolveStorageSignedUrlIfNeeded(pathOrUri: string | null | undefi
   }
   return pathOrUri;
 }
-export function formatLateDuration(lateBySeconds: number): string {
-  if (lateBySeconds <= 120) return 'On time';
-  const overdueSec = lateBySeconds - 120;
+export function computeDeterministicPromptTriggerIso(
+  coupleId: string,
+  dateStr: string
+): string {
+  const cleanCouple = (coupleId || 'couple').trim();
+  const seed = `${cleanCouple}:${dateStr}`;
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const unsigned = hash >>> 0;
+  // Deterministic offset within 09:00..21:00 local window (43,200 seconds)
+  const offsetSec = 9 * 3600 + (unsigned % (12 * 3600));
+  const parts = dateStr.split('-').map(Number);
+  const baseLocalMidnight =
+    parts.length === 3 && parts.every((n) => Number.isFinite(n))
+      ? new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0)
+      : new Date(`${dateStr}T00:00:00.000Z`);
+  return new Date(baseLocalMidnight.getTime() + offsetSec * 1000).toISOString();
+}
+
+export function isMomentPromptCheckIn(
+  moment?: {
+    is_prompt_checkin?: boolean;
+    daily_index?: number;
+    couple_id?: string | null;
+    user_id?: string | null;
+    late_by_seconds?: number;
+    is_late?: boolean;
+  } | null
+): boolean {
+  if (!moment) return false;
+  if (typeof moment.is_prompt_checkin === 'boolean') {
+    return moment.is_prompt_checkin;
+  }
+  if (moment.couple_id?.startsWith('solo_') || moment.user_id?.startsWith('friend_')) {
+    return false;
+  }
+  if ((moment.daily_index ?? 1) > 1) {
+    return false;
+  }
+  return true;
+}
+
+export function formatLateDuration(
+  lateBySeconds: number,
+  options?: { isPromptCheckIn?: boolean }
+): string {
+  if (options?.isPromptCheckIn === false) {
+    return 'Shared';
+  }
+  if (lateBySeconds <= PROMPT_WINDOW_SECONDS) return 'On time';
+  const overdueSec = lateBySeconds - PROMPT_WINDOW_SECONDS;
   const mins = Math.max(1, Math.round(overdueSec / 60));
-  if (mins < 60) return `${mins}m late`;
+  if (mins < 60) return `${mins}m after prompt`;
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
-  return remMins > 0 ? `${hrs}h ${remMins}m late` : `${hrs}h late`;
+  return remMins > 0 ? `${hrs}h ${remMins}m after prompt` : `${hrs}h after prompt`;
 }
 
 function toPartnerMomentView(
@@ -392,6 +444,7 @@ function toPartnerMomentView(
       posted_at: rawPartner.posted_at,
       late_by_seconds: rawPartner.late_by_seconds,
       is_late: rawPartner.is_late,
+      is_prompt_checkin: isMomentPromptCheckIn(rawPartner),
       retake_count: rawPartner.retake_count,
       daily_index: rawPartner.daily_index ?? 1,
       location_label: rawPartner.location_label ?? null,
@@ -430,6 +483,7 @@ function toPartnerMomentView(
     posted_at: effectivePartner.posted_at,
     late_by_seconds: effectivePartner.late_by_seconds,
     is_late: effectivePartner.is_late,
+    is_prompt_checkin: isMomentPromptCheckIn(effectivePartner),
     retake_count: effectivePartner.retake_count,
     daily_index: effectivePartner.daily_index ?? 1,
     lat: effectivePartner.lat,
@@ -466,8 +520,27 @@ export async function fetchTodayMomentBundle(params: {
   let stateMutated = false;
 
   let prompt = state.prompts[promptKey];
+  if (isSupabaseConfigured && supabase && !params.coupleId.startsWith('solo_')) {
+    try {
+      const { data: remotePrompt } = await supabase.rpc('ensure_today_prompt');
+      const row = remotePrompt as DailyPromptRecord | null;
+      if (row?.id && row?.trigger_at) {
+        prompt = {
+          id: row.id,
+          couple_id: row.couple_id || params.coupleId,
+          prompt_date: row.prompt_date || today,
+          trigger_at: row.trigger_at,
+          notified_at: row.notified_at ?? row.trigger_at,
+        };
+        state.prompts[promptKey] = prompt;
+        stateMutated = true;
+      }
+    } catch {
+      // Fall back to deterministic couple-synced prompt when offline
+    }
+  }
   if (!prompt) {
-    const triggerAt = new Date(Date.now() - 8_000).toISOString();
+    const triggerAt = computeDeterministicPromptTriggerIso(params.coupleId, today);
     prompt = {
       id: `prompt_${params.coupleId}_${today}`,
       couple_id: params.coupleId,
@@ -725,7 +798,7 @@ export async function submitDailyMoment(params: {
     state.prompts[promptKey];
 
   if (!prompt) {
-    const triggerAt = new Date(Date.now() - 8_000).toISOString();
+    const triggerAt = computeDeterministicPromptTriggerIso(params.coupleId, today);
     prompt = {
       id: params.promptId || `prompt_${params.coupleId}_${today}`,
       couple_id: params.coupleId,
@@ -739,7 +812,6 @@ export async function submitDailyMoment(params: {
   const nowMs = Date.now();
   const triggerMs = new Date(prompt.trigger_at).getTime();
   const capturedMs = new Date(capturedAt).getTime();
-  const lateBySeconds = Math.max(0, Math.floor((capturedMs - triggerMs) / 1000));
 
   const allUnique = deduplicateMoments(Object.values(state.moments));
   const myTodayList = allUnique.filter((m) => {
@@ -760,6 +832,24 @@ export async function submitDailyMoment(params: {
     ? (existingToReplace.daily_index ?? 1)
     : myTodayList.length + 1;
 
+  const isSoloOrFriend =
+    params.coupleId.startsWith('solo_') || params.userId.startsWith('friend_');
+  const alreadyCheckedInToday = myTodayList.some(
+    (m) =>
+      m.id !== existingToReplace?.id &&
+      (m.is_prompt_checkin === true ||
+        (m.is_prompt_checkin === undefined &&
+          new Date(m.captured_at || m.posted_at).getTime() >= triggerMs))
+  );
+  const isPromptCheckIn =
+    !isSoloOrFriend &&
+    !alreadyCheckedInToday &&
+    Number.isFinite(triggerMs) &&
+    capturedMs >= triggerMs;
+
+  const lateBySeconds = isPromptCheckIn
+    ? Math.max(0, Math.floor((capturedMs - triggerMs) / 1000))
+    : 0;
   const retakeCount = existingToReplace ? existingToReplace.retake_count + 1 : 0;
   const momentId =
     existingToReplace?.id ??
@@ -786,7 +876,8 @@ export async function submitDailyMoment(params: {
     captured_at: capturedAt,
     posted_at: new Date(nowMs).toISOString(),
     late_by_seconds: lateBySeconds,
-    is_late: lateBySeconds > 120,
+    is_late: isPromptCheckIn && lateBySeconds > PROMPT_WINDOW_SECONDS,
+    is_prompt_checkin: isPromptCheckIn,
     retake_count: retakeCount,
     daily_index: dailyIndex,
     lat: params.lat ?? null,
@@ -1340,6 +1431,17 @@ export async function simulateSandboxPartnerMoment(params: {
   partnerName: string;
   isLate?: boolean;
 }): Promise<MomentRecord> {
+  const state = await readLocalMoments();
+  const today = todayLocalDateString();
+  const promptKey = `${params.coupleId}:${today}`;
+  const promptTriggerIso =
+    Object.values(state.prompts).find((p) => p.id === params.promptId)?.trigger_at ??
+    state.prompts[promptKey]?.trigger_at ??
+    computeDeterministicPromptTriggerIso(params.coupleId, today);
+  const promptTriggerMs = new Date(promptTriggerIso).getTime();
+  const baseMs = Number.isFinite(promptTriggerMs) ? promptTriggerMs : Date.now();
+  const offsetMs = params.isLate ? (PROMPT_WINDOW_SECONDS + 8 * 60) * 1000 : 40_000;
+
   const photos = buildSimulatedDualPhotos({
     authorLabel: params.partnerName,
     sceneLabel: `${params.partnerName}’s desk & warm tea`,
@@ -1357,8 +1459,6 @@ export async function simulateSandboxPartnerMoment(params: {
     caption: 'Thinking of you while studying',
     locationLabel: 'Campus Library 3F',
     filterPreset: 'warm_film',
-    capturedAtIso: new Date(
-      Date.now() - (params.isLate ? 8 * 60_000 : 10_000)
-    ).toISOString(),
+    capturedAtIso: new Date(baseMs + offsetMs).toISOString(),
   });
 }
