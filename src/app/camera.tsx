@@ -26,6 +26,7 @@ import {
   fetchTodayMomentBundle,
   formatLateDuration,
   submitDailyMoment,
+  isMomentPromptCheckIn,
 } from '@/api/moments';
 import {
   CURATED_MUSIC_TRACKS,
@@ -34,7 +35,7 @@ import {
   MOMENT_FILTER_PRESETS,
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
-import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
 import { AppPressable, AppSwitch as Switch, AppTextInput, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
@@ -50,7 +51,7 @@ import {
   PostVisibility,
   TaggedPerson,
 } from '@/types/database';
-import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
+import { embedKeepItWatermarkOnImageUri, formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 
 type CaptureStage =
   | 'ready'
@@ -188,6 +189,14 @@ export default function CameraModalScreen() {
 
   const dailyPostedCount = bundleQuery.data?.dailyPostCount ?? 0;
   const shotsRemainingToday = Math.max(0, MAX_DAILY_MOMENTS_PER_DAY - dailyPostedCount);
+  const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
+  const myMomentsToday = bundleQuery.data?.myMomentsToday ?? (bundleQuery.data?.mine ? [bundleQuery.data.mine] : []);
+  const replaceTarget = params.replaceMomentId
+    ? myMomentsToday.find((m) => m.id === params.replaceMomentId)
+    : undefined;
+  const alreadyCheckedInOtherPost = myMomentsToday.some(
+    (m) => m.id !== replaceTarget?.id && isMomentPromptCheckIn(m)
+  );
   const activeFilterMeta = getFilterPresetMeta(filterPreset);
 
   useEffect(() => {
@@ -336,8 +345,13 @@ export default function CameraModalScreen() {
           return;
         }
 
-        const resolvedBack = firstLens === 'back' ? firstUri : secondShotUri;
-        const resolvedFront = firstLens === 'front' ? firstUri : secondShotUri;
+        const rawBack = firstLens === 'back' ? firstUri : secondShotUri;
+        const rawFront = firstLens === 'front' ? firstUri : secondShotUri;
+        const captureLabel = formatMomentWatermarkTimestamp(captureTimestamp);
+        const [resolvedBack, resolvedFront] = await Promise.all([
+          embedKeepItWatermarkOnImageUri(rawBack, captureLabel),
+          embedKeepItWatermarkOnImageUri(rawFront, captureLabel),
+        ]);
         setBackUri(resolvedBack);
         setFrontUri(resolvedFront);
         setCapturedAtIso(captureTimestamp);
@@ -686,18 +700,39 @@ export default function CameraModalScreen() {
     }
   };
 
-  const computedLateSec =
-    activeTriggerAt && capturedAtIso
-      ? Math.max(
-          0,
-          Math.floor(
-            (new Date(capturedAtIso).getTime() - new Date(activeTriggerAt).getTime()) / 1000
-          )
-        )
-      : countdown.phase === 'late'
-        ? 121 + countdown.secondsOverdue
-        : 0;
+  const activeTriggerMs = activeTriggerAt ? new Date(activeTriggerAt).getTime() : NaN;
+  const capturedTimeMs = capturedAtIso ? new Date(capturedAtIso).getTime() : NaN;
+  const isThisCapturePromptCheckIn =
+    isPartnerPaired &&
+    !alreadyCheckedInOtherPost &&
+    Number.isFinite(activeTriggerMs) &&
+    (Number.isFinite(capturedTimeMs)
+      ? capturedTimeMs >= activeTriggerMs
+      : countdown.phase !== 'upcoming');
 
+  const computedLateSec = isThisCapturePromptCheckIn
+    ? Number.isFinite(capturedTimeMs)
+      ? Math.max(0, Math.floor((capturedTimeMs - activeTriggerMs) / 1000))
+      : countdown.phase === 'late'
+        ? 301 + countdown.secondsOverdue
+        : 0
+    : 0;
+
+  const captureTimeShort = Number.isFinite(capturedTimeMs)
+    ? new Date(capturedTimeMs).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : countdown.currentTimeShort;
+  const activeSlotNumber = replaceTarget?.daily_index
+    ? replaceTarget.daily_index
+    : Math.min(MAX_DAILY_MOMENTS_PER_DAY, dailyPostedCount + 1);
+  const headerTimingSuffix =
+    isThisCapturePromptCheckIn && countdown.phase === 'live'
+      ? `${countdown.formattedTimer} left`
+      : isThisCapturePromptCheckIn && countdown.phase === 'late'
+        ? countdown.formattedTimer
+        : captureTimeShort;
   const watermarkTimestamp = formatMomentWatermarkTimestamp(capturedAtIso);
 
   const handleClose = () => {
@@ -753,7 +788,7 @@ export default function CameraModalScreen() {
               <Text style={[styles.timerText, { color: stage === 'recording_video' ? colors.danger : colors.ink }]}>
                 {stage === 'recording_video'
                   ? `REC 00:${String(recordingSec).padStart(2, '0')} / 00:15`
-                  : `Post ${Math.min(MAX_DAILY_MOMENTS_PER_DAY, dailyPostedCount + 1)}/${MAX_DAILY_MOMENTS_PER_DAY} · ${countdown.formattedTimer}`}
+                  : `Post ${activeSlotNumber}/${MAX_DAILY_MOMENTS_PER_DAY} · ${headerTimingSuffix}`}
               </Text>
             </View>
             <Text style={[styles.statusCopy, { color: colors.inkMuted }]}> 
@@ -960,9 +995,9 @@ export default function CameraModalScreen() {
                   />
                 ) : null}
 
-                {/* Permanent #keepit + Timestamp Bottom-Left Watermark on Photo */}
+                {/* Permanent #keepit SVG + Timestamp Bottom-Left Watermark on Photo */}
                 <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
-                  <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+                  <KeepItWatermarkLogo width={76} color="#FFFFFF" />
                   <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
               </View>
@@ -1192,30 +1227,30 @@ export default function CameraModalScreen() {
 
                 {/* Top-Right Timing + Media Type + Filter Badge */}
                 <View style={styles.previewBadgeStack}>
-                  <View
-                    style={[
-                      styles.previewTimingBadge,
-                      {
-                        backgroundColor: colors.canvas,
-                        borderColor:
-                          computedLateSec > 120 ? colors.warning : colors.border,
-                        borderRadius: radii.pill,
-                      },
-                    ]}>
-                    <Text
+                  {isThisCapturePromptCheckIn || mediaType === 'video' ? (
+                    <View
                       style={[
-                        styles.previewTimingText,
+                        styles.previewTimingBadge,
                         {
-                          color:
-                            computedLateSec > 120 ? colors.warning : colors.ink,
+                          backgroundColor: colors.canvas,
+                          borderColor: colors.border,
+                          borderRadius: radii.pill,
                         },
                       ]}>
-                      {mediaType === 'video'
-                        ? `VIDEO ${videoDurationSec ?? 4}s · `
-                        : ''}
-                      {formatLateDuration(computedLateSec)}
-                    </Text>
-                  </View>
+                      <Text
+                        style={[
+                          styles.previewTimingText,
+                          { color: colors.ink },
+                        ]}>
+                        {mediaType === 'video'
+                          ? `VIDEO ${videoDurationSec ?? 4}s${isThisCapturePromptCheckIn ? ' · ' : ''}`
+                          : ''}
+                        {isThisCapturePromptCheckIn
+                          ? formatLateDuration(computedLateSec)
+                          : ''}
+                      </Text>
+                    </View>
+                  ) : null}
 
                   {filterPreset !== 'normal' ? (
                     <View
@@ -1275,9 +1310,9 @@ export default function CameraModalScreen() {
                   ) : null}
                 </View>
 
-                {/* Mandatory Bottom-Left #keepit + Timestamp Watermark on Photo (Item #8) */}
+                {/* Mandatory Bottom-Left #keepit SVG + Timestamp Watermark on Photo (Item #8) */}
                 <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
-                  <Text style={styles.keepItWatermarkTitle}>#keepit</Text>
+                  <KeepItWatermarkLogo width={76} color="#FFFFFF" />
                   <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
                 </View>
               </View>
@@ -2077,11 +2112,12 @@ const styles = StyleSheet.create({
     bottom: 14,
     left: 16,
     maxWidth: '48%',
-    padding: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: '#0A0708',
+    backgroundColor: 'rgba(10, 7, 8, 0.72)',
     alignItems: 'flex-start',
-    gap: 1,
+    gap: 4,
   },
   keepItWatermarkTitle: {
     color: '#FFFFFF',

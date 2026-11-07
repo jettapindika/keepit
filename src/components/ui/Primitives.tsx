@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import React, { useEffect, useState } from 'react';
 import {
@@ -21,6 +22,11 @@ import Animated, {
 import { useAppMotion } from '@/hooks/useAppMotion';
 import { MOCHY_REVEAL_EASING, MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
+import {
+  buildKeepItWatermarkSvgDataUri,
+  KEEPIT_WATERMARK_SVG_DATA_URI,
+  KEEPIT_WATERMARK_SVG_PATH_D,
+} from '@/utils/momentExport';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -339,6 +345,72 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
           borderRadius: 4,
           backgroundColor: colors.ink,
         }}
+      />
+    </View>
+  );
+}
+
+export {
+  buildKeepItWatermarkSvgDataUri,
+  KEEPIT_WATERMARK_SVG_DATA_URI,
+  KEEPIT_WATERMARK_SVG_PATH_D,
+};
+
+/**
+ * Renders the official #keepit vector watermark logo (50:11 aspect ratio).
+ */
+export function KeepItWatermarkLogo({
+  width = 76,
+  height,
+  color = '#FFFFFF',
+  style,
+}: {
+  width?: number;
+  height?: number;
+  color?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const resolvedHeight = height ?? Math.round((width * 11) / 50 * 10) / 10;
+  const uri =
+    color === '#FFFFFF' || color === 'white'
+      ? KEEPIT_WATERMARK_SVG_DATA_URI
+      : buildKeepItWatermarkSvgDataUri(color);
+
+  if (Platform.OS === 'web') {
+    return React.createElement(
+      'svg',
+      {
+        width,
+        height: resolvedHeight,
+        viewBox: '0 0 50 11',
+        fill: 'none',
+        xmlns: 'http://www.w3.org/2000/svg',
+        role: 'img',
+        'aria-label': '#keepit',
+        style: {
+          display: 'block',
+          flexShrink: 0,
+          filter: 'drop-shadow(0px 1px 4px rgba(0, 0, 0, 0.85))',
+        },
+      },
+      React.createElement('title', null, '#keepit'),
+      React.createElement('path', {
+        d: KEEPIT_WATERMARK_SVG_PATH_D,
+        fill: color,
+      })
+    );
+  }
+
+  return (
+    <View
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel="#keepit"
+      style={[{ width, height: resolvedHeight }, style]}>
+      <Image
+        source={{ uri }}
+        contentFit="contain"
+        style={{ width, height: resolvedHeight }}
       />
     </View>
   );

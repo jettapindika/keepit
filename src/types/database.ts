@@ -149,6 +149,7 @@ export interface DailyPromptRecord {
 }
 
 export const MAX_DAILY_MOMENTS_PER_DAY = 5;
+export const PROMPT_WINDOW_SECONDS = 300;
 
 export interface MomentRecord {
   id: string;
@@ -171,6 +172,7 @@ export interface MomentRecord {
   posted_at: string;
   late_by_seconds: number;
   is_late: boolean;
+  is_prompt_checkin?: boolean;
   retake_count: number;
   daily_index?: number; // 1..5
   lat: number | null;
@@ -210,6 +212,7 @@ export interface PartnerMomentView {
   posted_at: string;
   late_by_seconds: number;
   is_late: boolean;
+  is_prompt_checkin?: boolean;
   retake_count: number;
   daily_index?: number;
   lat?: number | null;
@@ -230,12 +233,28 @@ export interface PartnerMomentView {
   front_photo_url?: string | null;
 }
 
+export type StreakDayState = 'golden' | 'synced' | 'shield' | 'half' | 'missed';
+
+export interface StreakDayNode {
+  date: string; // YYYY-MM-DD
+  dayLabel: string; // e.g. 'M', 'T', 'W'
+  state: StreakDayState;
+  myPosted: boolean;
+  partnerPosted: boolean;
+  goldenSync?: boolean;
+}
+
 export interface StreakRecord {
   couple_id: string;
   current_count: number;
   longest_count: number;
   last_completed_date: string | null;
   updated_at?: string;
+  grace_shields?: number;
+  shield_used_dates?: string[];
+  golden_sync_count?: number;
+  unlocked_milestones?: number[];
+  recent_chain?: StreakDayNode[];
 }
 
 export interface TodayMomentBundle {

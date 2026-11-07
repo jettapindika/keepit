@@ -13,6 +13,7 @@ import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { DualMomentCard } from '@/components/moment/MomentCards';
+import { StreakMilestoneShelf } from '@/components/streak/SharedPulseCard';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
@@ -255,6 +256,7 @@ export default function MemoriesScreen() {
             </View>
           }
         />
+        <StreakMilestoneShelf streak={streak} />
 
         <View
           style={[
@@ -580,9 +582,12 @@ export default function MemoriesScreen() {
                 partnerMoment={selectedRecord.partner}
                 myName={myName}
                 partnerName={partnerName}
+                streakCount={streak?.current_count}
+                longestStreakCount={streak?.longest_count}
               />
             ) : singleMoment ? (
               <DualMomentCard
+                moment={singleMoment}
                 authorName={singleName}
                 backPhotoUrl={singleMoment.back_photo_url ?? singleMoment.back_photo_path}
                 frontPhotoUrl={singleMoment.front_photo_url ?? singleMoment.front_photo_path}

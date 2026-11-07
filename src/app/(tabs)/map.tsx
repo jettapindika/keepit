@@ -6,29 +6,135 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { computeDistanceMeters, fetchCoupleLocations, formatDistanceApart, formatLocationModeLabel, formatRelativeTimeAgo, updateMyLocationShare } from '@/api/locations';
+import {
+  computeDistanceMeters,
+  fetchCoupleLocations,
+  formatDistanceApart,
+  formatLocationModeLabel,
+  formatRelativeTimeAgo,
+  updateMyLocationShare,
+} from '@/api/locations';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InteractiveCoupleMap } from '@/components/map/InteractiveCoupleMap';
+import {
+  CafeCupIcon,
+  ChatBubbleIcon,
+  CloseCrossIcon,
+  CoupleLinkIcon,
+  CrosshairIcon,
+  DirectionChevronIcon,
+  FriendsClusterIcon,
+  GhostCloakIcon,
+  HistoryClockIcon,
+  LiveBeaconIcon,
+  MomentPinIcon,
+  ParkOverlookIcon,
+  PauseResumeIcon,
+} from '@/components/map/MapIcons';
 import { InlineNotice, KeepItButton, SkeletonBlock } from '@/components/ui/Primitives';
-import { AppPressable, EmptyState, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
+import { AppPressable, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import { LocationMode, LocationShareRecord } from '@/types/database';
 
-const MODE_OPTIONS: { mode: LocationMode; label: string; description: string }[] = [
-  { mode: 'live', label: 'Live', description: 'Share a location pin. Use GPS check-in to refresh your device location.' },
-  { mode: 'on_moment', label: 'On Moment', description: 'Share a location with your Moments. Waits for a located Moment if no pin is available.' },
-  { mode: 'ghost', label: 'Ghost', description: 'Pause sharing and hide your coordinates.' },
-];
-interface QuickCheckInOption { id: string; label: string; placeName: string; lat: number | null; lng: number | null; useGps?: boolean }
-const QUICK_CHECKIN_PLACES: QuickCheckInOption[] = [
-  { id: 'blue_bottle', label: 'Blue Bottle Coffee', placeName: 'Blue Bottle Coffee · Hayes Valley', lat: 37.7763, lng: -122.4232 },
-  { id: 'dolores_park', label: 'Dolores Park', placeName: 'Dolores Park Overlook', lat: 37.7596, lng: -122.4269 },
-  { id: 'use_gps', label: 'Use GPS', placeName: 'GPS check-in', lat: null, lng: null, useGps: true },
+const MODE_OPTIONS: {
+  mode: LocationMode;
+  label: string;
+  shortHint: string;
+  description: string;
+}[] = [
+  {
+    mode: 'live',
+    label: 'Live',
+    shortHint: 'Active pin',
+    description: 'Share a location pin. Use GPS check-in to refresh your device location.',
+  },
+  {
+    mode: 'on_moment',
+    label: 'Moment',
+    shortHint: 'With photo',
+    description: 'Share a location with your Moments. Waits for a located Moment if no pin is available.',
+  },
+  {
+    mode: 'ghost',
+    label: 'Ghost',
+    shortHint: 'Hidden',
+    description: 'Pause sharing and hide your coordinates.',
+  },
 ];
 
-function hasCoordinates(record: LocationShareRecord | null): record is LocationShareRecord & { lat: number; lng: number } {
+interface QuickCheckInOption {
+  id: 'use_gps' | 'blue_bottle' | 'dolores_park';
+  label: string;
+  placeName: string;
+  lat: number | null;
+  lng: number | null;
+  useGps?: boolean;
+}
+
+const QUICK_CHECKIN_PLACES: QuickCheckInOption[] = [
+  {
+    id: 'use_gps',
+    label: 'GPS',
+    placeName: 'GPS check-in',
+    lat: null,
+    lng: null,
+    useGps: true,
+  },
+  {
+    id: 'blue_bottle',
+    label: 'Blue Bottle',
+    placeName: 'Blue Bottle Coffee · Hayes Valley',
+    lat: 37.7763,
+    lng: -122.4232,
+  },
+  {
+    id: 'dolores_park',
+    label: 'Dolores Park',
+    placeName: 'Dolores Park Overlook',
+    lat: 37.7596,
+    lng: -122.4269,
+  },
+];
+
+function hasCoordinates(
+  record: LocationShareRecord | null,
+): record is LocationShareRecord & { lat: number; lng: number } {
   return Boolean(record && record.mode !== 'ghost' && record.lat != null && record.lng != null);
+}
+
+function ModeGlyph({
+  mode,
+  color,
+  accentColor,
+  size = 18,
+}: {
+  mode: LocationMode;
+  color: string;
+  accentColor?: string;
+  size?: number;
+}) {
+  if (mode === 'live') {
+    return <LiveBeaconIcon color={color} accentColor={accentColor} size={size} />;
+  }
+  if (mode === 'on_moment') {
+    return <MomentPinIcon color={color} size={size} />;
+  }
+  return <GhostCloakIcon color={color} size={size} />;
+}
+
+function CheckInGlyph({
+  id,
+  color,
+  size = 18,
+}: {
+  id: QuickCheckInOption['id'];
+  color: string;
+  size?: number;
+}) {
+  if (id === 'use_gps') return <CrosshairIcon color={color} size={size} />;
+  if (id === 'blue_bottle') return <CafeCupIcon color={color} size={size} />;
+  return <ParkOverlookIcon color={color} size={size} />;
 }
 
 export default function MapScreen() {
@@ -44,31 +150,66 @@ export default function MapScreen() {
   const saving = useRef(false);
   const [busy, setBusy] = useState(false);
   const [gpsPrimed, setGpsPrimed] = useState(false);
-  const [gpsAvailability, setGpsAvailability] = useState<'unknown' | 'granted' | 'denied' | 'unavailable'>('unknown');
-  const [pendingGpsAction, setPendingGpsAction] = useState<'live_mode' | 'checkin_gps' | null>(null);
+  const [gpsAvailability, setGpsAvailability] = useState<
+    'unknown' | 'granted' | 'denied' | 'unavailable'
+  >('unknown');
+  const [pendingGpsAction, setPendingGpsAction] = useState<'live_mode' | 'checkin_gps' | null>(
+    null,
+  );
   const [pendingPlace, setPendingPlace] = useState<QuickCheckInOption | null>(null);
-  const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' | 'success' } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [notice, setNotice] = useState<{
+    text: string;
+    tone: 'info' | 'error' | 'success';
+  } | null>(null);
+
   const locationQuery = useQuery({
     queryKey: ['couple-locations', couple?.id, user?.id],
     enabled: Boolean(couple?.id && user?.id),
     queryFn: () => fetchCoupleLocations({ coupleId: couple!.id, userId: user!.id }),
     refetchInterval: 30_000,
   });
+
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, []);
+
   useEffect(() => {
     const client = supabase;
     if (!couple?.id || !isSupabaseConfigured || !client) return;
-    const channel = client.channel(`locations:${couple.id}:${Date.now().toString(36)}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'location_shares', filter: `couple_id=eq.${couple.id}` }, () => {
-        void queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'couple_events', filter: `couple_id=eq.${couple.id}` }, () => {
-        void queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
-      }).subscribe();
-    return () => { void client.removeChannel(channel).catch(() => {}); };
+    const channel = client
+      .channel(`locations:${couple.id}:${Date.now().toString(36)}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'location_shares',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'couple_events',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
+        },
+      )
+      .subscribe();
+    return () => {
+      void client.removeChannel(channel).catch(() => {});
+    };
   }, [couple?.id, queryClient]);
 
   const bundle = locationQuery.data;
@@ -78,29 +219,51 @@ export default function MapScreen() {
   const events = bundle?.events ?? [];
   const currentMode = mine?.mode ?? 'ghost';
   const canChange = Boolean(couple && user && bundle) && !busy;
-  const distance = hasCoordinates(mine) && hasCoordinates(partnerShare)
-    ? formatDistanceApart(computeDistanceMeters(mine.lat, mine.lng, partnerShare.lat, partnerShare.lng)) : null;
-  const activePins = (hasCoordinates(partnerShare) ? 1 : 0) + friends.filter(hasCoordinates).length;
+  const distance =
+    hasCoordinates(mine) && hasCoordinates(partnerShare)
+      ? formatDistanceApart(
+          computeDistanceMeters(mine.lat, mine.lng, partnerShare.lat, partnerShare.lng),
+        )
+      : null;
+  const activePins =
+    (hasCoordinates(partnerShare) ? 1 : 0) + friends.filter(hasCoordinates).length;
 
   const requestGps = async () => {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (mounted.current) setGpsPrimed(true);
     if (permission.status !== 'granted') {
       if (mounted.current) setGpsAvailability('denied');
-      throw new Error('Location permission is off. Allow location in your device or browser settings, then try Use GPS again. Sharing mode has not changed.');
+      throw new Error(
+        'Location permission is off. Allow location in your device or browser settings, then try GPS again. Sharing mode has not changed.',
+      );
     }
     try {
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
       if (mounted.current) setGpsAvailability('granted');
-      return { lat: position.coords.latitude, lng: position.coords.longitude, accuracyM: position.coords.accuracy };
+      return {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        accuracyM: position.coords.accuracy,
+      };
     } catch {
       if (mounted.current) setGpsAvailability('unavailable');
-      throw new Error('Your device could not get a location. Check location services and try Use GPS again, or select a named place. Sharing mode has not changed.');
+      throw new Error(
+        'Your device could not get a location. Check location services and try GPS again, or pick a spot.',
+      );
     }
   };
-  const changeSharing = async (mode: LocationMode, place?: QuickCheckInOption, skipPrimer = false) => {
+
+  const changeSharing = async (
+    mode: LocationMode,
+    place?: QuickCheckInOption,
+    skipPrimer = false,
+  ) => {
     if (!couple || !user || saving.current || !bundle) return;
-    const needsGps = Boolean(place?.useGps || (mode === 'live' && !hasCoordinates(mine) && !place));
+    const needsGps = Boolean(
+      place?.useGps || (mode === 'live' && !hasCoordinates(mine) && !place),
+    );
     if (needsGps && !gpsPrimed && !skipPrimer) {
       setPendingPlace(null);
       setPendingGpsAction(place ? 'checkin_gps' : 'live_mode');
@@ -124,114 +287,624 @@ export default function MapScreen() {
         accuracyM = gps.accuracyM;
         placeName = `GPS check-in (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
       }
-      const updated = await updateMyLocationShare({ coupleId: couple.id, userId: user.id, mode, lat, lng, accuracyM, placeName });
+      const updated = await updateMyLocationShare({
+        coupleId: couple.id,
+        userId: user.id,
+        mode,
+        lat,
+        lng,
+        accuracyM,
+        placeName,
+      });
       queryClient.setQueryData(['couple-locations', couple.id, user.id], updated);
       await queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
-      if (mounted.current) setNotice({ text: place ? `Check-in shared at ${placeName}.` : `Location sharing set to ${formatLocationModeLabel(mode)}.`, tone: 'success' });
-      if (Platform.OS !== 'web') void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      if (mounted.current) {
+        setNotice({
+          text: place
+            ? `Checked in at ${placeName}.`
+            : `Mode switched to ${formatLocationModeLabel(mode)}.`,
+          tone: 'success',
+        });
+      }
+      if (Platform.OS !== 'web') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
     } catch (error) {
-      if (mounted.current) setNotice({ text: error instanceof Error ? error.message : 'Could not update sharing. Try your selection again.', tone: 'error' });
+      if (mounted.current) {
+        setNotice({
+          text:
+            error instanceof Error
+              ? error.message
+              : 'Could not update sharing. Try your selection again.',
+          tone: 'error',
+        });
+      }
     } finally {
       saving.current = false;
       if (mounted.current) setBusy(false);
     }
   };
+
   const people = [
-    ...(paired ? [{ id: partner?.id ?? 'partner', name: partnerName, role: 'Partner', record: partnerShare }] : []),
-    ...friends.map((record) => ({ id: record.user_id, name: record.display_name ?? 'Friend', role: 'Friend', record })),
+    ...(paired
+      ? [{ id: partner?.id ?? 'partner', name: partnerName, role: 'Partner', record: partnerShare }]
+      : []),
+    ...friends.map((record) => ({
+      id: record.user_id,
+      name: record.display_name ?? 'Friend',
+      role: 'Friend',
+      record,
+    })),
   ];
+
   const surface = { backgroundColor: colors.surface, borderRadius: radii.card };
+  const statusHeadline =
+    currentMode === 'ghost'
+      ? 'Hidden · Ghost'
+      : hasCoordinates(mine)
+        ? mine.place_name ?? 'Active pin'
+        : currentMode === 'on_moment'
+          ? 'Waiting for Moment photo'
+          : 'No pin yet';
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safe, { backgroundColor: colors.canvas }]}>
-      <ScrollView ref={scroll} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
-        <PageHeader title="Map" subtitle="Shared places. Your choice of privacy." />
+      <ScrollView
+        ref={scroll}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+      >
+        <PageHeader
+          title="Map"
+          action={
+            distance ? (
+              <View
+                style={[
+                  styles.distancePill,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.controlBorder,
+                    borderRadius: radii.pill,
+                  },
+                ]}
+              >
+                <CoupleLinkIcon color={colors.ink} size={15} />
+                <Text style={[styles.distanceText, { color: colors.ink }]}>{distance}</Text>
+              </View>
+            ) : undefined
+          }
+        />
+
         {notice ? <InlineNotice message={notice.text} tone={notice.tone} /> : null}
+
         {pendingGpsAction ? (
-          <View style={[styles.group, surface]}>
-            <SectionHeader title="Use your device location?" />
-            <Text style={[styles.body, { color: colors.inkMuted }]}>KeepIt requests foreground location for this GPS check-in. This screen does not track you in the background. The pin remains shared until you change it or pause with Ghost mode.</Text>
-            <KeepItButton label="Continue to location permission" disabled={busy} onPress={() => { const action = pendingGpsAction; void changeSharing('live', action === 'checkin_gps' ? QUICK_CHECKIN_PLACES.find((place) => place.useGps) : undefined, true); }} />
-            <KeepItButton label="Not now" variant="secondary" onPress={() => setPendingGpsAction(null)} />
+          <View style={[styles.compactCard, surface, { borderColor: colors.border }]}>
+            <View style={styles.promptHeader}>
+              <View
+                style={[
+                  styles.iconTile,
+                  { backgroundColor: colors.surfaceElevated, borderRadius: radii.input },
+                ]}
+              >
+                <CrosshairIcon color={colors.ink} size={20} />
+              </View>
+              <View style={styles.promptCopy}>
+                <Text style={[styles.cardTitle, { color: colors.ink }]}>Allow foreground GPS?</Text>
+                <Text style={[styles.secondary, { color: colors.inkMuted }]}>
+                  One-time check-in pin. No background tracking.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.promptActions}>
+              <KeepItButton
+                label="Allow GPS"
+                disabled={busy}
+                onPress={() => {
+                  const action = pendingGpsAction;
+                  void changeSharing(
+                    'live',
+                    action === 'checkin_gps'
+                      ? QUICK_CHECKIN_PLACES.find((place) => place.useGps)
+                      : undefined,
+                    true,
+                  );
+                }}
+              />
+              <KeepItButton
+                label="Cancel"
+                variant="secondary"
+                onPress={() => setPendingGpsAction(null)}
+              />
+            </View>
           </View>
         ) : null}
+
         {locationQuery.isError ? (
           <View style={styles.stack}>
-            <InlineNotice message={locationQuery.error instanceof Error ? locationQuery.error.message : 'Shared locations could not load.'} />
-            <KeepItButton label="Retry shared locations" variant="secondary" loading={locationQuery.isFetching} onPress={() => void locationQuery.refetch()} />
+            <InlineNotice
+              message={
+                locationQuery.error instanceof Error
+                  ? locationQuery.error.message
+                  : 'Shared locations could not load.'
+              }
+            />
+            <KeepItButton
+              label="Retry shared locations"
+              variant="secondary"
+              loading={locationQuery.isFetching}
+              onPress={() => void locationQuery.refetch()}
+            />
           </View>
         ) : null}
-        {locationQuery.isLoading && !bundle ? <SkeletonBlock height={340} label="Loading shared locations…" /> : null}
-        {!couple || !user ? <EmptyState title="Map is not ready" message="Your account session is not available. Return to Home to continue." actionLabel="Open Home" onAction={() => router.navigate('/(tabs)' as never)} /> : null}
+
+        {locationQuery.isLoading && !bundle ? (
+          <SkeletonBlock height={340} label="Loading shared locations…" />
+        ) : null}
+
+        {!couple || !user ? (
+          <EmptyState
+            title="Map is not ready"
+            message="Your account session is not available. Return to Home to continue."
+            actionLabel="Open Home"
+            onAction={() => router.navigate('/(tabs)' as never)}
+          />
+        ) : null}
+
         {bundle ? (
           <>
-            <View style={[styles.group, surface]}>
-              <Text style={[styles.sectionTitle, { color: colors.ink }]}>{currentMode === 'ghost' ? 'Sharing paused · Ghost' : hasCoordinates(mine) ? `Sharing ${mine.place_name ?? 'a location pin'}` : currentMode === 'on_moment' ? 'Waiting for a located Moment' : 'No coordinates shared yet'}</Text>
-              <Text style={[styles.body, { color: colors.inkMuted }]}>{currentMode === 'ghost' ? 'Your coordinates are hidden.' : !hasCoordinates(mine) ? 'Your selected mode is on, but there is no location pin to show yet.' : paired ? `Shared with ${partnerName} and eligible circle friends.` : 'Shared with eligible circle friends.'}</Text>
-              <Text style={[styles.secondary, { color: colors.inkMuted }]}>Mode: {formatLocationModeLabel(currentMode)}{mine?.location_updated_at ? ` · Updated ${formatRelativeTimeAgo(mine.location_updated_at)}` : ''}</Text>
-              {busy ? <Text accessibilityLiveRegion="polite" style={[styles.body, { color: colors.ink }]}>Updating location sharing…</Text> : null}
-              <KeepItButton label={currentMode === 'ghost' ? 'Enable On Moment sharing' : 'Pause sharing · Ghost'} variant={currentMode === 'ghost' ? 'primary' : 'secondary'} disabled={!canChange} onPress={() => void changeSharing(currentMode === 'ghost' ? 'on_moment' : 'ghost', undefined, true)} />
-            </View>
-            <InteractiveCoupleMap mine={mine} partner={partnerShare} friends={friends} myName={user?.display_name ?? 'You'} partnerName={partnerName} />
-            <View style={[styles.group, surface]}>
-              <SectionHeader title="Your location privacy" subtitle="Choose how you share. GPS permission and sharing mode are separate." />
-              <View accessibilityRole="radiogroup" accessibilityLabel="Location sharing mode" style={styles.stack}>
+            {/* Unified Icon Privacy Dock + Active Pin Strip */}
+            <View style={[styles.compactCard, surface]}>
+              <View
+                accessibilityRole="radiogroup"
+                accessibilityLabel="Location sharing mode"
+                style={styles.modeGrid}
+              >
                 {MODE_OPTIONS.map((option) => {
                   const selected = currentMode === option.mode;
+                  const fg = selected ? colors.onAccent : colors.ink;
+                  const subFg = selected ? colors.onAccent : colors.inkMuted;
                   return (
-                    <AppPressable key={option.mode} accessibilityRole="radio" accessibilityState={{ checked: selected, disabled: !canChange, busy }} accessibilityLabel={`${option.label}. ${option.description}`} disabled={!canChange} onPress={() => void changeSharing(option.mode)} style={[styles.mode, { borderColor: selected ? colors.focusRing : colors.controlBorder, borderRadius: radii.input, backgroundColor: selected ? colors.surfaceElevated : colors.surface }]}>
-                      <Text style={[styles.body, { color: colors.ink, fontWeight: '600' }]}>{selected ? '● ' : '○ '}{option.label}{selected ? ' · Selected' : ''}</Text>
-                      <Text style={[styles.secondary, { color: colors.inkMuted }]}>{option.description}</Text>
+                    <AppPressable
+                      key={option.mode}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: selected, disabled: !canChange, busy }}
+                      accessibilityLabel={`${option.label} mode (${option.shortHint}). ${option.description}`}
+                      disabled={!canChange}
+                      onPress={() => void changeSharing(option.mode)}
+                      style={[
+                        styles.modeSegment,
+                        {
+                          borderColor: selected ? colors.focusRing : colors.controlBorder,
+                          borderRadius: radii.input,
+                          backgroundColor: selected ? colors.accent : colors.surfaceElevated,
+                        },
+                      ]}
+                    >
+                      <ModeGlyph
+                        mode={option.mode}
+                        color={fg}
+                        accentColor={selected ? colors.onAccent : colors.success}
+                        size={22}
+                      />
+                      <Text style={[styles.segmentTitle, { color: fg }]}>{option.label}</Text>
+                      <Text style={[styles.segmentHint, { color: subFg }]}>
+                        {option.shortHint}
+                      </Text>
                     </AppPressable>
                   );
                 })}
               </View>
-              <Text style={[styles.secondary, { color: colors.inkMuted }]}>{gpsAvailability === 'denied' ? 'GPS permission is off. You can still choose Ghost, On Moment, or a named preset.' : gpsAvailability === 'unavailable' ? 'GPS is currently unavailable. Try Use GPS again when location services are available.' : gpsAvailability === 'granted' ? 'GPS was available for your last request. Use GPS to refresh the pin.' : 'GPS is requested only when you choose to use it.'}</Text>
-            </View>
-            <View style={[styles.group, surface]}>
-              <SectionHeader title="Suggested San Francisco places" subtitle="Check in at one of these fixed places, or use GPS for your current position. Suggestions are not detected locations." />
-              <View style={styles.wrap}>
-                {QUICK_CHECKIN_PLACES.map((place) => (
-                  <AppPressable key={place.id} accessibilityRole="button" accessibilityState={{ disabled: !canChange }} disabled={!canChange} onPress={() => { if (place.useGps) { void changeSharing('live', place); } else { setPendingPlace(place); setPendingGpsAction(null); } }} style={[styles.checkin, { borderColor: colors.controlBorder, borderRadius: radii.input, backgroundColor: place.useGps ? colors.accent : colors.surfaceElevated }]}>
-                    <Text style={[styles.body, { color: place.useGps ? colors.onAccent : colors.ink, fontWeight: '600' }]}>{place.label}</Text>
-                  </AppPressable>
-                ))}
+
+              <View
+                style={[
+                  styles.statusStrip,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderRadius: radii.input,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <View style={styles.statusLeft}>
+                  <ModeGlyph
+                    mode={currentMode}
+                    color={colors.ink}
+                    accentColor={colors.success}
+                    size={18}
+                  />
+                  <View style={styles.statusCopy}>
+                    <Text numberOfLines={1} style={[styles.bodyStrong, { color: colors.ink }]}>
+                      {busy ? 'Updating pin…' : statusHeadline}
+                    </Text>
+                    <Text numberOfLines={1} style={[styles.secondary, { color: colors.inkMuted }]}>
+                      {mine?.location_updated_at
+                        ? `${formatRelativeTimeAgo(mine.location_updated_at)}`
+                        : formatLocationModeLabel(currentMode)}
+                      {gpsAvailability === 'denied'
+                        ? ' · GPS off'
+                        : gpsAvailability === 'unavailable'
+                          ? ' · GPS unavailable'
+                          : ''}
+                    </Text>
+                  </View>
+                </View>
+
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    currentMode === 'ghost'
+                      ? 'Resume sharing with On Moment mode'
+                      : 'Pause sharing with Ghost mode'
+                  }
+                  disabled={!canChange}
+                  onPress={() =>
+                    void changeSharing(
+                      currentMode === 'ghost' ? 'on_moment' : 'ghost',
+                      undefined,
+                      true,
+                    )
+                  }
+                  style={[
+                    styles.quickToggleBtn,
+                    {
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                      backgroundColor:
+                        currentMode === 'ghost' ? colors.accent : colors.surface,
+                    },
+                  ]}
+                >
+                  <PauseResumeIcon
+                    color={currentMode === 'ghost' ? colors.onAccent : colors.ink}
+                    paused={currentMode === 'ghost'}
+                    size={16}
+                  />
+                  <Text
+                    style={[
+                      styles.quickToggleText,
+                      {
+                        color: currentMode === 'ghost' ? colors.onAccent : colors.ink,
+                      },
+                    ]}
+                  >
+                    {currentMode === 'ghost' ? 'Resume' : 'Pause'}
+                  </Text>
+                </AppPressable>
               </View>
+            </View>
+
+            {/* Interactive Map + Floating Icon HUD */}
+            <InteractiveCoupleMap
+              mine={mine}
+              partner={partnerShare}
+              friends={friends}
+              myName={user?.display_name ?? 'You'}
+              partnerName={partnerName}
+            />
+
+            {/* Icon Check-In Chips Row */}
+            <View style={[styles.compactCard, surface]}>
+              <View style={styles.checkinRow}>
+                {QUICK_CHECKIN_PLACES.map((place) => {
+                  const isPrimary = Boolean(place.useGps);
+                  const isSelected = pendingPlace?.id === place.id;
+                  const active = isPrimary || isSelected;
+                  const fg = active ? colors.onAccent : colors.ink;
+                  return (
+                    <AppPressable
+                      key={place.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        place.useGps
+                          ? 'Check in using device GPS'
+                          : `Check in at ${place.placeName}`
+                      }
+                      accessibilityState={{ disabled: !canChange, selected: isSelected }}
+                      disabled={!canChange}
+                      onPress={() => {
+                        if (place.useGps) {
+                          void changeSharing('live', place);
+                        } else {
+                          setPendingPlace((current) =>
+                            current?.id === place.id ? null : place,
+                          );
+                          setPendingGpsAction(null);
+                        }
+                      }}
+                      style={[
+                        styles.checkinChip,
+                        {
+                          borderColor: active ? colors.focusRing : colors.controlBorder,
+                          borderRadius: radii.input,
+                          backgroundColor: active ? colors.accent : colors.surfaceElevated,
+                        },
+                      ]}
+                    >
+                      <CheckInGlyph id={place.id} color={fg} size={18} />
+                      <Text style={[styles.chipText, { color: fg }]}>{place.label}</Text>
+                    </AppPressable>
+                  );
+                })}
+              </View>
+
               {pendingPlace ? (
-                <View style={[styles.confirm, { backgroundColor: colors.surfaceElevated, borderRadius: radii.input }]}>
-                  <Text style={[styles.body, { color: colors.ink }]}>Share a check-in at {pendingPlace.placeName} ({pendingPlace.lat?.toFixed(4)}, {pendingPlace.lng?.toFixed(4)})? This selects the place coordinates, not your GPS position, and sets sharing to Live.</Text>
-                  <KeepItButton label="Share this place" disabled={!canChange} onPress={() => { if (pendingPlace) void changeSharing('live', pendingPlace, true); }} />
-                  <KeepItButton label="Cancel check-in" variant="secondary" onPress={() => setPendingPlace(null)} />
+                <View
+                  style={[
+                    styles.confirmBar,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderRadius: radii.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  <View style={styles.confirmMeta}>
+                    <CheckInGlyph id={pendingPlace.id} color={colors.ink} size={18} />
+                    <View style={styles.statusCopy}>
+                      <Text style={[styles.bodyStrong, { color: colors.ink }]}>
+                        {pendingPlace.placeName}
+                      </Text>
+                      <Text style={[styles.secondary, { color: colors.inkMuted }]}>
+                        {pendingPlace.lat?.toFixed(4)}, {pendingPlace.lng?.toFixed(4)} · Sets Live
+                        pin
+                      </Text>
+                    </View>
+                    <AppPressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel place check-in"
+                      onPress={() => setPendingPlace(null)}
+                      style={[
+                        styles.iconActionBtn,
+                        {
+                          borderColor: colors.controlBorder,
+                          borderRadius: radii.input,
+                          backgroundColor: colors.surface,
+                        },
+                      ]}
+                    >
+                      <CloseCrossIcon color={colors.ink} size={14} />
+                    </AppPressable>
+                  </View>
+                  <KeepItButton
+                    label="Share spot"
+                    disabled={!canChange}
+                    onPress={() => {
+                      if (pendingPlace) void changeSharing('live', pendingPlace, true);
+                    }}
+                  />
                 </View>
               ) : null}
             </View>
-            <View style={[styles.group, surface]}>
-              <SectionHeader title="Your circle" subtitle={`${activePins} visible ${activePins === 1 ? 'pin' : 'pins'}${distance ? ` · ${distance} from ${partnerName}` : ''}`} />
-              {people.length ? people.map((person) => {
-                const record = person.record;
-                const coordinates = hasCoordinates(record);
-                const apart = coordinates && hasCoordinates(mine) ? formatDistanceApart(computeDistanceMeters(mine.lat, mine.lng, record.lat, record.lng)) : null;
-                return (
-                  <View key={person.id} style={[styles.person, { backgroundColor: colors.surfaceElevated, borderRadius: radii.input }]}>
-                    <View style={styles.personHeading}>
-                      <View style={[styles.avatar, { backgroundColor: colors.accent }]}><Text style={[styles.sectionTitle, { color: colors.onAccent }]}>{(person.name.trim()[0] ?? '?').toUpperCase()}</Text></View>
-                      <View style={styles.personCopy}><Text style={[styles.body, { color: colors.ink, fontWeight: '600' }]}>{person.name}</Text><Text style={[styles.secondary, { color: colors.inkMuted }]}>{person.role}</Text></View>
-                    </View>
-                    <Text style={[styles.body, { color: colors.ink }]}>{!record ? 'No sharing information available' : record.mode === 'ghost' ? 'Ghost mode · Location hidden' : !coordinates ? record.mode === 'on_moment' ? 'Waiting for a located Moment' : 'No coordinates shared yet' : record.place_name ?? 'Shared coordinates'}</Text>
-                    <Text style={[styles.secondary, { color: colors.inkMuted }]}>{apart ? `${apart} away · ` : ''}{record?.location_updated_at && coordinates ? `Updated ${formatRelativeTimeAgo(record.location_updated_at)}` : record ? formatLocationModeLabel(record.mode) : 'Location unavailable'}</Text>
-                    <KeepItButton label={`Message ${person.name}`} variant="secondary" onPress={() => router.navigate({ pathname: '/(tabs)/messages', params: { peerId: person.id, peerName: person.name } })} />
-                  </View>
-                );
-              }) : <EmptyState title="Your circle is quiet" message="Pair with someone or add friends from your profile to see shared pins here." actionLabel="Open profile" onAction={() => router.navigate('/(tabs)/profile' as never)} />}
-            </View>
-            <View style={[styles.group, surface]}>
-              <SectionHeader title="Sharing history" subtitle="Recent mode changes and check-ins. This is not a delivery receipt." />
-              {events.length ? events.slice(0, 5).map((event) => (
-                <View key={event.id} style={styles.event}>
-                  <Text style={[styles.body, { color: colors.ink }]}>{event.actor_id === user?.id ? 'You' : event.actor_id === partner?.id ? partnerName : friends.find((friend) => friend.user_id === event.actor_id)?.display_name ?? 'Circle member'} · {event.payload.note ?? `${formatLocationModeLabel(event.payload.previous_mode ?? 'ghost')} to ${formatLocationModeLabel(event.payload.new_mode ?? 'ghost')}`}</Text>
-                  <Text style={[styles.secondary, { color: colors.inkMuted }]}>{formatRelativeTimeAgo(event.created_at)}</Text>
+
+            {/* Compact Circle Strip with Icon Badges & Direct Chat Button */}
+            <View style={[styles.compactCard, surface]}>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionTitleLeft}>
+                  <FriendsClusterIcon color={colors.ink} size={18} />
+                  <Text style={[styles.cardTitle, { color: colors.ink }]}>Circle</Text>
                 </View>
-              )) : <Text style={[styles.body, { color: colors.inkMuted }]}>No sharing changes yet. Check-ins and mode changes will appear here.</Text>}
+                <View
+                  style={[
+                    styles.countBadge,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderRadius: radii.pill,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  <LiveBeaconIcon
+                    color={colors.ink}
+                    accentColor={activePins > 0 ? colors.success : colors.inkMuted}
+                    size={12}
+                  />
+                  <Text style={[styles.secondary, { color: colors.ink }]}>{activePins}</Text>
+                </View>
+              </View>
+
+              {people.length ? (
+                <View style={styles.stack}>
+                  {people.map((person) => {
+                    const record = person.record;
+                    const coordinates = hasCoordinates(record);
+                    const apart =
+                      coordinates && hasCoordinates(mine)
+                        ? formatDistanceApart(
+                            computeDistanceMeters(mine.lat, mine.lng, record.lat, record.lng),
+                          )
+                        : null;
+                    const mode = record?.mode ?? 'ghost';
+                    const summary = !record
+                      ? 'Offline'
+                      : record.mode === 'ghost'
+                        ? 'Ghost · Hidden'
+                        : !coordinates
+                          ? record.mode === 'on_moment'
+                            ? 'Waiting for Moment'
+                            : 'No pin'
+                          : record.place_name ?? 'Shared pin';
+
+                    return (
+                      <View
+                        key={person.id}
+                        style={[
+                          styles.personRow,
+                          {
+                            backgroundColor: colors.surfaceElevated,
+                            borderRadius: radii.input,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                      >
+                        <View style={styles.avatarWrap}>
+                          <View style={[styles.avatar, { backgroundColor: colors.accent }]}>
+                            <Text style={[styles.avatarInitial, { color: colors.onAccent }]}>
+                              {(person.name.trim()[0] ?? '?').toUpperCase()}
+                            </Text>
+                          </View>
+                          <View
+                            style={[
+                              styles.avatarModeBadge,
+                              {
+                                backgroundColor: colors.surface,
+                                borderColor: colors.controlBorder,
+                              },
+                            ]}
+                          >
+                            <ModeGlyph
+                              mode={mode}
+                              color={colors.ink}
+                              accentColor={colors.success}
+                              size={10}
+                            />
+                          </View>
+                        </View>
+
+                        <View style={styles.personCopy}>
+                          <View style={styles.personTopLine}>
+                            <Text
+                              numberOfLines={1}
+                              style={[styles.bodyStrong, { color: colors.ink }]}
+                            >
+                              {person.name}
+                            </Text>
+                            {apart ? (
+                              <Text style={[styles.apartPill, { color: colors.inkMuted }]}>
+                                · {apart}
+                              </Text>
+                            ) : null}
+                          </View>
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.secondary, { color: colors.inkMuted }]}
+                          >
+                            {summary}
+                            {record?.location_updated_at && coordinates
+                              ? ` · ${formatRelativeTimeAgo(record.location_updated_at)}`
+                              : ''}
+                          </Text>
+                        </View>
+
+                        <AppPressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Message ${person.name}`}
+                          onPress={() =>
+                            router.navigate({
+                              pathname: '/(tabs)/messages',
+                              params: { peerId: person.id, peerName: person.name },
+                            })
+                          }
+                          style={[
+                            styles.iconActionBtn,
+                            {
+                              borderColor: colors.controlBorder,
+                              borderRadius: radii.input,
+                              backgroundColor: colors.surface,
+                            },
+                          ]}
+                        >
+                          <ChatBubbleIcon color={colors.ink} size={18} />
+                        </AppPressable>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <EmptyState
+                  title="Circle is quiet"
+                  message="Pair or add friends in Profile to see shared pins."
+                  actionLabel="Open Profile"
+                  onAction={() => router.navigate('/(tabs)/profile' as never)}
+                />
+              )}
+            </View>
+
+            {/* Collapsible Icon Activity Log */}
+            <View style={[styles.compactCard, surface]}>
+              <AppPressable
+                accessibilityRole="button"
+                accessibilityLabel={`Sharing activity (${events.length} events)`}
+                accessibilityState={{ expanded: historyOpen }}
+                onPress={() => setHistoryOpen((value) => !value)}
+                style={styles.historyToggle}
+              >
+                <View style={styles.sectionTitleLeft}>
+                  <HistoryClockIcon color={colors.ink} size={18} />
+                  <Text style={[styles.cardTitle, { color: colors.ink }]}>Activity</Text>
+                  <Text style={[styles.secondary, { color: colors.inkMuted }]}>
+                    ({events.length})
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.chevronBadge,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                    },
+                  ]}
+                >
+                  <DirectionChevronIcon
+                    color={colors.ink}
+                    direction={historyOpen ? 'up' : 'down'}
+                    size={15}
+                  />
+                </View>
+              </AppPressable>
+
+              {historyOpen ? (
+                events.length ? (
+                  <View style={styles.stack}>
+                    {events.slice(0, 5).map((event) => {
+                      const actorName =
+                        event.actor_id === user?.id
+                          ? 'You'
+                          : event.actor_id === partner?.id
+                            ? partnerName
+                            : friends.find((friend) => friend.user_id === event.actor_id)
+                                ?.display_name ?? 'Circle';
+                      const eventMode: LocationMode = event.payload.new_mode ?? 'live';
+                      const summary =
+                        event.payload.note ??
+                        formatLocationModeLabel(event.payload.new_mode ?? 'ghost');
+
+                      return (
+                        <View
+                          key={event.id}
+                          style={[
+                            styles.eventRow,
+                            {
+                              backgroundColor: colors.surfaceElevated,
+                              borderRadius: radii.input,
+                            },
+                          ]}
+                        >
+                          <ModeGlyph
+                            mode={eventMode}
+                            color={colors.ink}
+                            accentColor={colors.success}
+                            size={16}
+                          />
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.eventCopy, { color: colors.ink }]}
+                          >
+                            <Text style={styles.bodyStrong}>{actorName}</Text> · {summary}
+                          </Text>
+                          <Text style={[styles.secondary, { color: colors.inkMuted }]}>
+                            {formatRelativeTimeAgo(event.created_at)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={[styles.secondary, { color: colors.inkMuted }]}>
+                    No check-ins or mode switches yet.
+                  </Text>
+                )
+              ) : null}
             </View>
           </>
         ) : null}
@@ -242,19 +915,267 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  content: { flexGrow: 1, maxWidth: APP_LAYOUT.maxContentWidth, width: '100%', alignSelf: 'center', paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: 20, paddingBottom: APP_LAYOUT.tabBarClearance, gap: 20 },
-  group: { padding: APP_LAYOUT.cardPadding, gap: 16 },
-  sectionTitle: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
-  body: { fontSize: 15, lineHeight: 22 },
-  secondary: { fontSize: 13, lineHeight: 20 },
-  stack: { gap: 10 },
-  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  mode: { minHeight: 44, padding: 14, borderWidth: 1, gap: 4 },
-  checkin: { minHeight: 44, maxWidth: '100%', paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, justifyContent: 'center' },
-  confirm: { padding: 16, gap: 12 },
-  person: { padding: 16, gap: 10 },
-  personHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  personCopy: { flex: 1, minWidth: 0 },
-  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  event: { paddingVertical: 8, gap: 4 },
+  content: {
+    flexGrow: 1,
+    maxWidth: APP_LAYOUT.maxContentWidth,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: APP_LAYOUT.pageInset,
+    paddingTop: 16,
+    paddingBottom: APP_LAYOUT.tabBarClearance,
+    gap: 14,
+  },
+  compactCard: {
+    padding: 14,
+    gap: 12,
+  },
+  distancePill: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  distanceText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  modeGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modeSegment: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 74,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  segmentTitle: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  segmentHint: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  statusStrip: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  statusLeft: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  statusCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  quickToggleBtn: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  quickToggleText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  checkinRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  checkinChip: {
+    flex: 1,
+    minWidth: 92,
+    minHeight: 44,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  chipText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  confirmBar: {
+    padding: 12,
+    borderWidth: 1,
+    gap: 10,
+  },
+  confirmMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  sectionTitleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  countBadge: {
+    minHeight: 28,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  cardTitle: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '700',
+  },
+  bodyStrong: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  secondary: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontVariant: ['tabular-nums'],
+  },
+  stack: { gap: 8 },
+  personRow: {
+    padding: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  avatarWrap: {
+    width: 42,
+    height: 42,
+    position: 'relative',
+  },
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitial: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  avatarModeBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  personCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  personTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  apartPill: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  iconActionBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyToggle: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  chevronBadge: {
+    minWidth: 44,
+    minHeight: 44,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eventRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  eventCopy: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  promptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  iconTile: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promptCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  promptActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
 });

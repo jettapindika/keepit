@@ -15,8 +15,10 @@ import {
   MomentCommentRecord,
   MomentRecord,
   StatusRecord,
+  StreakRecord,
   UserProfile,
 } from '@/types/database';
+import { advanceStreakOnDualPost } from '@/utils/streakEngine';
 
 const LOCAL_MOMENTS_KEY = 'keepit.local_moments.v1';
 const LOCAL_STATUS_KEY = 'keepit.local_statuses.v1';
@@ -135,15 +137,7 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
       ? (JSON.parse(raw) as {
           prompts: Record<string, unknown>;
           moments: Record<string, MomentRecord>;
-          streaks: Record<
-            string,
-            {
-              couple_id: string;
-              current_count: number;
-              longest_count: number;
-              last_completed_date: string | null;
-            }
-          >;
+          streaks: Record<string, StreakRecord>;
         })
       : { prompts: {}, moments: {}, streaks: {} };
 
@@ -152,28 +146,19 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     // Also maintain legacy key if needed so both lookups succeed
     state.moments[`${m.prompt_id}:${m.user_id}`] = m;
 
-    const distinctUsers = new Set(
-      Object.values(state.moments)
-        .filter((item) => item.prompt_id === m.prompt_id)
-        .map((item) => item.user_id)
+    const promptMoments = Object.values(state.moments).filter(
+      (item) => item.prompt_id === m.prompt_id && !item.user_id.startsWith('friend_')
     );
+    const distinctUsers = new Set(promptMoments.map((item) => item.user_id));
     if (distinctUsers.size >= 2) {
-      const prev = state.streaks[m.couple_id] ?? {
-        couple_id: m.couple_id,
-        current_count: 0,
-        longest_count: 0,
-        last_completed_date: null,
-      };
-      const today = new Date().toISOString().slice(0, 10);
-      if (prev.last_completed_date !== today) {
-        const nextCount = prev.current_count + 1;
-        state.streaks[m.couple_id] = {
-          couple_id: m.couple_id,
-          current_count: nextCount,
-          longest_count: Math.max(prev.longest_count, nextCount),
-          last_completed_date: today,
-        };
-      }
+      const today = (m.posted_at || new Date().toISOString()).slice(0, 10);
+      const bothOnTime = promptMoments.every((item) => !item.is_late);
+      state.streaks[m.couple_id] = advanceStreakOnDualPost({
+        previous: state.streaks[m.couple_id],
+        coupleId: m.couple_id,
+        todayDate: today,
+        bothOnTime,
+      });
     }
     await AsyncStorage.setItem(LOCAL_MOMENTS_KEY, JSON.stringify(state));
     return;

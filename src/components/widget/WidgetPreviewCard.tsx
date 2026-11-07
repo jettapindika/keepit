@@ -3,10 +3,11 @@ import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
-import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
 import { AppPressable, SectionHeader } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { WidgetSnapshotPayload } from '@/types/database';
+import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 import { isKeepItWidgetPinned, requestPinKeepItWidgetDetailed } from '../../../modules/keepit-widget-bridge';
 
 export type WidgetSizePreset = 'small' | 'medium';
@@ -73,8 +74,9 @@ export function WidgetPreviewCard({ snapshot, lastSyncedAt, onPressOpenApp, onPr
   const open = locked ? onPressCaptureLocked : onPressOpenApp;
   const partnerName = snapshot?.partnerName ?? 'Your partner';
   const ownerPossessive = partnerName === 'You' ? 'your' : `${partnerName}’s`;
+  const watermarkTimestamp = formatMomentWatermarkTimestamp(snapshot?.momentPostedAt ?? snapshot?.updatedAt);
   const photoBlock = <View style={[styles.photo, size === 'small' ? styles.smallPhoto : styles.mediumPhoto, { backgroundColor: colors.surfaceElevated, borderRadius: radii.input }]}>
-    {photo ? <><Image accessibilityLabel={`${ownerPossessive} widget photo`} source={{ uri: photo }} contentFit="cover" style={StyleSheet.absoluteFill} onError={() => setFailedPhotoUri(photo)} />{snapshot?.momentFrontPhotoUri && !snapshot.momentFrontPhotoUri.startsWith('data:image/svg+xml') ? <Image accessibilityLabel="Other camera view" source={{ uri: snapshot.momentFrontPhotoUri }} contentFit="cover" style={[styles.pip, { borderColor: colors.canvas }]} /> : null}</> : <Text style={[styles.secondary, { color: colors.inkMuted, textAlign: 'center' }]}>{locked ? 'Moment locked' : rawPhoto ? 'Photo unavailable' : 'No Moment photo'}</Text>}
+    {photo ? <><Image accessibilityLabel={`${ownerPossessive} widget photo`} source={{ uri: photo }} contentFit="cover" style={StyleSheet.absoluteFill} onError={() => setFailedPhotoUri(photo)} />{snapshot?.momentFrontPhotoUri && !snapshot.momentFrontPhotoUri.startsWith('data:image/svg+xml') ? <Image accessibilityLabel="Other camera view" source={{ uri: snapshot.momentFrontPhotoUri }} contentFit="cover" style={[styles.pip, { borderColor: colors.canvas }]} /> : null}<View pointerEvents="none" style={styles.photoWatermark}><KeepItWatermarkLogo width={46} color="#FFFFFF" /><Text numberOfLines={1} style={styles.photoWatermarkTime}>{watermarkTimestamp}</Text></View></> : <Text style={[styles.secondary, { color: colors.inkMuted, textAlign: 'center' }]}>{locked ? 'Moment locked' : rawPhoto ? 'Photo unavailable' : 'No Moment photo'}</Text>}
   </View>;
   return <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group }]}>
     <SectionHeader title="Your Home Screen widget" subtitle={lastSyncedAt ? `Last synced ${formatRelativeWidgetTime(lastSyncedAt, now).toLowerCase()}` : 'Preview only. No successful sync recorded yet.'} />
@@ -114,6 +116,8 @@ const styles = StyleSheet.create({
   smallPhoto: { width: '100%', aspectRatio: 1.4 },
   mediumPhoto: { flexBasis: 110, flexGrow: 1, aspectRatio: 1 },
   pip: { position: 'absolute', top: 8, left: 8, width: 34, height: 46, borderWidth: 2, borderRadius: 8 },
+  photoWatermark: { position: 'absolute', bottom: 6, left: 6, backgroundColor: 'rgba(10, 7, 8, 0.78)', borderRadius: 7, paddingHorizontal: 6, paddingVertical: 4, alignItems: 'flex-start', gap: 1.5 },
+  photoWatermarkTime: { color: '#FFFFFF', fontSize: 9.5, lineHeight: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
   copy: { flexGrow: 1, flexBasis: 120, gap: 6, minWidth: 0 },
   empty: { padding: 8, gap: 10 },
   title: { fontSize: 18, lineHeight: 24, fontWeight: '600' },

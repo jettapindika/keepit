@@ -23,6 +23,10 @@ import {
   deleteMomentComment,
   deleteMomentPost,
   fetchTodayMomentBundle,
+  computeDeterministicPromptTriggerIso,
+  formatLateDuration,
+  isMomentPromptCheckIn,
+  simulateSandboxPromptState,
   getSnapOnceRemainingSeconds,
   isSnapOnceExpiredForViewer,
   markSnapOnceMomentState,
@@ -44,6 +48,7 @@ import {
   toggleDirectMessageReaction,
 } from '@/api/social';
 import { buildWidgetSnapshotPayload } from '@/hooks/useWidgetSync';
+import { computeCountdownSnapshot } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
 import {
   buildSynthesizedTrackWavDataUri,
@@ -54,7 +59,14 @@ import {
 import {
   buildMomentCompositeSvgDataUri,
   exportAndShareCompositeMoment,
+  KEEPIT_WATERMARK_SVG_PATH_D,
 } from '@/utils/momentExport';
+import {
+  advanceStreakOnDualPost,
+  enrichStreakWithRecentChain,
+  getAvailableCollageStamps,
+  getCurrentAndNextChapter,
+} from '@/utils/streakEngine';
 import { requestPinKeepItWidgetDetailed } from '../modules/keepit-widget-bridge';
 
 
@@ -822,6 +834,10 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       'Exported file must include #keepit watermark'
     );
     assert.ok(
+      savedContent.includes(KEEPIT_WATERMARK_SVG_PATH_D),
+      'Exported file must embed the exact #keepit SVG vector path'
+    );
+    assert.ok(
       savedContent.includes('Nov 6 · 02:30 PM'),
       'Exported file must include watermark timestamp'
     );
@@ -837,8 +853,8 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       })
     );
     assert.ok(svg3x4.includes('#keepit'));
+    assert.ok(svg3x4.includes(KEEPIT_WATERMARK_SVG_PATH_D));
     assert.ok(svg3x4.includes('Nov 6 · 02:30 PM'));
-
     const svg9x16 = decodeURIComponent(
       buildMomentCompositeSvgDataUri({
         backUri: 'data:image/jpeg;base64,AAA',
@@ -852,9 +868,192 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       })
     );
     assert.ok(svg9x16.includes('#keepit'));
+    assert.ok(svg9x16.includes(KEEPIT_WATERMARK_SVG_PATH_D));
     assert.ok(svg9x16.includes('Nov 6 · 02:30 PM'));
     assert.ok(svg9x16.includes('@sora.frames'));
     assert.ok(svg9x16.includes('neon vibe'));
   });
 
+  it('synchronizes daily prompt deterministically, enforces 5m check-in window only on the first post after prompt, and keeps bonus/pre-prompt/solo posts spontaneous', async () => {
+    const coupleId = 'couple_time_system';
+    const aliceId = 'user_alice';
+    const bobId = 'user_bob';
+    const today = todayLocalDateString();
+
+    // 1. Both partners independently compute the exact same daily prompt trigger_at
+    const triggerA = computeDeterministicPromptTriggerIso(coupleId, today);
+    const triggerB = computeDeterministicPromptTriggerIso(coupleId, today);
+    assert.equal(triggerA, triggerB);
+
+    const bundleAlice = await fetchTodayMomentBundle({ coupleId, userId: aliceId });
+    const bundleBob = await fetchTodayMomentBundle({ coupleId, userId: bobId });
+    assert.equal(bundleAlice.prompt.trigger_at, triggerA);
+    assert.equal(bundleBob.prompt.trigger_at, triggerB);
+
+    // 2. Simulate an upcoming prompt (45m in the future) -> early spontaneous post is NOT a prompt check-in and NOT marked late
+    await simulateSandboxPromptState({ coupleId, mode: 'upcoming' });
+    const upcomingBundle = await fetchTodayMomentBundle({ coupleId, userId: aliceId });
+    const upcomingSnap = computeCountdownSnapshot(upcomingBundle.prompt.trigger_at);
+    assert.equal(upcomingSnap.phase, 'upcoming');
+
+    const earlyPost = await submitDailyMoment({
+      coupleId,
+      promptId: upcomingBundle.prompt.id,
+      userId: aliceId,
+      authorName: 'Alice',
+      backUri: 'data:image/jpeg;base64,EARLY_BACK',
+      frontUri: 'data:image/jpeg;base64,EARLY_FRONT',
+      capturedAtIso: new Date().toISOString(),
+    });
+    assert.equal(earlyPost.is_prompt_checkin, false);
+    assert.equal(earlyPost.is_late, false);
+    assert.equal(earlyPost.late_by_seconds, 0);
+    assert.equal(isMomentPromptCheckIn(earlyPost), false);
+
+    // 3. Simulate live window (prompt triggered 3m ago -> within 5-minute window)
+    const liveTriggerMs = Date.now() - 180_000;
+    const liveTriggerIso = new Date(liveTriggerMs).toISOString();
+    const liveSnap = computeCountdownSnapshot(liveTriggerIso);
+    assert.equal(liveSnap.phase, 'live');
+    assert.ok(liveSnap.secondsRemaining >= 115 && liveSnap.secondsRemaining <= 120);
+
+    // Update prompt to 180s ago and have Alice capture her first post AFTER the prompt -> On time check-in!
+    await simulateSandboxPromptState({ coupleId, mode: 'live_window' });
+    const liveBundle = await fetchTodayMomentBundle({ coupleId, userId: aliceId });
+    const checkInOnTime = await submitDailyMoment({
+      coupleId,
+      promptId: liveBundle.prompt.id,
+      userId: aliceId,
+      authorName: 'Alice',
+      backUri: 'data:image/jpeg;base64,CHECKIN_BACK',
+      frontUri: 'data:image/jpeg;base64,CHECKIN_FRONT',
+      capturedAtIso: new Date(
+        new Date(liveBundle.prompt.trigger_at).getTime() + 240_000
+      ).toISOString(), // 4m after trigger (within 5m window)
+    });
+    assert.equal(checkInOnTime.is_prompt_checkin, true);
+    assert.equal(checkInOnTime.is_late, false);
+    assert.equal(checkInOnTime.late_by_seconds, 240);
+    assert.equal(formatLateDuration(checkInOnTime.late_by_seconds), 'On time');
+
+    // 4. Alice's next post (#3 of the day, 3 hours after prompt) is a bonus spontaneous post -> never marked late!
+    const bonusPost = await submitDailyMoment({
+      coupleId,
+      promptId: liveBundle.prompt.id,
+      userId: aliceId,
+      authorName: 'Alice',
+      backUri: 'data:image/jpeg;base64,BONUS_BACK',
+      frontUri: 'data:image/jpeg;base64,BONUS_FRONT',
+      capturedAtIso: new Date(
+        new Date(liveBundle.prompt.trigger_at).getTime() + 3 * 3600_000
+      ).toISOString(),
+    });
+    assert.equal(bonusPost.is_prompt_checkin, false);
+    assert.equal(bonusPost.is_late, false);
+    assert.equal(bonusPost.late_by_seconds, 0);
+    assert.equal(isMomentPromptCheckIn(bonusPost), false);
+
+    // 5. Bob posts his first Moment 17 minutes after the prompt (12m past the 5m window) -> marked as prompt check-in, 12m after prompt
+    const bobLateCheckIn = await submitDailyMoment({
+      coupleId,
+      promptId: liveBundle.prompt.id,
+      userId: bobId,
+      authorName: 'Bob',
+      backUri: 'data:image/jpeg;base64,BOB_LATE_BACK',
+      frontUri: 'data:image/jpeg;base64,BOB_LATE_FRONT',
+      capturedAtIso: new Date(
+        new Date(liveBundle.prompt.trigger_at).getTime() + 17 * 60_000
+      ).toISOString(),
+    });
+    assert.equal(bobLateCheckIn.is_prompt_checkin, true);
+    assert.equal(bobLateCheckIn.is_late, true);
+    assert.equal(formatLateDuration(bobLateCheckIn.late_by_seconds), '12m after prompt');
+
+    // 6. Solo user posts are always spontaneous (never marked late)
+    const soloPost = await submitDailyMoment({
+      coupleId: 'solo_user_1',
+      promptId: `prompt_solo_user_1_${today}`,
+      userId: 'user_1',
+      authorName: 'Solo',
+      backUri: 'data:image/jpeg;base64,SOLO_BACK',
+      frontUri: 'data:image/jpeg;base64,SOLO_FRONT',
+      capturedAtIso: new Date(Date.now() + 8 * 3600_000).toISOString(),
+    });
+    assert.equal(soloPost.is_prompt_checkin, false);
+    assert.equal(soloPost.is_late, false);
+  });
+
+});
+
+describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Chapters', () => {
+  beforeEach(async () => {
+    await resetAllState();
+  });
+
+  it('bridges a 1-day missed gap using a Grace Shield, awards +1 shield on 7th day, and tracks Golden Syncs & stamps', async () => {
+    const coupleId = 'couple_pulse_test';
+
+    // Start at day 2 completed on 2026-11-01 with 1 shield
+    let streak = advanceStreakOnDualPost({
+      previous: {
+        couple_id: coupleId,
+        current_count: 2,
+        longest_count: 2,
+        last_completed_date: '2026-11-01',
+        grace_shields: 1,
+        shield_used_dates: [],
+        golden_sync_count: 1,
+        unlocked_milestones: [],
+      },
+      coupleId,
+      todayDate: '2026-11-02',
+      bothOnTime: true,
+    });
+
+    assert.equal(streak.current_count, 3);
+    assert.equal(streak.golden_sync_count, 2);
+    assert.deepEqual(streak.unlocked_milestones, [3]);
+
+    // Skip 2026-11-03 (1-day gap) and post on 2026-11-04 -> Grace Shield bridges the gap!
+    streak = advanceStreakOnDualPost({
+      previous: streak,
+      coupleId,
+      todayDate: '2026-11-04',
+      bothOnTime: false,
+    });
+
+    assert.equal(streak.current_count, 4, 'Grace shield must bridge a 1-day gap to Day 4');
+    assert.equal(streak.grace_shields, 0, 'Grace shield count must decrement by 1');
+    assert.ok(streak.shield_used_dates?.includes('2026-11-03'), 'Missed date must be recorded in shield_used_dates');
+    assert.equal(streak.golden_sync_count, 2, 'Late sync must not increment golden_sync_count');
+
+    // Advance through days 5, 6, 7 -> Day 7 unlocks Weekly Ritual (7d) and awards +1 Grace Shield
+    streak = advanceStreakOnDualPost({ previous: streak, coupleId, todayDate: '2026-11-05', bothOnTime: true });
+    streak = advanceStreakOnDualPost({ previous: streak, coupleId, todayDate: '2026-11-06', bothOnTime: true });
+    streak = advanceStreakOnDualPost({ previous: streak, coupleId, todayDate: '2026-11-07', bothOnTime: true });
+
+    assert.equal(streak.current_count, 7);
+    assert.equal(streak.grace_shields, 1, 'Reaching 7-day multiple must award +1 Grace Shield');
+    assert.deepEqual(streak.unlocked_milestones, [3, 7]);
+
+    const chapterInfo = getCurrentAndNextChapter(streak.current_count);
+    assert.equal(chapterInfo.current?.title, 'Weekly Ritual');
+    assert.equal(chapterInfo.next?.title, 'Fortnight');
+    assert.equal(chapterInfo.daysRemaining, 7);
+
+    const stamps = getAvailableCollageStamps(streak.current_count, streak.longest_count);
+    assert.equal(stamps.length, 3, 'Should have Classic + 3d Spark + 7d Weekly Ritual stamps');
+    assert.ok(stamps[2].watermarkText.includes('WEEKLY RITUAL · DAY 7'));
+
+    const enriched = enrichStreakWithRecentChain({
+      streak,
+      coupleId,
+      userId: 'user_a',
+      todayDate: '2026-11-07',
+      moments: [],
+    });
+    assert.equal(enriched.recent_chain?.length, 7);
+    const bridgedNode = enriched.recent_chain?.find((n) => n.date === '2026-11-03');
+    assert.equal(bridgedNode?.state, 'shield');
+  });
 });

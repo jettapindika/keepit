@@ -4,12 +4,13 @@ import { SymbolView } from 'expo-symbols';
 import React, { useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
-import { formatLateDuration } from '@/api/moments';
-import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
+import { formatLateDuration, isMomentPromptCheckIn } from '@/api/moments';
+import { InlineNotice, KeepItButton, KeepItWatermarkLogo, RevealOnAppear } from '@/components/ui/Primitives';
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
 import { exportAndShareCompositeMoment, formatMomentWatermarkTimestamp } from '@/utils/momentExport';
+import { getAvailableCollageStamps } from '@/utils/streakEngine';
 
 export interface TogetherCollageCardProps {
   promptDate: string;
@@ -18,6 +19,7 @@ export interface TogetherCollageCardProps {
   myName: string;
   partnerName: string;
   streakCount?: number;
+  longestStreakCount?: number;
   revealKey?: string;
 }
 
@@ -44,7 +46,7 @@ function CollageHalfPane({ moment, authorName }: { moment: MomentRecord; authorN
             hour: '2-digit',
             minute: '2-digit',
           })}
-          {moment.is_late ? ` · ${formatLateDuration(moment.late_by_seconds)}` : ''}
+          {isMomentPromptCheckIn(moment) ? ` · ${formatLateDuration(moment.late_by_seconds)}` : ''}
         </Text>
       </View>
       <AppPressable
@@ -106,6 +108,12 @@ function CollageHalfPane({ moment, authorName }: { moment: MomentRecord; authorN
                 />
               </View>
             ) : null}
+            <View pointerEvents="none" style={styles.photoWatermark}>
+              <KeepItWatermarkLogo width={50} color="#FFFFFF" />
+              <Text numberOfLines={1} style={styles.photoWatermarkTime}>
+                {formatMomentWatermarkTimestamp(moment.posted_at)}
+              </Text>
+            </View>
           </>
         )}
         <View pointerEvents="none" style={styles.lensBadge}>
@@ -146,12 +154,18 @@ export function TogetherCollageCard({
   partnerMoment,
   myName,
   partnerName,
-  streakCount,
+  streakCount = 0,
+  longestStreakCount,
   revealKey,
 }: TogetherCollageCardProps) {
   const { colors, radii, type } = useKeepItTheme();
   const [saving, setSaving] = useState<'mine' | 'partner' | null>(null);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
+  const availableStamps = getAvailableCollageStamps(streakCount, longestStreakCount ?? streakCount);
+  const [stampIndex, setStampIndex] = useState(() => Math.max(0, availableStamps.length - 1));
+  const activeStamp = availableStamps[stampIndex % availableStamps.length] ?? availableStamps[0];
+  const isGoldenSync = !myMoment.is_late && !partnerMoment.is_late;
+  const canCycleStamp = availableStamps.length > 1;
 
   const saveMoment = async (
     moment: MomentRecord,
@@ -217,9 +231,26 @@ export function TogetherCollageCard({
           },
         ]}>
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>
-            {formattedDate}
-          </Text>
+          <View style={styles.headerTopRow}>
+            <Text style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>
+              {formattedDate}
+            </Text>
+            {isGoldenSync ? (
+              <View
+                style={[
+                  styles.goldenPill,
+                  {
+                    backgroundColor: colors.canvas,
+                    borderColor: colors.success,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Text style={[styles.goldenText, { color: colors.success }]}>
+                  Golden Sync · On time
+                </Text>
+              </View>
+            ) : null}
+          </View>
           {typeof streakCount === 'number' && streakCount > 0 ? (
             <View style={styles.streakBadge}>
               <SymbolView
@@ -232,7 +263,7 @@ export function TogetherCollageCard({
                 size={14}
               />
               <Text style={[styles.secondary, { color: colors.inkMuted }]}>
-                {streakCount}d
+                {streakCount}-day pulse
               </Text>
             </View>
           ) : null}
@@ -249,13 +280,38 @@ export function TogetherCollageCard({
 
         <View style={styles.footerBar}>
           <View style={styles.watermark}>
-            <Text style={[styles.author, { color: colors.ink }]}>#keepit</Text>
+            <KeepItWatermarkLogo width={68} color={colors.ink} />
+            <Text style={[styles.author, { color: colors.ink, fontFamily: type.fontMono }]}>
+              {activeStamp.watermarkText}
+            </Text>
             <Text style={[styles.secondary, { color: colors.inkMuted }]}>
               {formatMomentWatermarkTimestamp(myMoment.posted_at || partnerMoment.posted_at)}
             </Text>
           </View>
 
           <View style={styles.saveActions}>
+            {canCycleStamp ? (
+              <AppPressable
+                accessibilityRole="button"
+                accessibilityLabel={`Cycle collage milestone stamp. Current stamp: ${activeStamp.label}`}
+                onPress={() => {
+                  if (Platform.OS !== 'web') void Haptics.selectionAsync();
+                  setStampIndex((prev) => (prev + 1) % availableStamps.length);
+                }}
+                style={[
+                  styles.saveIconBtn,
+                  {
+                    backgroundColor: colors.canvas,
+                    borderColor: colors.controlBorder,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Text style={[styles.saveBtnLabel, { color: colors.ink }]}>
+                  Stamp ({(stampIndex % availableStamps.length) + 1}/{availableStamps.length})
+                </Text>
+              </AppPressable>
+            ) : null}
+
             <AppPressable
               accessibilityRole="button"
               accessibilityLabel={`Save ${partnerName}'s Moment`}
@@ -334,12 +390,16 @@ export function TogetherCollageCard({
 
 const styles = StyleSheet.create({
   card: { padding: 16, gap: 14, borderWidth: 1, borderCurve: 'continuous' },
-  header: {
+  header: { gap: 4 },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 8,
   },
+  goldenPill: { paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
+  goldenText: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
   streakBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -375,6 +435,24 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 2,
   },
+  photoWatermark: {
+    position: 'absolute',
+    bottom: 34,
+    left: 6,
+    backgroundColor: 'rgba(10, 7, 8, 0.78)',
+    borderRadius: 7,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    alignItems: 'flex-start',
+    gap: 1.5,
+  },
+  photoWatermarkTime: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    lineHeight: 12,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
   lensBadge: {
     position: 'absolute',
     bottom: 8,
@@ -395,8 +473,8 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
-  watermark: { gap: 1 },
-  saveActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  watermark: { gap: 2 },
+  saveActions: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   saveIconBtn: {
     flexDirection: 'row',
     alignItems: 'center',
