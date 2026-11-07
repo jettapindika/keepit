@@ -56,6 +56,24 @@ export type CoupleSyncPacket =
   | { kind: 'profile_upsert'; profile: UserProfile }
   | { kind: 'friend_added'; friend: FriendRecord }
   | { kind: 'unpair'; actorId: string };
+/**
+ * All KeepIt Realtime channels are `private-` prefixed so Supabase enforces
+ * authorization (RLS over realtime.messages) before a client may join,
+ * receive, or broadcast. Topic builders below are the single source of truth:
+ * never construct channel names ad hoc elsewhere.
+ */
+export function buildCoupleSyncChannelTopic(coupleId: string): string {
+  return `private-keepit:couple_sync:${coupleId}`;
+}
+
+export function buildInviteChannelTopic(inviteCode: string): string {
+  return `private-keepit:invite:${inviteCode}`;
+}
+
+export function buildDirectMessageSyncChannelTopic(conversationId: string): string {
+  return `private-keepit:dm_sync:${conversationId}`;
+}
+
 let activeCoupleChannel: RealtimeChannel | null = null;
 let activeCoupleChannelId: string | null = null;
 
@@ -85,9 +103,9 @@ export async function broadcastCoupleSync(
   }
 
   const client = supabase;
-  const tempTopic = `keepit:couple_sync:${coupleId}`;
+  const tempTopic = buildCoupleSyncChannelTopic(coupleId);
   const ch = client.channel(tempTopic, {
-    config: { broadcast: { ack: true, self: false } },
+    config: { private: true, broadcast: { ack: true, self: false } },
   });
 
   const { promise, resolve } = Promise.withResolvers<void>();

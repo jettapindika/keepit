@@ -232,53 +232,61 @@ export default function CameraModalScreen() {
         if (!cameraReady) {
           const { promise, resolve } = Promise.withResolvers<void>();
           cameraReadyResolverRef.current = resolve;
-          setTimeout(resolve, 450);
+          setTimeout(resolve, 900);
           await promise;
         }
-        if (!isMountedRef.current) return;
+        await waitMs(180);
+        if (!isMountedRef.current || !cameraRef.current) return;
 
         setStage('capturing_first');
-        const firstShot = await cameraRef.current.takePictureAsync({
-          quality: 0.45,
-          base64: true,
-          skipProcessing: false,
-        });
+        let firstShot = await cameraRef.current
+          .takePictureAsync({
+            quality: 0.55,
+            base64: true,
+          })
+          .catch(() => null);
+        if (!firstShot?.uri && isMountedRef.current && cameraRef.current) {
+          await waitMs(450);
+          firstShot = await cameraRef.current
+            .takePictureAsync({
+              quality: 0.55,
+              base64: true,
+            })
+            .catch(() => null);
+        }
         if (!isMountedRef.current) return;
 
         setStage('switching_lens');
         setCameraReady(false);
         const { promise: readyPromise, resolve: resolveReady } = Promise.withResolvers<void>();
         cameraReadyResolverRef.current = resolveReady;
-        setTimeout(resolveReady, 700);
+        setTimeout(resolveReady, 1200);
         setFacing(secondLens);
         await readyPromise;
         if (!isMountedRef.current) return;
 
-        // Extra 300ms settling window so Android CameraX front->back or back->front session binds cleanly
-        await waitMs(300);
+        // Extra settling window so Android CameraX front->back or back->front session binds and exposes cleanly
+        await waitMs(480);
         if (!isMountedRef.current || !cameraRef.current) return;
 
         setStage('capturing_second');
         let secondShot = await cameraRef.current
           .takePictureAsync({
-            quality: 0.45,
+            quality: 0.55,
             base64: true,
-            skipProcessing: false,
           })
           .catch(() => null);
 
         // Retry once if the opposite camera HAL was still settling
         if (!secondShot?.uri && isMountedRef.current && cameraRef.current) {
-          await waitMs(400);
+          await waitMs(550);
           secondShot = await cameraRef.current
             .takePictureAsync({
-              quality: 0.45,
+              quality: 0.55,
               base64: true,
-              skipProcessing: false,
             })
             .catch(() => null);
         }
-
         if (!isMountedRef.current) return;
 
         const firstUri =
@@ -803,6 +811,7 @@ export default function CameraModalScreen() {
                 ]}>
                 {permission?.granted && Platform.OS !== 'web' ? (
                   <CameraView
+                    key={`cam-${facing}`}
                     ref={cameraRef}
                     style={styles.full}
                     facing={facing}

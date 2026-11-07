@@ -1,13 +1,16 @@
 // src/api/social.ts
 // Social layer for KeepIt:
-// - Friends circle (add by friend code/handle, list friends, remove friend, seed demo besties)
+// - Friends circle (add by friend code/handle, list friends, remove friend)
 // - Direct Messages (DMs) with Partner & Friends (text, emoji reactions, moment replies, Snap Once 15s messages)
 // - Curated Music Tracks & Location Presets for Moments
 // - Filter preset definitions (Warm Film, Polaroid, Noir, Cyber Neon, Golden Hour, VHS Retro, Dreamy)
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { broadcastCoupleSync } from '@/api/realtimeSync';
+import {
+  broadcastCoupleSync,
+  buildDirectMessageSyncChannelTopic,
+} from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
   DirectMessageRecord,
@@ -634,7 +637,7 @@ export async function sendDirectMessage(params: {
     }
   }
 
-  const syncChannelKey = params.coupleId || `conv_${convId}`;
+  const syncChannelKey = params.coupleId || buildDirectMessageSyncChannelTopic(convId);
   void broadcastCoupleSync(syncChannelKey, { kind: 'dm_upsert', message: record });
   return record;
 }
@@ -677,7 +680,7 @@ export async function toggleDirectMessageReaction(params: {
     }
   }
 
-  const syncChannelKey = params.coupleId || (convId ? `conv_${convId}` : null);
+  const syncChannelKey = params.coupleId || (convId ? buildDirectMessageSyncChannelTopic(convId) : null);
   if (syncChannelKey) {
     void broadcastCoupleSync(syncChannelKey, {
       kind: 'dm_reaction',
@@ -749,7 +752,7 @@ export async function markSnapDirectMessageViewed(params: {
     }
   }
 
-  const syncChannelKey = params.coupleId || (convId ? `conv_${convId}` : null);
+  const syncChannelKey = params.coupleId || (convId ? buildDirectMessageSyncChannelTopic(convId) : null);
   if (syncChannelKey) {
     void broadcastCoupleSync(syncChannelKey, {
       kind: 'dm_snap_viewed',

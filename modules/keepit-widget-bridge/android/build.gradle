@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.keepitwidgetbridge'
+version = '0.2.0'
+
+android {
+  namespace "expo.modules.keepitwidgetbridge"
+  defaultConfig {
+    versionCode 1
+    versionName "0.2.0"
+  }
+}

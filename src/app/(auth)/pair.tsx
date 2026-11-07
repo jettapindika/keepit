@@ -24,6 +24,7 @@ import {
   RealtimeRedeemPayload,
   saveCompletedPairingLocally,
 } from '@/api/pairing';
+import { buildInviteChannelTopic } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
@@ -149,7 +150,7 @@ export default function PairScreen() {
     }
 
     const code = normalizeInviteCode(inviteRecord.invite_code);
-    const channelName = `keepit:invite:${code}`;
+    const channelName = buildInviteChannelTopic(code);
     const presencePayload: RealtimeInvitePresence = {
       couple: inviteRecord,
       hostProfile: user,
@@ -157,6 +158,7 @@ export default function PairScreen() {
 
     const room = client.channel(channelName, {
       config: {
+        private: true,
         broadcast: { ack: true, self: false },
         presence: { key: `host_${user.id}` },
       },

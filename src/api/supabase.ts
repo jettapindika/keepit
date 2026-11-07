@@ -13,14 +13,16 @@ export const isSupabaseConfigured = Boolean(
   SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 15
 );
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-  },
-});
+export const supabase = isSupabaseConfigured
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        storage: AsyncStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    })
+  : null;
 
 /**
  * Returns true when a PostgREST / Supabase RPC error indicates the SQL migration

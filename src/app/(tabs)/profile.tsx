@@ -50,7 +50,12 @@ const PRONOUN_PRESETS = ['she/her', 'he/him', 'they/them'] as const;
 function makeAvatarSvgDataUri(bgHex: string, glyph: string, label: string): string {
   const safeLabel = label.replace(/[<>"'&]/g, '');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><rect width="240" height="240" rx="120" fill="${bgHex}"/><circle cx="120" cy="120" r="106" fill="none" stroke="rgba(255,255,255,0.26)" stroke-width="5"/><text x="120" y="138" text-anchor="middle" font-family="system-ui, sans-serif" font-size="78" font-weight="800" fill="#FFFFFF">${glyph}</text><text x="120" y="205" text-anchor="middle" font-family="system-ui, sans-serif" font-size="18" font-weight="800" fill="#FFFFFF" opacity="0.9">${safeLabel}</text></svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  const bytes = new TextEncoder().encode(svg);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
 }
 
 const AVATAR_PRESETS = [

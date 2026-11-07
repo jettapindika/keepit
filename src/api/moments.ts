@@ -32,6 +32,15 @@ interface LocalMomentsState {
 
 export const DEFAULT_WARM_BLURHASH = 'LKO2?U%2Tw=w]~RBVZRi};RPxuwH';
 
+function toSvgDataUri(svg: string): string {
+  const bytes = new TextEncoder().encode(svg.trim());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
+}
+
 export function buildSimulatedDualPhotos(params: {
   authorLabel: string;
   sceneLabel: string;
@@ -108,8 +117,8 @@ export function buildSimulatedDualPhotos(params: {
     </svg>
   `;
 
-  const backDataUri = `data:image/svg+xml;utf8,${encodeURIComponent(backSvg.trim())}`;
-  const frontDataUri = `data:image/svg+xml;utf8,${encodeURIComponent(frontSvg.trim())}`;
+  const backDataUri = toSvgDataUri(backSvg);
+  const frontDataUri = toSvgDataUri(frontSvg);
 
   // If the user started from the front camera, primary frame is selfie and PIP is back lens
   if (params.primaryLens === 'front') {

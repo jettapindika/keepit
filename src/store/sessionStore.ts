@@ -235,46 +235,43 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       if (error) {
         if (/already registered|already exists/i.test(error.message)) {
-          // Try signing in directly with the provided password (bypassing email confirmation if not confirmed yet)
-          const { data: existingSignIn, error: existingErr } =
-            await supabase.auth.signInWithPassword({
-              email: cleanedEmail,
-              password,
-            });
-          if (existingSignIn?.user?.id) {
-            userId = existingSignIn.user.id;
-          } else if (existingErr && /Email not confirmed/i.test(existingErr.message)) {
-            userId = buildDeterministicEmailUserId(cleanedEmail);
-          } else {
-            throw new Error('An account with this email already exists. Sign in instead.');
-          }
-        } else if (
-          /confirmation|confirm|rate limit|too many requests|security purposes|sending/i.test(
-            error.message
-          )
-        ) {
-          // Do not block signup when email confirmation / SMTP rate limits occur
-          userId = buildDeterministicEmailUserId(cleanedEmail);
-        } else {
-          throw new Error(error.message || 'Could not create account.');
+          // Never guess credentials on signup: an existing account must go through
+          // the sign-in flow so we do not act as a password oracle / account hijack path.
+          throw new Error('An account with this email already exists. Sign in instead.');
         }
-      } else if (data?.user?.id) {
-        if (!data.session) {
-          // Attempt immediate sign-in, but never fail if email confirmation is pending
-          const { data: signInData } = await supabase.auth
-            .signInWithPassword({
-              email: cleanedEmail,
-              password,
-            })
-            .catch(() => ({ data: null }));
-          userId = signInData?.user?.id ?? data.user.id;
-        } else {
-          userId = data.user.id;
-        }
+        // Email-confirmation pending, SMTP rate limits, and similar provider errors must
+        // surface to the user instead of minting an unauthenticated local account.
+        throw new Error(error.message || 'Could not create account.');
+      }
+
+      if (!data?.user?.id) {
+        throw new Error('Could not create account. Please try again.');
+      }
+
+      if (data.session) {
+        userId = data.user.id;
       } else {
-        userId = buildDeterministicEmailUserId(cleanedEmail);
+        // Session absent => email confirmation is required by the provider.
+        // Try one immediate sign-in; when that fails the user must confirm first.
+        const { data: signInData, error: signInErr } = await supabase.auth
+          .signInWithPassword({
+            email: cleanedEmail,
+            password,
+          })
+          .catch(() => ({ data: null, error: null as never }));
+        if (signInData?.user?.id) {
+          userId = signInData.user.id;
+        } else {
+          const providerHint =
+            signInErr && /Email not confirmed/i.test(signInErr.message)
+              ? 'Check your inbox to confirm your email, then sign in.'
+              : 'Check your inbox to confirm your email, then sign in.';
+          throw new Error(providerHint);
+        }
       }
     } else {
+      // Offline / unconfigured Supabase: keep the deterministic local account so the
+      // app remains usable, but never mix it with a real Supabase identity.
       userId = buildDeterministicEmailUserId(cleanedEmail);
     }
     await clearAccountSpecificCacheKeys();
@@ -325,23 +322,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
 
       if (error || !data?.user) {
-        if (error && /Email not confirmed/i.test(error.message)) {
-          // Email confirmation is disabled for now: allow signing in without inbox verification
-          const savedRaw = await AsyncStorage.getItem(SESSION_STORAGE_KEY).catch(() => null);
-          const savedSlice: Partial<PersistedSessionSlice> | null = savedRaw
-            ? JSON.parse(savedRaw)
-            : null;
-          if (savedSlice?.email === cleanedEmail && savedSlice.user?.id) {
-            userId = savedSlice.user.id;
-            displayName = savedSlice.user.display_name || displayName;
-          } else {
-            userId = buildDeterministicEmailUserId(cleanedEmail);
-          }
-        } else if (error && /rate limit|too many requests/i.test(error.message)) {
+        if (error && /rate limit|too many requests/i.test(error.message)) {
           throw new Error('Too many sign-in attempts. Please wait a moment and try again.');
-        } else {
-          throw new Error('Incorrect email or password.');
         }
+        if (error && /Email not confirmed/i.test(error.message)) {
+          throw new Error('Confirm your email first. Check your inbox, then sign in.');
+        }
+        throw new Error('Incorrect email or password.');
       } else {
         userId = data.user.id;
         const metaName =
@@ -351,8 +338,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (metaName) displayName = metaName;
       }
     } else {
+      // Offline / unconfigured Supabase: deterministic local-only account.
       userId = buildDeterministicEmailUserId(cleanedEmail);
     }
+
 
     if (prevUserId && prevUserId !== userId) {
       await clearAccountSpecificCacheKeys();

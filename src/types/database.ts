@@ -127,6 +127,7 @@ export type PairingErrorCode =
   | 'SELF_INVITE_FORBIDDEN'
   | 'COUPLE_FULL'
   | 'CODE_EXPIRED'
+  | 'TOO_MANY_ATTEMPTS'
   | 'NETWORK_ERROR';
 
 export class PairingError extends Error {

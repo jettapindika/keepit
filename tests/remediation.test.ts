@@ -6,13 +6,14 @@
 // - P1-2: Friends Circle real lookup (no fabricated profiles), removal persistence without re-seeding, persistent friend post comments/reactions
 // - P1-3: Username uniqueness enforcement & Private Dump Account visibility enforcement
 // - P1-4: Post CRUD 5/day limit, retake replacement, location coordinate clearing on edit, comment deletion authorization, DM reaction toggle-off sync
-// - P2: Truthful widget pinning behavior & composite watermark SVG/export invariants
 
+// Offline/local-first mode is enforced in tests/register-loader.mjs BEFORE any
+// module (including src/api/supabase.ts) is evaluated — ESM import hoisting makes
+// in-file process.env assignments run too late.
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from 'node:fs';
 import { beforeEach, describe, it } from 'node:test';
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
@@ -58,9 +59,6 @@ import {
 } from '@/utils/momentExport';
 import { requestPinKeepItWidgetDetailed } from '../modules/keepit-widget-bridge';
 
-// Force offline/local-first mode during unit tests so tests never depend on external network reachability
-process.env.EXPO_PUBLIC_SUPABASE_URL = 'offline';
-process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = '';
 
 async function resetAllState() {
   const storeWithClear = AsyncStorage as unknown as {
@@ -816,6 +814,90 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       mapSrc.includes('basemaps.cartocdn.com'),
       true,
       'InteractiveCoupleMap should use CartoDB basemaps for unblocked light/dark street tiles'
+    );
+  });
+
+  it('secures Realtime channels as private and throttles invite redemption server-side', () => {
+    const realtimeSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/api/realtimeSync.ts'),
+      'utf8'
+    );
+    const pairingSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/api/pairing.ts'),
+      'utf8'
+    );
+    const pairingHookSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/hooks/useRealtimePairing.ts'),
+      'utf8'
+    );
+    const pairScreenSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/(auth)/pair.tsx'),
+      'utf8'
+    );
+    const socialSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/api/social.ts'),
+      'utf8'
+    );
+    const migrationSql = fs.readFileSync(
+      path.resolve(process.cwd(), 'supabase/migrations/0006_realtime_channel_security.sql'),
+      'utf8'
+    );
+
+    // 1. Every custom channel topic is private-prefixed and the channel is created with
+    //    config.private so Supabase enforces realtime.messages RLS before join/broadcast.
+    assert.ok(realtimeSrc.includes('private-keepit:couple_sync:'));
+    assert.ok(realtimeSrc.includes('private-keepit:invite:'));
+    assert.ok(realtimeSrc.includes('private-keepit:dm_sync:'));
+    assert.ok(
+      realtimeSrc.includes('private: true'),
+      'broadcastCoupleSync fallback channel must declare config.private: true'
+    );
+    assert.ok(
+      pairingHookSrc.includes('buildCoupleSyncChannelTopic(coupleId)') &&
+        pairingHookSrc.includes('private: true'),
+      'useRealtimePairing must join the private couple sync channel'
+    );
+    assert.ok(
+      pairingSrc.includes('buildInviteChannelTopic(params.cleanedCode)') &&
+        pairingSrc.includes('private: true'),
+      'invite redemption room must be a private channel'
+    );
+    assert.ok(
+      pairScreenSrc.includes('buildInviteChannelTopic(code)') &&
+        pairScreenSrc.includes('private: true'),
+      'invite host room on the pair screen must be a private channel'
+    );
+    assert.ok(
+      socialSrc.includes('buildDirectMessageSyncChannelTopic(convId)'),
+      'DM sync broadcasts must use the private DM topic builder'
+    );
+
+    // 2. No ad hoc un-prefixed channel topics remain anywhere.
+    for (const [name, src] of [
+      ['realtimeSync', realtimeSrc],
+      ['useRealtimePairing', pairingHookSrc],
+      ['pairing', pairingSrc],
+      ['pair screen', pairScreenSrc],
+      ['social', socialSrc],
+    ] as const) {
+      assert.equal(
+        /channel\(`keepit:/.test(src) || /`conv_\$\{/.test(src),
+        false,
+        `${name} must not create un-prefixed public realtime channels`
+      );
+    }
+
+    // 3. Server side: realtime.messages is RLS-guarded by topic membership.
+    assert.ok(migrationSql.includes('alter table realtime.messages enable row level security'));
+    assert.ok(migrationSql.includes('realtime_messages_authorized'));
+    assert.ok(migrationSql.includes('user_authorized_for_realtime_topic'));
+
+    // 4. Server side: invite redemption is throttled and single-use.
+    assert.ok(migrationSql.includes('invite_redeem_attempts'));
+    assert.ok(migrationSql.includes('TOO_MANY_ATTEMPTS'));
+    assert.ok(
+      migrationSql.includes('invite_code = public.generate_invite_code()'),
+      'redeem must rotate the invite code so a redeemed code cannot be replayed'
     );
   });
 });

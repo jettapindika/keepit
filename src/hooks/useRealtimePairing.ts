@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { saveCompletedPairingLocally } from '@/api/pairing';
 import {
   applyIncomingCouplePacket,
+  buildCoupleSyncChannelTopic,
   CoupleSyncPacket,
   registerActiveCoupleChannel,
 } from '@/api/realtimeSync';
@@ -54,8 +55,9 @@ export function useRealtimePairing() {
       return;
     }
 
-    const syncChannel = client.channel(`keepit:couple_sync:${coupleId}`, {
+    const syncChannel = client.channel(buildCoupleSyncChannelTopic(coupleId), {
       config: {
+        private: true,
         broadcast: { ack: false, self: false },
         presence: { key: user.id },
       },

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { broadcastCoupleSync } from '@/api/realtimeSync';
+import { buildInviteChannelTopic, broadcastCoupleSync } from '@/api/realtimeSync';
 import { buildDefaultUsername, buildFriendCode } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
@@ -38,6 +38,7 @@ const KNOWN_ERROR_MESSAGES: Record<PairingErrorCode, string> = {
   SELF_INVITE_FORBIDDEN: 'That is your own invite code. Share it with your partner instead.',
   COUPLE_FULL: 'This couple space already has 2 partners.',
   CODE_EXPIRED: 'This invite code expired. Ask your partner to tap Refresh Code.',
+  TOO_MANY_ATTEMPTS: 'Too many attempts. Wait a few minutes before trying another code.',
   NETWORK_ERROR: 'Could not reach KeepIt servers. Check your connection and try again.',
 };
 
@@ -137,9 +138,10 @@ async function tryRedeemViaRealtimeRoom(params: {
 }): Promise<PairingSnapshot | null> {
   if (!isSupabaseConfigured || !supabase) return null;
   const client = supabase;
-  const channelName = `keepit:invite:${params.cleanedCode}`;
+  const channelName = buildInviteChannelTopic(params.cleanedCode);
   const room = client.channel(channelName, {
     config: {
+      private: true,
       broadcast: { ack: true, self: false },
       presence: { key: `joiner_${params.joinerProfile.id}` },
     },
