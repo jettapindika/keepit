@@ -902,20 +902,29 @@ export function DualMomentCard({
   const remainingRetakes = Math.max(0, 2 - retakeCount);
 
   return (
-    <View style={{ gap: 12 }}>
-      <SectionHeader
-        title={authorName}
-        subtitle={`${timeFormatted}${isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}${moment?.daily_index ? ` · Moment ${moment.daily_index} of 5` : ''}`}
-      />
+    <View
+      style={[
+        styles.postCard,
+        {
+          backgroundColor: colors.surface,
+          borderColor:
+            localFilterPreset !== 'normal' ? filterMeta.borderAccent : colors.border,
+          borderRadius: radii.card,
+        },
+      ]}>
+      <View style={styles.postHeader}>
+        <SectionHeader
+          title={authorName}
+          subtitle={`${timeFormatted}${isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}${moment?.daily_index ? ` · Moment ${moment.daily_index} of 5` : ''}`}
+        />
+      </View>
       {/* Main 3:4 Photo Container */}
       <View
         style={[
           styles.photoFrame,
           {
-            backgroundColor: colors.surface,
-            borderColor:
-              localFilterPreset !== 'normal' ? filterMeta.borderAccent : colors.border,
-            borderRadius: radii.photo,
+            backgroundColor: colors.surfaceElevated,
+            borderColor: colors.border,
           },
         ]}>
         {isSnapExpiredForViewer ? (
@@ -1323,25 +1332,24 @@ export function DualMomentCard({
         )}
       </View>
 
-      {/* Minimal 1-Line Caption Strip Outside Photo */}
+      {/* Connected 1-Line Caption + Right-Corner Holdable Reaction Button Below Photo */}
       {!isSnapLockedForViewer && !isSnapExpiredForViewer ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            localCaption
-              ? `Caption: ${localCaption}. Tap to open comments and Moment actions`
-              : 'Open comments and Moment actions'
-          }
-          onPress={openHubSheet}
+        <View
           style={[
             styles.compactCaptionStrip,
             {
               backgroundColor: colors.surface,
-              borderColor: colors.border,
-              borderRadius: radii.input,
             },
           ]}>
-          <View style={styles.compactCaptionLeft}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              localCaption
+                ? `Caption: ${localCaption}. Tap to open comments and Moment actions`
+                : 'Open comments and Moment actions'
+            }
+            onPress={openHubSheet}
+            style={styles.compactCaptionLeft}>
             <Text
               numberOfLines={1}
               ellipsizeMode="tail"
@@ -1371,26 +1379,13 @@ export function DualMomentCard({
                   .join(' · ')}
               </Text>
             ) : null}
-          </View>
+          </Pressable>
           <View style={styles.compactCaptionRight}>
-            {totalReactionsCount > 0 ? (
-              <View
-                style={[
-                  styles.compactSummaryBadge,
-                  {
-                    backgroundColor: myReactionEmoji ? colors.accentSoft : colors.surfaceElevated,
-                    borderColor: myReactionEmoji ? colors.accent : colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <ReactionGlyph emoji={topReactionEmoji ?? '❤️'} size={14} tintColor={colors.ink} />
-                <Text style={[styles.compactSummaryCount, { color: colors.ink }]}>
-                  {totalReactionsCount}
-                </Text>
-              </View>
-            ) : null}
             {localComments.length > 0 ? (
-              <View
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${localComments.length} ${localComments.length === 1 ? 'reply' : 'replies'}. Tap to view comments`}
+                onPress={openHubSheet}
                 style={[
                   styles.compactSummaryBadge,
                   {
@@ -1402,11 +1397,54 @@ export function DualMomentCard({
                 <Text style={[styles.compactSummaryCount, { color: colors.ink }]}>
                   {localComments.length} {localComments.length === 1 ? 'reply' : 'replies'}
                 </Text>
-              </View>
+              </Pressable>
             ) : null}
-            <Text style={[styles.compactOpenLabel, { color: colors.inkMuted }]}>More</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                myReactionEmoji
+                  ? `Your reaction ${myReactionEmoji}. Tap to toggle or hold for more reactions`
+                  : 'Tap to like or hold to choose a reaction'
+              }
+              accessibilityHint="Long press to open reaction picker"
+              accessibilityState={{
+                selected: Boolean(myReactionEmoji),
+                expanded: radialOpen,
+                busy: savingReaction,
+                disabled: savingReaction,
+              }}
+              disabled={savingReaction}
+              delayLongPress={220}
+              onLongPress={openRadialFan}
+              onPress={() => {
+                if (radialOpen) {
+                  closeRadialFan();
+                  return;
+                }
+                void handleToggleReaction(myReactionEmoji ?? '❤️');
+              }}
+              style={[
+                styles.belowCornerReactionBtn,
+                {
+                  backgroundColor: myReactionEmoji ? colors.accentSoft : colors.surfaceElevated,
+                  borderColor:
+                    myReactionEmoji || radialOpen ? colors.accent : colors.controlBorder,
+                  borderRadius: radii.pill,
+                },
+              ]}>
+              <ReactionGlyph
+                emoji={myReactionEmoji ?? topReactionEmoji ?? '❤️'}
+                size={16}
+                tintColor={colors.ink}
+              />
+              {totalReactionsCount > 0 ? (
+                <Text style={[styles.compactSummaryCount, { color: colors.ink }]}>
+                  {totalReactionsCount}
+                </Text>
+              ) : null}
+            </Pressable>
           </View>
-        </Pressable>
+        </View>
       ) : null}
 
       {actionError && !hubOpen ? <InlineNotice message={actionError} tone="error" /> : null}
@@ -2401,13 +2439,22 @@ export function LockedMomentCard({
 
 const styles = StyleSheet.create({
   confirmDialog: { width: '100%', maxWidth: 520, alignSelf: 'center', padding: 20, gap: 16 },
+  postCard: {
+    borderWidth: 1.5,
+    overflow: 'hidden',
+    borderCurve: 'continuous',
+  },
+  postHeader: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
   photoFrame: {
     width: '100%',
     aspectRatio: 0.75,
-    borderWidth: 1.5,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
     overflow: 'hidden',
     position: 'relative',
-    borderCurve: 'continuous',
   },
   fullImage: {
     width: '100%',
@@ -2611,14 +2658,24 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
   compactCaptionStrip: {
-    minHeight: 48,
-    borderWidth: 1,
+    minHeight: 52,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+  },
+  belowCornerReactionBtn: {
+    minHeight: 40,
+    minWidth: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
     borderCurve: 'continuous',
   },
   compactCaptionLeft: {
