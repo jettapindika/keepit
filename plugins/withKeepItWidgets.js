@@ -7,6 +7,7 @@ const {
   withAppBuildGradle,
   withDangerousMod,
   withEntitlementsPlist,
+  withGradleProperties,
   withStringsXml,
 } = require('expo/config-plugins');
 
@@ -135,17 +136,27 @@ function withAndroidWidgetStrings(config) {
   });
 }
 
-function withAndroidGlanceDependencies(config) {
-  return withAppBuildGradle(config, (modConfig) => {
-    if (modConfig.modResults.language === 'groovy') {
-      const glanceDependency = 'implementation("androidx.glance:glance-appwidget:1.1.1")';
-      if (!modConfig.modResults.contents.includes('androidx.glance:glance-appwidget')) {
-        modConfig.modResults.contents = modConfig.modResults.contents.replace(
-          /dependencies\s*\{/,
-          `dependencies {\n    ${glanceDependency}`
-        );
+function withAndroidSizeAndAbiOptimizations(config) {
+  return withGradleProperties(config, (modConfig) => {
+    const setProp = (key, value) => {
+      const idx = modConfig.modResults.findIndex(
+        (item) => item.type === 'property' && item.key === key
+      );
+      if (idx >= 0) {
+        modConfig.modResults[idx].value = value;
+      } else {
+        modConfig.modResults.push({ type: 'property', key, value });
       }
-    }
+    };
+    // Target physical 32-bit + 64-bit ARM devices (cuts ~61 MB of desktop Intel x86/x86_64 emulator binaries)
+    setProp('reactNativeArchitectures', 'armeabi-v7a,arm64-v8a');
+    // Compress native .so libraries inside the APK (cuts ~55% of .so download size)
+    setProp('expo.useLegacyPackaging', 'true');
+    // Enable resource shrinking alongside R8 minification
+    setProp('android.enableShrinkResourcesInReleaseBuilds', 'true');
+    // Set targetSdk 35 so Android 12–15 PackageParser (e.g. Samsung Galaxy A05s OneUI)
+    // accepts the package while keeping compileSdk 37 required by Expo 58 AndroidX libraries
+    setProp('android.targetSdkVersion', '35');
     return modConfig;
   });
 }
@@ -236,7 +247,7 @@ function withKeepItWidgets(config, props = {}) {
   nextConfig = withIosWidgetTargetFiles(nextConfig, appGroupId);
   nextConfig = withAndroidWidgetStrings(nextConfig);
   nextConfig = withAndroidWidgetManifest(nextConfig);
-  nextConfig = withAndroidGlanceDependencies(nextConfig);
+  nextConfig = withAndroidSizeAndAbiOptimizations(nextConfig);
   nextConfig = withAndroidWidgetResources(nextConfig);
   return nextConfig;
 }
