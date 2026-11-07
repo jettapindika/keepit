@@ -1,8 +1,10 @@
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
+import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
   Linking,
   Platform,
@@ -68,6 +70,49 @@ import {
 
 const QUICK_REACTION_EMOJIS = ['❤️', '🔥', '🥹', '😂', '👏'] as const;
 const OVERLAY_STICKER_EMOJIS = ['❤️‍🔥', '✨', '🥹', '☕️', '🫶', '🔥', '🌙', '🎧'] as const;
+
+const REACTION_SYMBOL_MAP: Record<
+  string,
+  { ios: string; android: string; web: string; label: string }
+> = {
+  '❤️': { ios: 'heart.fill', android: 'favorite', web: 'favorite', label: 'Love' },
+  '🔥': {
+    ios: 'flame.fill',
+    android: 'local_fire_department',
+    web: 'local_fire_department',
+    label: 'Fire',
+  },
+  '🥹': { ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome', label: 'Touched' },
+  '😂': {
+    ios: 'face.smiling',
+    android: 'sentiment_satisfied',
+    web: 'sentiment_satisfied',
+    label: 'Laugh',
+  },
+  '👏': { ios: 'Hands.clap.fill', android: 'celebration', web: 'celebration', label: 'Applause' },
+};
+
+function ReactionGlyph({
+  emoji,
+  size = 18,
+  tintColor,
+}: {
+  emoji: string;
+  size?: number;
+  tintColor: string;
+}) {
+  const spec = REACTION_SYMBOL_MAP[emoji];
+  if (!spec) {
+    return <Text style={{ fontSize: size, color: tintColor }}>{emoji}</Text>;
+  }
+  return (
+    <SymbolView
+      name={{ ios: spec.ios as never, android: spec.android as never, web: spec.web as never }}
+      tintColor={tintColor}
+      size={size}
+    />
+  );
+}
 
 export interface DualMomentCardProps {
   authorName?: string;
@@ -402,9 +447,17 @@ export function DualMomentCard({
   const [storySharing, setStorySharing] = useState(false);
   const [pendingDeleteComment, setPendingDeleteComment] = useState<string | null>(null);
   const [discardEdits, setDiscardEdits] = useState(false);
+  const [hubOpen, setHubOpen] = useState(false);
+  const [radialOpen, setRadialOpen] = useState(false);
   const pipScale = useSharedValue(1);
   const pipStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pipScale.get() }],
+  }));
+  const radialScale = useSharedValue(0.95);
+  const radialOpacity = useSharedValue(0);
+  const radialAnimStyle = useAnimatedStyle(() => ({
+    opacity: radialOpacity.get(),
+    transform: [{ scale: radialScale.get() }],
   }));
 
   const filterMeta = getFilterPresetMeta(localFilterPreset);
@@ -419,6 +472,73 @@ export function DualMomentCard({
     }
     setSwapped((prev) => !prev);
   };
+
+  const openRadialFan = () => {
+    if (isSnapLockedForViewer || isSnapExpiredForViewer) return;
+    if (Platform.OS !== 'web') {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setRadialOpen(true);
+    if (motionEnabled) {
+      radialScale.set(0.92);
+      radialOpacity.set(0);
+      radialScale.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+      radialOpacity.set(withSpring(1, MOCHY_SPRINGS.popIn(motionSpeed)));
+    } else {
+      radialScale.set(1);
+      radialOpacity.set(1);
+    }
+  };
+
+  const closeRadialFan = () => {
+    setRadialOpen(false);
+  };
+
+  const openHubSheet = () => {
+    setRadialOpen(false);
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync();
+    }
+    setHubOpen(true);
+  };
+
+  const closeHubSheet = () => {
+    if (savingCrud || deletingPost) return;
+    if (editing) {
+      const isDirty =
+        draftCaption !== (localCaption ?? '') ||
+        draftFilter !== localFilterPreset ||
+        draftLocation !== (localLocationLabel ?? '') ||
+        (draftMusic?.id ?? null) !== (localMusicTrack?.id ?? null) ||
+        draftOverlays.length !== localOverlays.length ||
+        draftTaggedUsers.length !== localTaggedUsers.length ||
+        draftSnapOnce !== localSnapOnce;
+      if (isDirty) {
+        setDiscardEdits(true);
+        return;
+      }
+      setEditing(false);
+    }
+    setConfirmingDelete(false);
+    setHubOpen(false);
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!radialOpen && !hubOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (radialOpen) {
+          setRadialOpen(false);
+        } else if (hubOpen && !storyModalOpen && !pendingDeleteComment && !discardEdits) {
+          closeHubSheet();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   const handleOpenEditor = () => {
     setDiscardEdits(false);
@@ -570,6 +690,7 @@ export function DualMomentCard({
         coupleId: effectiveCoupleId,
       });
       setEditing(false);
+      setHubOpen(false);
       await onDeleted?.(moment.id);
       await onUpdated?.();
     } catch (err) {
@@ -771,6 +892,14 @@ export function DualMomentCard({
   for (const emoji of Object.values(localReactions)) {
     reactionCounts[emoji] = (reactionCounts[emoji] ?? 0) + 1;
   }
+  const totalReactionsCount = Object.values(reactionCounts).reduce((acc, n) => acc + n, 0);
+  const myReactionEmoji = localReactions[effectiveUserId] ?? null;
+  const topReactionEmoji =
+    myReactionEmoji ??
+    Object.entries(reactionCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ??
+    null;
+  const totalActivityCount = totalReactionsCount + localComments.length;
+  const remainingRetakes = Math.max(0, 2 - retakeCount);
 
   return (
     <View style={{ gap: 12 }}>
@@ -1076,761 +1205,1010 @@ export function DualMomentCard({
               <KeepItWatermarkLogo width={76} color="#FFFFFF" />
               <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
             </View>
+
+            {/* Option A: Long-Press Radial Quick-Reaction Bar */}
+            {radialOpen ? (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss quick reactions"
+                  onPress={closeRadialFan}
+                  style={styles.radialDismissBackdrop}
+                />
+                <Animated.View
+                  accessibilityRole="toolbar"
+                  accessibilityLabel="Quick reactions"
+                  style={[
+                    styles.radialFanBar,
+                    {
+                      backgroundColor: 'rgba(20, 17, 19, 0.94)',
+                      borderColor: 'rgba(255, 255, 255, 0.28)',
+                      borderRadius: radii.pill,
+                    },
+                    radialAnimStyle,
+                  ]}>
+                  {QUICK_REACTION_EMOJIS.map((emoji) => {
+                    const selected = localReactions[effectiveUserId] === emoji;
+                    return (
+                      <Pressable
+                        key={emoji}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Quick react ${emoji}`}
+                        accessibilityState={{ selected, disabled: savingReaction }}
+                        disabled={savingReaction}
+                        onPress={() => {
+                          closeRadialFan();
+                          void handleToggleReaction(emoji);
+                        }}
+                        style={[
+                          styles.radialEmojiBtn,
+                          {
+                            backgroundColor: selected
+                              ? 'rgba(255, 255, 255, 0.22)'
+                              : 'transparent',
+                            borderColor: selected
+                              ? '#FFFFFF'
+                              : 'transparent',
+                            borderRadius: radii.pill,
+                          },
+                        ]}>
+                        <ReactionGlyph emoji={emoji} size={20} tintColor="#FFFFFF" />
+                      </Pressable>
+                    );
+                  })}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open full Moment interaction sheet"
+                    onPress={openHubSheet}
+                    style={[
+                      styles.radialMoreBtn,
+                      {
+                        backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                        borderColor: 'rgba(255, 255, 255, 0.28)',
+                        borderRadius: radii.pill,
+                      },
+                    ]}>
+                    <SymbolView
+                      name={{ ios: 'ellipsis', android: 'more_horiz', web: 'more_horiz' }}
+                      tintColor="#FFFFFF"
+                      size={18}
+                    />
+                  </Pressable>
+                </Animated.View>
+              </>
+            ) : null}
+
+            {/* Option A: Single 1-Icon Corner Interaction Hub */}
+            <View style={styles.cornerHubAnchor}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  totalActivityCount > 0
+                    ? `Moment actions, ${totalReactionsCount} reactions, ${localComments.length} comments. Tap for menu, hold for quick reactions`
+                    : 'Moment actions: react, comment, edit, retake, or share. Tap for menu, hold for quick reactions'
+                }
+                accessibilityHint="Tap to open Moment actions sheet, or long press to quick react"
+                onPress={openHubSheet}
+                onLongPress={openRadialFan}
+                delayLongPress={220}
+                style={[
+                  styles.cornerHubBtn,
+                  {
+                    backgroundColor: 'rgba(16, 13, 15, 0.90)',
+                    borderColor: myReactionEmoji
+                      ? '#FFFFFF'
+                      : 'rgba(255, 255, 255, 0.34)',
+                    borderRadius: radii.pill,
+                  },
+                ]}>
+                {topReactionEmoji ? (
+                  <ReactionGlyph emoji={topReactionEmoji} size={18} tintColor="#FFFFFF" />
+                ) : (
+                  <SymbolView
+                    name={{
+                      ios: 'ellipsis',
+                      android: 'more_horiz',
+                      web: 'more_horiz',
+                    }}
+                    tintColor="#FFFFFF"
+                    size={19}
+                  />
+                )}
+                {totalActivityCount > 0 ? (
+                  <Text style={styles.cornerHubCountText}>{totalActivityCount}</Text>
+                ) : null}
+              </Pressable>
+            </View>
           </>
         )}
       </View>
 
-      {/* Caption + Rich Metadata + Social + CRUD + Share Card */}
-      <View
-        style={[
-          styles.metaCard,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderRadius: radii.card,
-            padding: spacing.lg,
-          },
-        ]}>
-        {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
-
-        {/* Location, Music & Tagged People Badges (Item #7 & #9) */}
-        {!isSnapLockedForViewer &&
-        !isSnapExpiredForViewer &&
-        (localLocationLabel || localMusicTrack || localTaggedUsers.length > 0) ? (
-          <View style={styles.attachmentChipsWrap}>
-            {localLocationLabel ? (
-              <View
-                style={[
-                  styles.attachmentChip,
-                  {
-                    backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  {localLocationLabel}
-                </Text>
-              </View>
+      {/* Minimal 1-Line Caption Strip Outside Photo */}
+      {!isSnapLockedForViewer && !isSnapExpiredForViewer ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            localCaption
+              ? `Caption: ${localCaption}. Tap to open comments and Moment actions`
+              : 'Open comments and Moment actions'
+          }
+          onPress={openHubSheet}
+          style={[
+            styles.compactCaptionStrip,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              borderRadius: radii.input,
+            },
+          ]}>
+          <View style={styles.compactCaptionLeft}>
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[
+                styles.compactCaptionText,
+                { color: localCaption ? colors.ink : colors.inkMuted },
+              ]}>
+              {localCaption
+                ? `“${localCaption}”`
+                : ownerFlag
+                  ? 'Add a note or manage Moment…'
+                  : 'Add a reaction or comment…'}
+            </Text>
+            {localLocationLabel || localMusicTrack || localTaggedUsers.length > 0 ? (
+              <Text
+                numberOfLines={1}
+                ellipsizeMode="tail"
+                style={[styles.compactContextMeta, { color: colors.inkMuted }]}>
+                {[
+                  localLocationLabel,
+                  localMusicTrack ? `${localMusicTrack.title} · ${localMusicTrack.artist}` : null,
+                  localTaggedUsers.length > 0
+                    ? localTaggedUsers.map((p) => `@${p.username}`).join(' ')
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
             ) : null}
-
-            {localMusicTrack ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Toggle music preview ${localMusicTrack.title}`}
-                onPress={() => {
-                  toggleMusicTrackPreview(localMusicTrack);
-                }}
-                style={[
-                  styles.attachmentChip,
-                  {
-                    backgroundColor: musicPlaying
-                      ? colors.accentSoft
-                      : colors.surfaceElevated,
-                    borderColor: musicPlaying ? colors.accent : colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  {musicPlaying ? 'Stop · ' : 'Play · '}
-                  {localMusicTrack.title} · {localMusicTrack.artist}
-                  {musicPlaying ? ' · Playing loop' : ''}
-                </Text>
-              </Pressable>
-            ) : null}
-
-            {localTaggedUsers.map((person) => (
-              <View
-                key={person.userId}
-                style={[
-                  styles.attachmentChip,
-                  {
-                    backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
-                  @{person.username}
-                </Text>
-              </View>
-            ))}
           </View>
-        ) : null}
+          <View style={styles.compactCaptionRight}>
+            {totalReactionsCount > 0 ? (
+              <View
+                style={[
+                  styles.compactSummaryBadge,
+                  {
+                    backgroundColor: myReactionEmoji ? colors.accentSoft : colors.surfaceElevated,
+                    borderColor: myReactionEmoji ? colors.accent : colors.border,
+                    borderRadius: radii.pill,
+                  },
+                ]}>
+                <ReactionGlyph emoji={topReactionEmoji ?? '❤️'} size={14} tintColor={colors.ink} />
+                <Text style={[styles.compactSummaryCount, { color: colors.ink }]}>
+                  {totalReactionsCount}
+                </Text>
+              </View>
+            ) : null}
+            {localComments.length > 0 ? (
+              <View
+                style={[
+                  styles.compactSummaryBadge,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.border,
+                    borderRadius: radii.pill,
+                  },
+                ]}>
+                <Text style={[styles.compactSummaryCount, { color: colors.ink }]}>
+                  {localComments.length} {localComments.length === 1 ? 'reply' : 'replies'}
+                </Text>
+              </View>
+            ) : null}
+            <Text style={[styles.compactOpenLabel, { color: colors.inkMuted }]}>More</Text>
+          </View>
+        </Pressable>
+      ) : null}
 
-        {/* Full Post CRUD Inline Editor for Owner (Item #11) */}
-        {editing ? (
+      {actionError && !hubOpen ? <InlineNotice message={actionError} tone="error" /> : null}
+      {actionBanner && !hubOpen ? <InlineNotice message={actionBanner} tone="success" /> : null}
+
+      {/* Unified Single-Icon Moment Interaction Sheet Modal */}
+      <Modal
+        visible={hubOpen}
+        animationType={motionEnabled ? 'slide' : 'none'}
+        transparent
+        onRequestClose={closeHubSheet}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.hubModalBackdrop}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close Moment actions sheet"
+            onPress={closeHubSheet}
+            style={StyleSheet.absoluteFill}
+          />
           <View
+            accessibilityViewIsModal
             style={[
-              styles.editorPanel,
+              styles.hubSheetContainer,
               {
-                backgroundColor: colors.surfaceElevated,
+                backgroundColor: colors.sheetSurface,
                 borderColor: colors.border,
-                borderRadius: radii.input,
+                borderRadius: radii.group,
               },
             ]}>
-            <Text style={[styles.editorSectionTitle, { color: colors.ink }]}>
-              Edit / Manage Moment
-            </Text>
+            <View style={[styles.hubGrabber, { backgroundColor: colors.controlBorder }]} />
 
-            {crudError ? <InlineNotice message={crudError} tone="error" /> : null}
-
-            <View style={{ gap: 6 }}>
-              <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>Caption</Text>
-              <TextInput
-                accessibilityLabel="Edit Moment caption"
-                editable={!savingCrud && !deletingPost}
-                value={draftCaption}
-                maxLength={160}
-                placeholder="Add a caption (up to 160 chars)..."
-                placeholderTextColor={colors.inkMuted}
-                onChangeText={setDraftCaption}
-                style={[
-                  styles.captionInput,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.controlBorder,
-                    color: colors.ink,
-                    borderRadius: radii.input,
-                  },
-                ]}
-              />
-            </View>
-
-            {/* Filter Preset Selector */}
-            <View style={{ gap: 6 }}>
-              <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
-                Filter Preset
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalPillsRow}>
-                {MOMENT_FILTER_PRESETS.map((preset) => {
-                  const active = draftFilter === preset.id;
-                  return (
-                    <Pressable
-                      key={preset.id}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
-                      disabled={savingCrud || deletingPost}
-                      onPress={() => setDraftFilter(preset.id)}
-                      style={[
-                        styles.OptionPill,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.controlBorder,
-                          borderRadius: radii.input,
-                        },
-                      ]}>
-                      <Text
-                        style={[
-                          styles.optionPillText,
-                          { color: active ? colors.onAccent : colors.ink },
-                        ]}>
-                        {preset.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Location Selector & Input */}
-            <View style={{ gap: 6 }}>
-              <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
-                Location Spot
-              </Text>
-              <TextInput
-                accessibilityLabel="Edit Moment location"
-                editable={!savingCrud && !deletingPost}
-                value={draftLocation}
-                placeholder="Custom location or choose below..."
-                placeholderTextColor={colors.inkMuted}
-                onChangeText={setDraftLocation}
-                style={[
-                  styles.captionInput,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.controlBorder,
-                    color: colors.ink,
-                    borderRadius: radii.input,
-                  },
-                ]}
-              />
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalPillsRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: !draftLocation }}
-                  disabled={savingCrud || deletingPost}
-                  onPress={() => setDraftLocation('')}
-                  style={[
-                    styles.OptionPill,
-                    {
-                      backgroundColor: !draftLocation ? colors.accent : colors.surface,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      styles.optionPillText,
-                      { color: !draftLocation ? colors.onAccent : colors.inkMuted },
-                    ]}>
-                    None
-                  </Text>
-                </Pressable>
-                {QUICK_LOCATION_PRESETS.map((loc) => {
-                  const active = draftLocation === loc.label;
-                  return (
-                    <Pressable
-                      key={loc.label}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
-                      disabled={savingCrud || deletingPost}
-                      onPress={() => setDraftLocation(loc.label)}
-                      style={[
-                        styles.OptionPill,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.controlBorder,
-                          borderRadius: radii.input,
-                        },
-                      ]}>
-                      <Text
-                        style={[
-                          styles.optionPillText,
-                          { color: active ? colors.onAccent : colors.ink },
-                        ]}>
-                        {loc.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Music Track Selector */}
-            <View style={{ gap: 6 }}>
-              <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
-                Music Attachment
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalPillsRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: !draftMusic }}
-                  disabled={savingCrud || deletingPost}
-                  onPress={() => setDraftMusic(null)}
-                  style={[
-                    styles.OptionPill,
-                    {
-                      backgroundColor: !draftMusic ? colors.accent : colors.surface,
-                      borderColor: colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      styles.optionPillText,
-                      { color: !draftMusic ? colors.onAccent : colors.inkMuted },
-                    ]}>
-                    No Music
-                  </Text>
-                </Pressable>
-                {CURATED_MUSIC_TRACKS.map((trk) => {
-                  const active = draftMusic?.id === trk.id;
-                  return (
-                    <Pressable
-                      key={trk.id}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
-                      disabled={savingCrud || deletingPost}
-                      onPress={() => setDraftMusic(trk)}
-                      style={[
-                        styles.OptionPill,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.controlBorder,
-                          borderRadius: radii.input,
-                        },
-                      ]}>
-                      <Text
-                        style={[
-                          styles.optionPillText,
-                          { color: active ? colors.onAccent : colors.ink },
-                        ]}>
-                        {trk.title} · {trk.artist}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Tag People Editor */}
-            <View style={{ gap: 6 }}>
-              <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
-                Tagged People ({draftTaggedUsers.length})
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalPillsRow}>
-                {availableTagCandidates.map((person) => {
-                  const active = draftTaggedUsers.some((t) => t.userId === person.userId);
-                  return (
-                    <Pressable
-                      key={person.userId}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
-                      disabled={savingCrud || deletingPost}
-                      onPress={() => handleToggleDraftTag(person)}
-                      style={[
-                        styles.OptionPill,
-                        {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.controlBorder,
-                          borderRadius: radii.input,
-                        },
-                      ]}>
-                      <Text
-                        style={[
-                          styles.optionPillText,
-                          { color: active ? colors.onAccent : colors.ink },
-                        ]}>
-                        @{person.username} {active ? '✓' : '+'}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* On-Photo Emoji & Text Overlays Editor */}
-            <View style={{ gap: 6 }}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={[styles.hubSheetScrollContent, { padding: spacing.lg }]}>
               <View style={styles.metaTopRow}>
-                <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
-                  On-Photo Stickers & Text ({draftOverlays.length})
-                </Text>
-                {draftOverlays.length > 0 ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={savingCrud || deletingPost}
-                    onPress={() => setDraftOverlays([])}
-                    style={styles.clearOverlaysBtn}>
-                    <Text style={[styles.clearOverlaysText, { color: colors.danger }]}>
-                      Clear overlays
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.horizontalPillsRow}>
-                {OVERLAY_STICKER_EMOJIS.map((emoji) => (
-                  <Pressable
-                    key={emoji}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Add ${emoji} sticker overlay`}
-                    disabled={savingCrud || deletingPost}
-                    onPress={() => handleAddEmojiOverlay(emoji)}
-                    style={[
-                      styles.emojiStickerBtn,
-                      {
-                        backgroundColor: colors.surface,
-                        borderColor: colors.border,
-                        borderRadius: radii.pill,
-                      },
-                    ]}>
-                    <Text style={styles.emojiStickerBtnText}>+ {emoji}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-
-              <View style={styles.overlayInputRow}>
-                <TextInput
-                  accessibilityLabel="New text overlay"
-                  editable={!savingCrud && !deletingPost}
-                  value={draftOverlayText}
-                  placeholder="Add text banner on photo..."
-                  placeholderTextColor={colors.inkMuted}
-                  onChangeText={setDraftOverlayText}
-                  style={[
-                    styles.captionInput,
-                    {
-                      flex: 1,
-                      backgroundColor: colors.surface,
-                      borderColor: colors.controlBorder,
-                      color: colors.ink,
-                      borderRadius: radii.input,
-                    },
-                  ]}
-                />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.storyModalTitle, { color: colors.ink }]}>
+                    {authorName}’s Moment
+                  </Text>
+                  <Text style={[styles.storyModalSub, { color: colors.inkMuted }]}>
+                    {timeFormatted}{isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}
+                    {retakeCount > 0 ? ` · ${retakeCount} ${retakeCount === 1 ? 'retake' : 'retakes'}` : ''}
+                  </Text>
+                </View>
                 <Pressable
                   accessibilityRole="button"
-                  disabled={savingCrud || deletingPost || !draftOverlayText.trim()}
-                  onPress={handleAddTextOverlay}
+                  accessibilityLabel="Close Moment interaction sheet"
+                  disabled={savingCrud || deletingPost}
+                  onPress={closeHubSheet}
                   style={[
                     styles.smallActionChip,
                     {
-                      backgroundColor: colors.accent,
-                      borderColor: colors.accent,
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.controlBorder,
                       borderRadius: radii.input,
                     },
                   ]}>
-                  <Text style={[styles.smallActionText, { color: colors.onAccent }]}>
-                    + Text
-                  </Text>
+                  <Text style={[styles.smallActionText, { color: colors.ink }]}>Done</Text>
                 </Pressable>
               </View>
 
-              <View style={[styles.horizontalPillsRow, { flexDirection: 'row', flexWrap: 'wrap' }]}>
-                {(['glass', 'solid', 'neon'] as const).map((st) => {
-                  const active = draftOverlayBgStyle === st;
+              {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
+              {actionBanner ? <InlineNotice message={actionBanner} tone="success" /> : null}
+
+              {/* Quick Emoji Reactions Row */}
+              <View style={styles.reactionRow}>
+                {QUICK_REACTION_EMOJIS.map((emoji) => {
+                  const count = reactionCounts[emoji] ?? 0;
+                  const selected = localReactions[effectiveUserId] === emoji;
                   return (
                     <Pressable
-                      key={st}
+                      key={emoji}
                       accessibilityRole="button"
-                      accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
-                      disabled={savingCrud || deletingPost}
-                      onPress={() => setDraftOverlayBgStyle(st)}
+                      accessibilityLabel={`React with ${emoji}`}
+                      accessibilityState={{ selected, busy: savingReaction, disabled: savingReaction }}
+                      disabled={savingReaction}
+                      onPress={() => void handleToggleReaction(emoji)}
                       style={[
-                        styles.OptionPill,
+                        styles.reactionChip,
                         {
-                          backgroundColor: active ? colors.accent : colors.surface,
-                          borderColor: active ? colors.accent : colors.controlBorder,
-                          borderRadius: radii.input,
+                          backgroundColor: selected
+                            ? colors.accentSoft
+                            : colors.surfaceElevated,
+                          borderColor: selected ? colors.accent : colors.border,
+                          borderRadius: radii.pill,
                         },
                       ]}>
-                      <Text
-                        style={[
-                          styles.optionPillText,
-                          { color: active ? colors.onAccent : colors.ink },
-                        ]}>
-                        {st.toUpperCase()}
-                      </Text>
+                      <ReactionGlyph emoji={emoji} size={18} tintColor={colors.ink} />
+                      {count > 0 ? (
+                        <Text style={[styles.reactionCount, { color: colors.ink }]}>
+                          {count}
+                        </Text>
+                      ) : null}
                     </Pressable>
                   );
                 })}
               </View>
-            </View>
 
-            {/* Snap Once Toggle */}
-            <View style={styles.snapSwitchRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.editorSectionTitle, { color: colors.ink, fontSize: 14 }]}>
-                  Snap Once (15s Disappearing)
-                </Text>
-                <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
-                  Expires 15 seconds after your partner or friend opens it
-                </Text>
-              </View>
-              <Switch
-                accessibilityLabel="Snap Once, disappears 15 seconds after opening"
-                disabled={savingCrud || deletingPost}
-                value={draftSnapOnce}
-                onValueChange={setDraftSnapOnce}
-              />
-            </View>
-
-            <View style={styles.editActionsRow}>
-              <KeepItButton
-                label="Save Changes"
-                loading={savingCrud}
-                disabled={deletingPost}
-                onPress={() => void handleSaveEditor()}
-                style={{ flex: 1 }}
-              />
-              <KeepItButton
-                label="Cancel"
-                variant="secondary"
-                disabled={savingCrud || deletingPost}
-                onPress={() => setDiscardEdits(true)}
-                style={{ flex: 1 }}
-              />
-            </View>
-
-            {/* Delete Post with Confirmation */}
-            {moment?.id ? (
-              confirmingDelete ? (
-                <View
-                  style={[
-                    styles.deleteConfirmBox,
-                    {
-                      backgroundColor: colors.dangerSoft,
-                      borderColor: colors.danger,
-                      borderRadius: radii.input,
-                    },
-                  ]}>
-                  <Text style={[styles.deleteConfirmText, { color: colors.danger }]}>
-                    Delete this Moment permanently? This cannot be undone.
-                  </Text>
-                  <View style={styles.editActionsRow}>
-                    <KeepItButton
-                      label="Confirm Delete"
-                      variant="danger"
-                      loading={deletingPost}
-                      onPress={() => void handleConfirmDelete()}
-                      style={{ flex: 1 }}
-                    />
-                    <KeepItButton
-                      label="Keep Post"
-                      variant="secondary"
-                      disabled={deletingPost}
-                      onPress={() => setConfirmingDelete(false)}
-                      style={{ flex: 1 }}
-                    />
-                  </View>
-                </View>
-              ) : (
-                <KeepItButton
-                  label="Delete Post"
-                  variant="danger"
-                  disabled={savingCrud}
-                  onPress={() => setConfirmingDelete(true)}
-                />
-              )
-            ) : null}
-          </View>
-        ) : (
-          <View style={styles.captionRow}>
-            <Text
-              style={[
-                styles.captionText,
-                { color: localCaption && !isSnapLockedForViewer && !isSnapExpiredForViewer ? colors.ink : colors.inkMuted },
-              ]}>
-              {isSnapExpiredForViewer
-                ? 'Snap Once expired · Caption & media removed.'
-                : isSnapLockedForViewer
-                  ? 'Unlock Snap Once above to view note.'
-                  : localCaption
-                    ? `“${localCaption}”`
-                    : 'No note added.'}
-            </Text>
-
-            <View style={styles.inlineButtonRow}>
-              {ownerFlag || editableCaption ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Edit or manage Moment"
-                  onPress={handleOpenEditor}
-                  style={[
-                    styles.smallActionChip,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.controlBorder,
-                      borderRadius: radii.input,
-                    },
-                  ]}>
-                  <Text style={[styles.smallActionText, { color: colors.ink }]}>
-                    Edit / Manage
-                  </Text>
-                </Pressable>
-              ) : null}
-
-              {canRetake && onRetake ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Retake today's Moment"
-                  onPress={onRetake}
-                  style={[
-                    styles.smallActionChip,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.controlBorder,
-                      borderRadius: radii.input,
-                    },
-                  ]}>
-                  <Text style={[styles.smallActionText, { color: colors.accent }]}>
-                    Retake ({Math.max(0, 2 - retakeCount)} left)
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-        )}
-
-        {/* Quick Emoji Reactions Bar (Item #13) */}
-        <View style={styles.reactionRow}>
-          {QUICK_REACTION_EMOJIS.map((emoji) => {
-            const count = reactionCounts[emoji] ?? 0;
-            const selected = localReactions[effectiveUserId] === emoji;
-            return (
-              <Pressable
-                key={emoji}
-                accessibilityRole="button"
-                accessibilityLabel={`React with ${emoji}`}
-                accessibilityState={{ selected, busy: savingReaction, disabled: savingReaction }}
-                disabled={savingReaction}
-                onPress={() => void handleToggleReaction(emoji)}
-                style={[
-                  styles.reactionChip,
-                  {
-                    backgroundColor: selected
-                      ? colors.accentSoft
-                      : colors.surfaceElevated,
-                    borderColor: selected ? colors.accent : colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={styles.reactionEmoji}>{emoji}</Text>
-                {count > 0 ? (
-                  <Text style={[styles.reactionCount, { color: colors.ink }]}>
-                    {count}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Comments List & Inline Input (Item #13) */}
-        <View style={styles.commentsSection}>
-          {localComments.length > 0 ? (
-            <View style={{ gap: 6 }}>
-              {localComments.map((cmt) => {
-                const canDeleteCmt =
-                  cmt.author_id === effectiveUserId || ownerFlag;
-                return (
-                  <View
-                    key={cmt.id}
-                    style={[
-                      styles.commentBubble,
-                      {
-                        backgroundColor: colors.surfaceElevated,
-                        borderColor: colors.border,
-                        borderRadius: radii.input,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                      },
-                    ]}>
-                    <Text style={[styles.commentAuthor, { color: colors.ink, flex: 1 }]}>
-                      {cmt.author_name}
-                      {cmt.author_username ? ` (@${cmt.author_username})` : ''}:{' '}
-                      <Text style={[styles.commentBody, { color: colors.ink }]}>
-                        {cmt.text}
+              {/* Location, Music & Tagged People Badges */}
+              {!isSnapLockedForViewer &&
+              !isSnapExpiredForViewer &&
+              (localLocationLabel || localMusicTrack || localTaggedUsers.length > 0) ? (
+                <View style={styles.attachmentChipsWrap}>
+                  {localLocationLabel ? (
+                    <View
+                      style={[
+                        styles.attachmentChip,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
+                        {localLocationLabel}
                       </Text>
-                    </Text>
-                    {canDeleteCmt ? (
+                    </View>
+                  ) : null}
+
+                  {localMusicTrack ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Toggle music preview ${localMusicTrack.title}`}
+                      onPress={() => {
+                        toggleMusicTrackPreview(localMusicTrack);
+                      }}
+                      style={[
+                        styles.attachmentChip,
+                        {
+                          backgroundColor: musicPlaying
+                            ? colors.accentSoft
+                            : colors.surfaceElevated,
+                          borderColor: musicPlaying ? colors.accent : colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
+                        {musicPlaying ? 'Stop · ' : 'Play · '}
+                        {localMusicTrack.title} · {localMusicTrack.artist}
+                        {musicPlaying ? ' · Playing loop' : ''}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  {localTaggedUsers.map((person) => (
+                    <View
+                      key={person.userId}
+                      style={[
+                        styles.attachmentChip,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <Text style={[styles.attachmentChipText, { color: colors.ink }]}>
+                        @{person.username}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Consolidated Quick Actions Toolbar (Edit, Retake, Save 3:4, Share 9:16 Story) */}
+              {!editing ? (
+                <View style={styles.sheetQuickActionsGrid}>
+                  {ownerFlag || editableCaption ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Edit or manage Moment"
+                      onPress={handleOpenEditor}
+                      style={[
+                        styles.sheetActionBtn,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.controlBorder,
+                          borderRadius: radii.input,
+                        },
+                      ]}>
+                      <Text style={[styles.smallActionText, { color: colors.ink }]}>
+                        Edit / Manage
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  {canRetake && onRetake ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Retake today's Moment"
+                      onPress={() => {
+                        setHubOpen(false);
+                        onRetake();
+                      }}
+                      style={[
+                        styles.sheetActionBtn,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.controlBorder,
+                          borderRadius: radii.input,
+                        },
+                      ]}>
+                      <Text style={[styles.smallActionText, { color: colors.accent }]}>
+                        Retake ({remainingRetakes} left)
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  {!(localSnapOnce && !ownerFlag) ? (
+                    <>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="Delete comment"
-                        onPress={() => setPendingDeleteComment(cmt.id)}
-                        style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ color: colors.danger, fontSize: 13, fontWeight: '600' }}>
-                          Delete
+                        accessibilityLabel="Save 3:4 photo with KeepIt watermark"
+                        disabled={savingPhoto || mediaUnavailable}
+                        onPress={() => void handleSave3x4Photo()}
+                        style={[
+                          styles.sheetActionBtn,
+                          {
+                            backgroundColor: colors.surfaceElevated,
+                            borderColor: colors.controlBorder,
+                            borderRadius: radii.input,
+                            opacity: savingPhoto ? 0.6 : 1,
+                          },
+                        ]}>
+                        <Text style={[styles.smallActionText, { color: colors.ink }]}>
+                          {savingPhoto ? 'Saving…' : 'Save Photo'}
                         </Text>
                       </Pressable>
-                    ) : null}
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Open 9:16 Story Share preview"
+                        disabled={mediaUnavailable}
+                        onPress={() => {
+                          setHubOpen(false);
+                          setStoryModalOpen(true);
+                        }}
+                        style={[
+                          styles.sheetActionBtn,
+                          {
+                            backgroundColor: colors.accentSoft,
+                            borderColor: colors.accent,
+                            borderRadius: radii.input,
+                          },
+                        ]}>
+                        <Text style={[styles.smallActionText, { color: colors.ink }]}>
+                          Share 9:16 Story
+                        </Text>
+                      </Pressable>
+                    </>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {/* Full Post CRUD Editor inside Sheet for Owner */}
+              {editing ? (
+                <View
+                  style={[
+                    styles.editorPanel,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.border,
+                      borderRadius: radii.input,
+                      padding: spacing.md,
+                    },
+                  ]}>
+                  <Text style={[styles.editorSectionTitle, { color: colors.ink }]}>
+                    Edit / Manage Moment
+                  </Text>
+
+                  {crudError ? <InlineNotice message={crudError} tone="error" /> : null}
+
+                  <View style={{ gap: 6 }}>
+                    <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>Caption</Text>
+                    <TextInput
+                      accessibilityLabel="Edit Moment caption"
+                      editable={!savingCrud && !deletingPost}
+                      value={draftCaption}
+                      maxLength={160}
+                      placeholder="Add a caption (up to 160 chars)..."
+                      placeholderTextColor={colors.inkMuted}
+                      onChangeText={setDraftCaption}
+                      style={[
+                        styles.captionInput,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: colors.controlBorder,
+                          color: colors.ink,
+                          borderRadius: radii.input,
+                        },
+                      ]}
+                    />
                   </View>
-                );
-              })}
-            </View>
-          ) : null}
 
-          <View style={styles.commentInputRow}>
-            <TextInput
-              accessibilityLabel="Add a comment"
-              value={commentInput}
-              placeholder="Add a comment..."
-              placeholderTextColor={colors.inkMuted}
-              onChangeText={setCommentInput}
-              onSubmitEditing={() => void handlePostComment()}
-              style={[
-                styles.commentInput,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.controlBorder,
-                  color: colors.ink,
-                  borderRadius: radii.input,
-                },
-              ]}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Post comment"
-              accessibilityState={{ busy: postingComment, disabled: postingComment || !commentInput.trim() }}
-              disabled={postingComment || !commentInput.trim()}
-              onPress={() => void handlePostComment()}
-              style={[
-                styles.postCommentBtn,
-                {
-                  backgroundColor: commentInput.trim()
-                    ? colors.accent
-                    : colors.surfaceElevated,
-                  borderColor: colors.border,
-                  borderRadius: radii.input,
-                },
-              ]}>
-              <Text
-                style={[
-                  styles.postCommentBtnText,
-                  {
-                    color: commentInput.trim() ? colors.onAccent : colors.inkMuted,
-                  },
-                ]}>
-                {postingComment ? 'Posting…' : 'Post'}
-              </Text>
-            </Pressable>
+                  {/* Filter Preset Selector */}
+                  <View style={{ gap: 6 }}>
+                    <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                      Filter Preset
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.horizontalPillsRow}>
+                      {MOMENT_FILTER_PRESETS.map((preset) => {
+                        const active = draftFilter === preset.id;
+                        return (
+                          <Pressable
+                            key={preset.id}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                            disabled={savingCrud || deletingPost}
+                            onPress={() => setDraftFilter(preset.id)}
+                            style={[
+                              styles.OptionPill,
+                              {
+                                backgroundColor: active ? colors.accent : colors.surface,
+                                borderColor: active ? colors.accent : colors.controlBorder,
+                                borderRadius: radii.input,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.optionPillText,
+                                { color: active ? colors.onAccent : colors.ink },
+                              ]}>
+                              {preset.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* Location Selector & Input */}
+                  <View style={{ gap: 6 }}>
+                    <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                      Location Spot
+                    </Text>
+                    <TextInput
+                      accessibilityLabel="Edit Moment location"
+                      editable={!savingCrud && !deletingPost}
+                      value={draftLocation}
+                      placeholder="Custom location or choose below..."
+                      placeholderTextColor={colors.inkMuted}
+                      onChangeText={setDraftLocation}
+                      style={[
+                        styles.captionInput,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: colors.controlBorder,
+                          color: colors.ink,
+                          borderRadius: radii.input,
+                        },
+                      ]}
+                    />
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.horizontalPillsRow}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: !draftLocation }}
+                        disabled={savingCrud || deletingPost}
+                        onPress={() => setDraftLocation('')}
+                        style={[
+                          styles.OptionPill,
+                          {
+                            backgroundColor: !draftLocation ? colors.accent : colors.surface,
+                            borderColor: colors.border,
+                            borderRadius: radii.pill,
+                          },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.optionPillText,
+                            { color: !draftLocation ? colors.onAccent : colors.inkMuted },
+                          ]}>
+                          None
+                        </Text>
+                      </Pressable>
+                      {QUICK_LOCATION_PRESETS.map((loc) => {
+                        const active = draftLocation === loc.label;
+                        return (
+                          <Pressable
+                            key={loc.label}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                            disabled={savingCrud || deletingPost}
+                            onPress={() => setDraftLocation(loc.label)}
+                            style={[
+                              styles.OptionPill,
+                              {
+                                backgroundColor: active ? colors.accent : colors.surface,
+                                borderColor: active ? colors.accent : colors.controlBorder,
+                                borderRadius: radii.input,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.optionPillText,
+                                { color: active ? colors.onAccent : colors.ink },
+                              ]}>
+                              {loc.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* Music Track Selector */}
+                  <View style={{ gap: 6 }}>
+                    <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                      Music Attachment
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.horizontalPillsRow}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: !draftMusic }}
+                        disabled={savingCrud || deletingPost}
+                        onPress={() => setDraftMusic(null)}
+                        style={[
+                          styles.OptionPill,
+                          {
+                            backgroundColor: !draftMusic ? colors.accent : colors.surface,
+                            borderColor: colors.border,
+                            borderRadius: radii.pill,
+                          },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.optionPillText,
+                            { color: !draftMusic ? colors.onAccent : colors.inkMuted },
+                          ]}>
+                          No Music
+                        </Text>
+                      </Pressable>
+                      {CURATED_MUSIC_TRACKS.map((trk) => {
+                        const active = draftMusic?.id === trk.id;
+                        return (
+                          <Pressable
+                            key={trk.id}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                            disabled={savingCrud || deletingPost}
+                            onPress={() => setDraftMusic(trk)}
+                            style={[
+                              styles.OptionPill,
+                              {
+                                backgroundColor: active ? colors.accent : colors.surface,
+                                borderColor: active ? colors.accent : colors.controlBorder,
+                                borderRadius: radii.input,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.optionPillText,
+                                { color: active ? colors.onAccent : colors.ink },
+                              ]}>
+                              {trk.title} · {trk.artist}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* Tag People Editor */}
+                  <View style={{ gap: 6 }}>
+                    <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                      Tagged People ({draftTaggedUsers.length})
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.horizontalPillsRow}>
+                      {availableTagCandidates.map((person) => {
+                        const active = draftTaggedUsers.some((t) => t.userId === person.userId);
+                        return (
+                          <Pressable
+                            key={person.userId}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                            disabled={savingCrud || deletingPost}
+                            onPress={() => handleToggleDraftTag(person)}
+                            style={[
+                              styles.OptionPill,
+                              {
+                                backgroundColor: active ? colors.accent : colors.surface,
+                                borderColor: active ? colors.accent : colors.controlBorder,
+                                borderRadius: radii.input,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.optionPillText,
+                                { color: active ? colors.onAccent : colors.ink },
+                              ]}>
+                              @{person.username} {active ? '✓' : '+'}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* On-Photo Emoji & Text Overlays Editor */}
+                  <View style={{ gap: 6 }}>
+                    <View style={styles.metaTopRow}>
+                      <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                        On-Photo Stickers & Text ({draftOverlays.length})
+                      </Text>
+                      {draftOverlays.length > 0 ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={savingCrud || deletingPost}
+                          onPress={() => setDraftOverlays([])}
+                          style={styles.clearOverlaysBtn}>
+                          <Text style={[styles.clearOverlaysText, { color: colors.danger }]}>
+                            Clear overlays
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.horizontalPillsRow}>
+                      {OVERLAY_STICKER_EMOJIS.map((emoji) => (
+                        <Pressable
+                          key={emoji}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Add ${emoji} sticker overlay`}
+                          disabled={savingCrud || deletingPost}
+                          onPress={() => handleAddEmojiOverlay(emoji)}
+                          style={[
+                            styles.emojiStickerBtn,
+                            {
+                              backgroundColor: colors.surface,
+                              borderColor: colors.border,
+                              borderRadius: radii.pill,
+                            },
+                          ]}>
+                          <Text style={styles.emojiStickerBtnText}>+ {emoji}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+
+                    <View style={styles.overlayInputRow}>
+                      <TextInput
+                        accessibilityLabel="New text overlay"
+                        editable={!savingCrud && !deletingPost}
+                        value={draftOverlayText}
+                        placeholder="Add text banner on photo..."
+                        placeholderTextColor={colors.inkMuted}
+                        onChangeText={setDraftOverlayText}
+                        style={[
+                          styles.captionInput,
+                          {
+                            flex: 1,
+                            backgroundColor: colors.surface,
+                            borderColor: colors.controlBorder,
+                            color: colors.ink,
+                            borderRadius: radii.input,
+                          },
+                        ]}
+                      />
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={savingCrud || deletingPost || !draftOverlayText.trim()}
+                        onPress={handleAddTextOverlay}
+                        style={[
+                          styles.smallActionChip,
+                          {
+                            backgroundColor: colors.accent,
+                            borderColor: colors.accent,
+                            borderRadius: radii.input,
+                          },
+                        ]}>
+                        <Text style={[styles.smallActionText, { color: colors.onAccent }]}>
+                          + Text
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    <View style={[styles.horizontalPillsRow, { flexDirection: 'row', flexWrap: 'wrap' }]}>
+                      {(['glass', 'solid', 'neon'] as const).map((st) => {
+                        const active = draftOverlayBgStyle === st;
+                        return (
+                          <Pressable
+                            key={st}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active, disabled: savingCrud || deletingPost }}
+                            disabled={savingCrud || deletingPost}
+                            onPress={() => setDraftOverlayBgStyle(st)}
+                            style={[
+                              styles.OptionPill,
+                              {
+                                backgroundColor: active ? colors.accent : colors.surface,
+                                borderColor: active ? colors.accent : colors.controlBorder,
+                                borderRadius: radii.input,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.optionPillText,
+                                { color: active ? colors.onAccent : colors.ink },
+                              ]}>
+                              {st.toUpperCase()}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  {/* Snap Once Toggle */}
+                  <View style={styles.snapSwitchRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.editorSectionTitle, { color: colors.ink, fontSize: 14 }]}>
+                        Snap Once (15s Disappearing)
+                      </Text>
+                      <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                        Expires 15 seconds after your partner or friend opens it
+                      </Text>
+                    </View>
+                    <Switch
+                      accessibilityLabel="Snap Once, disappears 15 seconds after opening"
+                      disabled={savingCrud || deletingPost}
+                      value={draftSnapOnce}
+                      onValueChange={setDraftSnapOnce}
+                    />
+                  </View>
+
+                  <View style={styles.editActionsRow}>
+                    <KeepItButton
+                      label="Save Changes"
+                      loading={savingCrud}
+                      disabled={deletingPost}
+                      onPress={() => void handleSaveEditor()}
+                      style={{ flex: 1 }}
+                    />
+                    <KeepItButton
+                      label="Cancel"
+                      variant="secondary"
+                      disabled={savingCrud || deletingPost}
+                      onPress={() => setDiscardEdits(true)}
+                      style={{ flex: 1 }}
+                    />
+                  </View>
+
+                  {/* Delete Post with Confirmation */}
+                  {moment?.id ? (
+                    confirmingDelete ? (
+                      <View
+                        style={[
+                          styles.deleteConfirmBox,
+                          {
+                            backgroundColor: colors.dangerSoft,
+                            borderColor: colors.danger,
+                            borderRadius: radii.input,
+                          },
+                        ]}>
+                        <Text style={[styles.deleteConfirmText, { color: colors.danger }]}>
+                          Delete this Moment permanently? This cannot be undone.
+                        </Text>
+                        <View style={styles.editActionsRow}>
+                          <KeepItButton
+                            label="Confirm Delete"
+                            variant="danger"
+                            loading={deletingPost}
+                            onPress={() => void handleConfirmDelete()}
+                            style={{ flex: 1 }}
+                          />
+                          <KeepItButton
+                            label="Keep Post"
+                            variant="secondary"
+                            disabled={deletingPost}
+                            onPress={() => setConfirmingDelete(false)}
+                            style={{ flex: 1 }}
+                          />
+                        </View>
+                      </View>
+                    ) : (
+                      <KeepItButton
+                        label="Delete Post"
+                        variant="danger"
+                        disabled={savingCrud}
+                        onPress={() => setConfirmingDelete(true)}
+                      />
+                    )
+                  ) : null}
+                </View>
+              ) : null}
+
+              {/* Comments List & Input inside Sheet */}
+              <View style={styles.commentsSection}>
+                <Text style={[styles.editorLabel, { color: colors.inkMuted }]}>
+                  Comments ({localComments.length})
+                </Text>
+                {localComments.length > 0 ? (
+                  <View style={{ gap: 6 }}>
+                    {localComments.map((cmt) => {
+                      const canDeleteCmt =
+                        cmt.author_id === effectiveUserId || ownerFlag;
+                      return (
+                        <View
+                          key={cmt.id}
+                          style={[
+                            styles.commentBubble,
+                            {
+                              backgroundColor: colors.surfaceElevated,
+                              borderColor: colors.border,
+                              borderRadius: radii.input,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                            },
+                          ]}>
+                          <Text style={[styles.commentAuthor, { color: colors.ink, flex: 1 }]}>
+                            {cmt.author_name}
+                            {cmt.author_username ? ` (@${cmt.author_username})` : ''}:{' '}
+                            <Text style={[styles.commentBody, { color: colors.ink }]}>
+                              {cmt.text}
+                            </Text>
+                          </Text>
+                          {canDeleteCmt ? (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="Delete comment"
+                              onPress={() => setPendingDeleteComment(cmt.id)}
+                              style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+                              <Text style={{ color: colors.danger, fontSize: 13, fontWeight: '600' }}>
+                                Delete
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={[styles.storyModalSub, { color: colors.inkMuted }]}>
+                    No comments yet. Leave a note below.
+                  </Text>
+                )}
+
+                <View style={styles.commentInputRow}>
+                  <TextInput
+                    accessibilityLabel="Add a comment"
+                    value={commentInput}
+                    placeholder="Add a comment..."
+                    placeholderTextColor={colors.inkMuted}
+                    onChangeText={setCommentInput}
+                    onSubmitEditing={() => void handlePostComment()}
+                    style={[
+                      styles.commentInput,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderColor: colors.controlBorder,
+                        color: colors.ink,
+                        borderRadius: radii.input,
+                      },
+                    ]}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Post comment"
+                    accessibilityState={{ busy: postingComment, disabled: postingComment || !commentInput.trim() }}
+                    disabled={postingComment || !commentInput.trim()}
+                    onPress={() => void handlePostComment()}
+                    style={[
+                      styles.postCommentBtn,
+                      {
+                        backgroundColor: commentInput.trim()
+                          ? colors.accent
+                          : colors.surfaceElevated,
+                        borderColor: colors.border,
+                        borderRadius: radii.input,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.postCommentBtnText,
+                        {
+                          color: commentInput.trim() ? colors.onAccent : colors.inkMuted,
+                        },
+                      ]}>
+                      {postingComment ? 'Posting…' : 'Post'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </ScrollView>
           </View>
-        </View>
-
-        {/* Download Post (Item #15) & Share to 9:16 Story (Item #19) */}
-        {/* Hide export/download actions for non-owner Snap Once Moments to enforce disappearing privacy */}
-        {!(localSnapOnce && !ownerFlag) ? (
-          <View style={styles.exportActionBar}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Save 3:4 photo with KeepIt watermark"
-              disabled={savingPhoto || mediaUnavailable}
-              onPress={() => void handleSave3x4Photo()}
-              style={[
-                styles.exportActionBtn,
-                {
-                  backgroundColor: colors.surfaceElevated,
-                  borderColor: colors.controlBorder,
-                  borderRadius: radii.input,
-                  opacity: savingPhoto ? 0.6 : 1,
-                },
-              ]}>
-              <Text style={[styles.exportActionText, { color: colors.ink }]}>
-                {savingPhoto ? 'Saving…' : 'Save Photo'}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open 9:16 Story Share preview"
-              disabled={mediaUnavailable}
-              onPress={() => setStoryModalOpen(true)}
-              style={[
-                styles.exportActionBtn,
-                {
-                  backgroundColor: colors.accentSoft,
-                  borderColor: colors.accent,
-                  borderRadius: radii.input,
-                },
-              ]}>
-              <Text style={[styles.exportActionText, { color: colors.ink }]}>
-                Share 9:16 Story
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {actionBanner ? (
-          <InlineNotice message={actionBanner} tone="success" />
-        ) : null}
-      </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Full-Screen 9:16 Story Share Modal (Item #19) */}
       <Modal
@@ -2164,8 +2542,169 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: 'center',
   },
-  metaCard: {
-    gap: 20,
+  cornerHubAnchor: {
+    position: 'absolute',
+    bottom: 14,
+    right: 14,
+    zIndex: 8,
+  },
+  cornerHubBtn: {
+    minWidth: 46,
+    minHeight: 46,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderCurve: 'continuous',
+  },
+  cornerHubEmoji: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  cornerHubCountText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  radialDismissBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(10, 7, 8, 0.35)',
+    zIndex: 9,
+  },
+  radialFanBar: {
+    position: 'absolute',
+    bottom: 68,
+    right: 14,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderCurve: 'continuous',
+  },
+  radialEmojiBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  radialEmojiText: {
+    fontSize: 22,
+  },
+  radialMoreBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    marginLeft: 2,
+  },
+  compactCaptionStrip: {
+    minHeight: 48,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderCurve: 'continuous',
+  },
+  compactCaptionLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  compactCaptionText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  compactContextMeta: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  compactCaptionRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  compactSummaryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderCurve: 'continuous',
+  },
+  compactSummaryEmoji: {
+    fontSize: 13,
+  },
+  compactSummaryCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  compactOpenLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  hubModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    justifyContent: 'flex-end',
+  },
+  hubSheetContainer: {
+    width: '100%',
+    maxWidth: 540,
+    alignSelf: 'center',
+    maxHeight: '88%',
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    paddingTop: 10,
+    borderCurve: 'continuous',
+  },
+  hubGrabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 4,
+  },
+  hubSheetScrollContent: {
+    gap: 16,
+    paddingBottom: 32,
+  },
+  sheetQuickActionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  sheetActionBtn: {
+    flexGrow: 1,
+    flexBasis: '46%',
+    minHeight: 44,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderCurve: 'continuous',
   },
   metaTopRow: {
@@ -2192,18 +2731,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     fontWeight: '600',
-  },
-  captionRow: {
-    gap: 10,
-  },
-  captionText: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  inlineButtonRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
   },
   smallActionChip: {
     borderWidth: 1,
@@ -2372,25 +2899,6 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   postCommentBtnText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
-  },
-  exportActionBar: {
-    flexDirection: 'column',
-    gap: 8,
-  },
-  exportActionBtn: {
-    flex: 1,
-    borderWidth: 1,
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderCurve: 'continuous',
-  },
-  exportActionText: {
     fontSize: 15,
     lineHeight: 22,
     fontWeight: '600',
