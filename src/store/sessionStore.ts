@@ -63,6 +63,7 @@ interface SessionState {
     pronouns?: string;
     moodSong?: string;
     bannerColor?: string;
+    bannerPath?: string | null;
     website?: string;
     avatarPath?: string | null;
     isPrivate?: boolean;
@@ -393,6 +394,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       pronouns: params.pronouns,
       moodSong: params.moodSong,
       bannerColor: params.bannerColor,
+      bannerPath: params.bannerPath,
       website: params.website,
       avatarPath: params.avatarPath,
       isPrivate: params.isPrivate,
