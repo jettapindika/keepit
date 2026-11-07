@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { SymbolView } from 'expo-symbols';
 import React, { useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { formatLateDuration, isMomentPromptCheckIn } from '@/api/moments';
 import { InlineNotice, KeepItButton, KeepItWatermarkLogo, RevealOnAppear } from '@/components/ui/Primitives';
@@ -160,6 +160,12 @@ export function TogetherCollageCard({
 }: TogetherCollageCardProps) {
   const { colors, radii, type } = useKeepItTheme();
   const [saving, setSaving] = useState<'mine' | 'partner' | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<{
+    moment: MomentRecord;
+    name: string;
+    side: 'mine' | 'partner';
+  } | null>(null);
+  const [previewSwapped, setPreviewSwapped] = useState(false);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
   const availableStamps = getAvailableCollageStamps(streakCount, longestStreakCount ?? streakCount);
   const [stampIndex, setStampIndex] = useState(() => Math.max(0, availableStamps.length - 1));
@@ -167,13 +173,35 @@ export function TogetherCollageCard({
   const isGoldenSync = !myMoment.is_late && !partnerMoment.is_late;
   const canCycleStamp = availableStamps.length > 1;
 
-  const saveMoment = async (
+  const openSavePreview = (
     moment: MomentRecord,
     name: string,
     side: 'mine' | 'partner'
   ) => {
     const backUri = moment.back_photo_url || moment.back_photo_path;
     const frontUri = moment.front_photo_url || moment.front_photo_path;
+    if (!backUri || !frontUri) {
+      setNotice({
+        message: 'Both camera photos must be available to save this Moment.',
+        error: true,
+      });
+      return;
+    }
+    setNotice(null);
+    setPreviewSwapped(false);
+    setPreviewTarget({ moment, name, side });
+  };
+
+  const saveMoment = async (
+    moment: MomentRecord,
+    name: string,
+    side: 'mine' | 'partner',
+    swapped = false
+  ) => {
+    const rawBack = moment.back_photo_url || moment.back_photo_path;
+    const rawFront = moment.front_photo_url || moment.front_photo_path;
+    const backUri = swapped ? rawFront : rawBack;
+    const frontUri = swapped ? rawBack : rawFront;
     if (!backUri || !frontUri) {
       setNotice({
         message: 'Both camera photos must be available to save this Moment.',
@@ -200,6 +228,7 @@ export function TogetherCollageCard({
         title: `${name}'s KeepIt Moment`,
       });
       setNotice({ message, error: false });
+      setPreviewTarget(null);
     } catch (error) {
       setNotice({
         message:
@@ -318,7 +347,7 @@ export function TogetherCollageCard({
               accessibilityShowsLargeContentViewer
               accessibilityLargeContentTitle={`Save ${partnerName}`}
               disabled={saving !== null}
-              onPress={() => void saveMoment(partnerMoment, partnerName, 'partner')}
+              onPress={() => openSavePreview(partnerMoment, partnerName, 'partner')}
               style={[
                 styles.saveIconBtn,
                 {
@@ -351,7 +380,7 @@ export function TogetherCollageCard({
               accessibilityShowsLargeContentViewer
               accessibilityLargeContentTitle="Save Yours"
               disabled={saving !== null}
-              onPress={() => void saveMoment(myMoment, myName, 'mine')}
+              onPress={() => openSavePreview(myMoment, myName, 'mine')}
               style={[
                 styles.saveIconBtn,
                 {
@@ -384,6 +413,119 @@ export function TogetherCollageCard({
           <InlineNotice tone={notice.error ? 'error' : 'info'} message={notice.message} />
         ) : null}
       </View>
+
+      <Modal
+        visible={Boolean(previewTarget)}
+        animationType="fade"
+        transparent
+        onRequestClose={() => { if (!saving) setPreviewTarget(null); }}>
+        <View style={styles.previewModalBackdrop}>
+          {previewTarget ? (
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.previewModalContent}
+              style={[
+                styles.previewModalSheet,
+                {
+                  backgroundColor: colors.sheetSurface,
+                  borderColor: colors.border,
+                  borderRadius: radii.group,
+                },
+              ]}>
+              <View style={styles.headerTopRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>
+                    Save {previewTarget.name}’s Moment
+                  </Text>
+                  <Text style={[styles.secondary, { color: colors.inkMuted }]}>
+                    Tap the corner photo to swap lenses before saving
+                  </Text>
+                </View>
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close save preview"
+                  disabled={saving !== null}
+                  onPress={() => setPreviewTarget(null)}
+                  style={[
+                    styles.saveIconBtn,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                    },
+                  ]}>
+                  <Text style={[styles.saveBtnLabel, { color: colors.ink }]}>Close</Text>
+                </AppPressable>
+              </View>
+
+              <View
+                style={[
+                  styles.previewFrame,
+                  {
+                    backgroundColor: colors.canvas,
+                    borderColor: colors.border,
+                    borderRadius: radii.card,
+                  },
+                ]}>
+                <Image
+                  source={{
+                    uri: previewSwapped
+                      ? (previewTarget.moment.front_photo_url || previewTarget.moment.front_photo_path)
+                      : (previewTarget.moment.back_photo_url || previewTarget.moment.back_photo_path),
+                  }}
+                  contentFit="cover"
+                  style={StyleSheet.absoluteFill}
+                />
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Swap front and back lens for saved photo"
+                  onPress={() => {
+                    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+                    setPreviewSwapped((prev) => !prev);
+                  }}
+                  style={[
+                    styles.previewPip,
+                    {
+                      borderColor: colors.canvas,
+                      borderRadius: radii.input,
+                      backgroundColor: colors.surfaceElevated,
+                    },
+                  ]}>
+                  <Image
+                    source={{
+                      uri: previewSwapped
+                        ? (previewTarget.moment.back_photo_url || previewTarget.moment.back_photo_path)
+                        : (previewTarget.moment.front_photo_url || previewTarget.moment.front_photo_path),
+                    }}
+                    contentFit="cover"
+                    style={StyleSheet.absoluteFill}
+                  />
+                </AppPressable>
+                <View pointerEvents="none" style={styles.previewWatermark}>
+                  <KeepItWatermarkLogo width={72} color="#FFFFFF" />
+                  <Text style={styles.previewWatermarkTime}>
+                    {formatMomentWatermarkTimestamp(previewTarget.moment.posted_at)}
+                  </Text>
+                </View>
+              </View>
+
+              <KeepItButton
+                label={`Confirm & Save ${previewTarget.name}’s Photo`}
+                loading={saving === previewTarget.side}
+                loadingLabel="Saving Photo…"
+                onPress={() =>
+                  void saveMoment(
+                    previewTarget.moment,
+                    previewTarget.name,
+                    previewTarget.side,
+                    previewSwapped
+                  )
+                }
+              />
+            </ScrollView>
+          ) : null}
+        </View>
+      </Modal>
     </RevealOnAppear>
   );
 }
@@ -438,11 +580,7 @@ const styles = StyleSheet.create({
   photoWatermark: {
     position: 'absolute',
     bottom: 34,
-    left: 6,
-    backgroundColor: 'rgba(10, 7, 8, 0.78)',
-    borderRadius: 7,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
+    left: 8,
     alignItems: 'flex-start',
     gap: 1.5,
   },
@@ -452,6 +590,9 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   lensBadge: {
     position: 'absolute',
@@ -490,5 +631,57 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '600',
     maxWidth: 90,
+  },
+  previewModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  previewModalSheet: {
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+    maxHeight: '92%',
+    borderWidth: 1,
+  },
+  previewModalContent: {
+    padding: 20,
+    gap: 16,
+  },
+  previewFrame: {
+    width: '86%',
+    maxWidth: 340,
+    alignSelf: 'center',
+    aspectRatio: 4 / 5,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  previewPip: {
+    position: 'absolute',
+    top: 14,
+    left: 14,
+    width: 80,
+    height: 100,
+    borderWidth: 2,
+    overflow: 'hidden',
+  },
+  previewWatermark: {
+    position: 'absolute',
+    bottom: 14,
+    left: 16,
+    alignItems: 'flex-start',
+    gap: 3,
+  },
+  previewWatermarkTime: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
 });

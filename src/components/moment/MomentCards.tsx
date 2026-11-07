@@ -442,6 +442,8 @@ export function DualMomentCard({
   // Download & 9:16 Story Share modal state (Item #15 & #19)
   const [actionBanner, setActionBanner] = useState<string | null>(null);
   const [savingPhoto, setSavingPhoto] = useState(false);
+  const [savePreviewModalOpen, setSavePreviewModalOpen] = useState(false);
+  const [savePreviewSwapped, setSavePreviewSwapped] = useState(false);
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyTheme, setStoryTheme] = useState<StoryThemePreset>('midnight');
   const [storySharing, setStorySharing] = useState(false);
@@ -525,12 +527,14 @@ export function DualMomentCard({
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (!radialOpen && !hubOpen) return;
+    if (!radialOpen && !hubOpen && !savePreviewModalOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
         if (radialOpen) {
           setRadialOpen(false);
+        } else if (savePreviewModalOpen && !savingPhoto) {
+          setSavePreviewModalOpen(false);
         } else if (hubOpen && !storyModalOpen && !pendingDeleteComment && !discardEdits) {
           closeHubSheet();
         }
@@ -794,6 +798,16 @@ export function DualMomentCard({
 
   const watermarkTimestamp = formatMomentWatermarkTimestamp(postedAtIso);
 
+  const savePreviewMainSource = savePreviewSwapped ? pipSource : mainSource;
+  const savePreviewPipSource = savePreviewSwapped ? mainSource : pipSource;
+
+  const handleOpenSavePreview = () => {
+    if ((localSnapOnce && !ownerFlag) || mediaUnavailable) return;
+    setSavePreviewSwapped(false);
+    setHubOpen(false);
+    setSavePreviewModalOpen(true);
+  };
+
   const handleSave3x4Photo = async () => {
     if ((localSnapOnce && !ownerFlag) || savingPhoto || mediaUnavailable) return;
     setSavingPhoto(true);
@@ -801,8 +815,8 @@ export function DualMomentCard({
     try {
       const safeAuthor = authorName.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
       const msg = await exportAndShareCompositeMoment({
-        backUri: mainSource,
-        frontUri: pipSource,
+        backUri: savePreviewMainSource,
+        frontUri: savePreviewPipSource,
         authorName,
         postedAtIso,
         timestampLabel: watermarkTimestamp,
@@ -819,6 +833,7 @@ export function DualMomentCard({
         title: `${authorName}’s KeepIt Moment`,
       });
       setActionBanner(msg);
+      setSavePreviewModalOpen(false);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not save photo. Try again.');
     } finally {
@@ -1657,9 +1672,9 @@ export function DualMomentCard({
                     <>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="Save 3:4 photo with KeepIt watermark"
+                        accessibilityLabel="Preview and save photo with KeepIt watermark"
                         disabled={savingPhoto || mediaUnavailable}
-                        onPress={() => void handleSave3x4Photo()}
+                        onPress={handleOpenSavePreview}
                         style={[
                           styles.sheetActionBtn,
                           {
@@ -2248,6 +2263,164 @@ export function DualMomentCard({
         </KeyboardAvoidingView>
       </Modal>
 
+
+      {/* Save Photo Preview Modal */}
+      <Modal
+        visible={savePreviewModalOpen}
+        animationType={motionEnabled ? 'slide' : 'none'}
+        transparent
+        onRequestClose={() => { if (!savingPhoto) setSavePreviewModalOpen(false); }}>
+        <View style={styles.storyModalBackdrop}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.storyModalContent}
+            style={[
+              styles.storyModalSheet,
+              {
+                backgroundColor: colors.sheetSurface,
+                borderColor: colors.border,
+                borderRadius: radii.group,
+              },
+            ]}>
+            <View style={styles.metaTopRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.storyModalTitle, { color: colors.ink }]}>
+                  Save Moment Preview
+                </Text>
+                <Text style={[styles.storyModalSub, { color: colors.inkMuted }]}>
+                  Tap the corner photo to swap lenses before saving
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close Save preview"
+                disabled={savingPhoto}
+                onPress={() => { if (!savingPhoto) setSavePreviewModalOpen(false); }}
+                style={[
+                  styles.smallActionChip,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.controlBorder,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Text style={[styles.smallActionText, { color: colors.ink }]}>
+                  Close
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.storyCanvasPreviewWrap}>
+              <View
+                style={[
+                  styles.savePreviewCanvasFrame,
+                  {
+                    borderColor: colors.border,
+                    borderRadius: radii.card,
+                    backgroundColor: colors.surfaceElevated,
+                  },
+                ]}>
+                {savePreviewMainSource ? (
+                  <Image
+                    source={{ uri: savePreviewMainSource }}
+                    contentFit="cover"
+                    style={[
+                      styles.fullImage,
+                      Platform.OS === 'web' && filterMeta.webCssFilter !== 'none'
+                        ? ({ filter: filterMeta.webCssFilter } as never)
+                        : null,
+                    ]}
+                  />
+                ) : null}
+                {filterMeta.tintOverlay !== 'transparent' ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      StyleSheet.absoluteFill,
+                      { backgroundColor: filterMeta.tintOverlay },
+                    ]}
+                  />
+                ) : null}
+                {savePreviewPipSource ? (
+                  <View style={styles.pipAnchor}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Swap front and back lens for saved photo"
+                      onPress={() => {
+                        if (Platform.OS !== 'web') void Haptics.selectionAsync();
+                        setSavePreviewSwapped((prev) => !prev);
+                      }}
+                      style={[
+                        styles.pipFrame,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.canvas,
+                        },
+                      ]}>
+                      <Image
+                        source={{ uri: savePreviewPipSource }}
+                        contentFit="cover"
+                        style={styles.fullImage}
+                      />
+                    </Pressable>
+                  </View>
+                ) : null}
+                {localOverlays.map((ov) => (
+                  <View
+                    key={`save-prev-${ov.id}`}
+                    pointerEvents="none"
+                    style={[
+                      styles.overlayItemAnchor,
+                      {
+                        left: `${ov.xPct}%`,
+                        top: `${ov.yPct}%`,
+                      },
+                    ]}>
+                    {ov.kind === 'emoji' ? (
+                      <Text style={styles.overlayEmojiText}>{ov.content}</Text>
+                    ) : (
+                      <View
+                        style={[
+                          styles.overlayTextPill,
+                          {
+                            backgroundColor:
+                              ov.bgStyle === 'neon'
+                                ? '#282830'
+                                : ov.bgStyle === 'solid'
+                                  ? '#141416'
+                                  : 'rgba(20, 20, 22, 0.80)',
+                          },
+                        ]}>
+                        <Text style={styles.overlayTextLabel}>{ov.content}</Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+                <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
+                  <KeepItWatermarkLogo width={76} color="#FFFFFF" />
+                  <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
+                </View>
+              </View>
+            </View>
+
+            <KeepItButton
+              label="Confirm & Save Photo"
+              loading={savingPhoto}
+              loadingLabel="Saving Photo…"
+              onPress={() => void handleSave3x4Photo()}
+            />
+            <KeepItButton
+              label="Switch to 9:16 Story Studio"
+              variant="secondary"
+              disabled={savingPhoto}
+              onPress={() => {
+                setSavePreviewModalOpen(false);
+                setStoryModalOpen(true);
+              }}
+            />
+          </ScrollView>
+        </View>
+      </Modal>
       {/* Full-Screen 9:16 Story Share Modal (Item #19) */}
       <Modal
         visible={storyModalOpen}
@@ -2519,12 +2692,8 @@ const styles = StyleSheet.create({
     bottom: 14,
     left: 16,
     alignItems: 'flex-start',
-    gap: 4,
+    gap: 3,
     zIndex: 6,
-    backgroundColor: 'rgba(10, 7, 8, 0.72)',
-    borderRadius: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
   },
   keepItWatermarkTitle: {
     color: '#FFFFFF',
@@ -2540,7 +2709,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
-    lineHeight: 20,
+    lineHeight: 18,
     fontVariant: ['tabular-nums'],
     textShadowColor: 'rgba(0, 0, 0, 0.85)',
     textShadowOffset: { width: 0, height: 1 },
@@ -2996,6 +3165,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
     backgroundColor: '#09090B',
+  },
+  savePreviewCanvasFrame: {
+    width: '86%',
+    maxWidth: 340,
+    aspectRatio: 4 / 5,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
   },
   lockedFrame: {
     width: '100%',

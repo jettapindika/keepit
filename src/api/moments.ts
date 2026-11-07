@@ -325,11 +325,38 @@ async function uploadMediaToSupabaseStorage(params: {
   const defaultMime = isVideo ? 'video/mp4' : 'image/jpeg';
   const storagePath = `${params.coupleId}/${params.promptDate}/${params.userId}_${params.slot}_${Date.now()}.${ext}`;
 
-  const response = await fetch(params.localUri);
-  const blob = await response.blob();
+  let uploadBody: Uint8Array | Blob;
+  let contentType = defaultMime;
 
-  const { error } = await supabase.storage.from('moments').upload(storagePath, blob, {
-    contentType: blob.type || defaultMime,
+  if (Platform.OS !== 'web' && params.localUri.startsWith('file://')) {
+    const file = new FileSystem.File(params.localUri);
+    const byteSize = typeof file.size === 'number' ? file.size : 0;
+    if (byteSize > 4_000_000) {
+      throw new Error('Local media exceeds safe direct upload buffer.');
+    }
+    uploadBody = await file.bytes();
+  } else if (params.localUri.startsWith('data:')) {
+    const commaIdx = params.localUri.indexOf(',');
+    if (commaIdx < 0) throw new Error('Invalid data URI.');
+    const header = params.localUri.slice(5, commaIdx);
+    const mimeMatch = header.split(';')[0];
+    if (mimeMatch) contentType = mimeMatch;
+    const b64 = params.localUri.slice(commaIdx + 1);
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    uploadBody = bytes;
+  } else {
+    const response = await fetch(params.localUri);
+    const blob = await response.blob();
+    uploadBody = blob;
+    if (blob.type) contentType = blob.type;
+  }
+
+  const { error } = await supabase.storage.from('moments').upload(storagePath, uploadBody, {
+    contentType,
     upsert: true,
   });
 

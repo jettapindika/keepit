@@ -24,6 +24,7 @@ interface KeepItWidgetBridgeNativeModule {
   getLastSyncedWidgetSnapshotAsync?(): Promise<string | null>;
   requestPinWidgetAsync?(): Promise<boolean>;
   exportCompositeMomentJpegAsync?(payloadJson: string): Promise<string>;
+  extractVideoThumbnailJpegAsync?(videoUri: string): Promise<string | null>;
 }
 
 function getNativeBridge(): KeepItWidgetBridgeNativeModule | null {
@@ -208,6 +209,36 @@ export async function exportNativeCompositeMomentJpeg(
     return null;
   }
   return null;
+}
+
+export async function extractVideoThumbnailJpeg(videoUri: string): Promise<string | null> {
+  const frames = await extractVideoDualFramesJpeg(videoUri);
+  return frames?.startUri ?? null;
+}
+
+export async function extractVideoDualFramesJpeg(
+  videoUri: string
+): Promise<{ startUri: string; endUri: string } | null> {
+  const nativeBridge = getNativeBridge();
+  if (!nativeBridge?.extractVideoThumbnailJpegAsync) {
+    return null;
+  }
+  try {
+    const raw = await nativeBridge.extractVideoThumbnailJpegAsync(videoUri);
+    if (!raw) return null;
+    if (raw.startsWith('{')) {
+      const parsed = JSON.parse(raw) as { startUri?: string; endUri?: string };
+      if (parsed.startUri) {
+        return {
+          startUri: parsed.startUri,
+          endUri: parsed.endUri ?? parsed.startUri,
+        };
+      }
+    }
+    return { startUri: raw, endUri: raw };
+  } catch {
+    return null;
+  }
 }
 
 export async function isKeepItWidgetPinned(): Promise<boolean> {

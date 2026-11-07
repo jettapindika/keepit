@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import Foundation
 import UIKit
+import AVFoundation
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -46,6 +47,39 @@ public final class KeepItWidgetBridgeModule: Module {
       return sharedDefaults.string(forKey: Self.snapshotKey)
     }
 
+    AsyncFunction("extractVideoThumbnailJpegAsync") { (videoUri: String) -> String? in
+      guard let url = URL(string: videoUri) else { return nil }
+      let asset = AVURLAsset(url: url)
+      let generator = AVAssetImageGenerator(asset: asset)
+      generator.appliesPreferredTrackTransform = true
+      generator.maximumSize = CGSize(width: 960, height: 960)
+      guard let startCg = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
+        return nil
+      }
+      let durationSec = CMTimeGetSeconds(asset.duration)
+      let endTime = durationSec > 0.8
+        ? CMTime(seconds: max(0, durationSec - 0.3), preferredTimescale: 600)
+        : .zero
+      let endCg = (try? generator.copyCGImage(at: endTime, actualTime: nil)) ?? startCg
+      let stamp = Int(Date().timeIntervalSince1970 * 1000)
+      let startUrl = FileManager.default.temporaryDirectory.appendingPathComponent("keepit-vthumb-start-\(stamp).jpg")
+      let endUrl = FileManager.default.temporaryDirectory.appendingPathComponent("keepit-vthumb-end-\(stamp).jpg")
+      guard let startJpeg = UIImage(cgImage: startCg).jpegData(compressionQuality: 0.82),
+            let endJpeg = UIImage(cgImage: endCg).jpegData(compressionQuality: 0.82) else {
+        return nil
+      }
+      try? startJpeg.write(to: startUrl, options: .atomic)
+      try? endJpeg.write(to: endUrl, options: .atomic)
+      let payload: [String: String] = [
+        "startUri": startUrl.absoluteString,
+        "endUri": endUrl.absoluteString,
+      ]
+      if let data = try? JSONSerialization.data(withJSONObject: payload),
+         let str = String(data: data, encoding: .utf8) {
+        return str
+      }
+      return startUrl.absoluteString
+    }
     AsyncFunction("exportCompositeMomentJpegAsync") { (payloadJson: String) -> String in
       guard
         let data = payloadJson.data(using: .utf8),

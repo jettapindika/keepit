@@ -561,16 +561,14 @@ private struct KeepItWatermarkBadge: View {
       KeepItWatermarkShape()
         .fill(MochyWidgetTheme.ink)
         .frame(width: width, height: width * (11.0 / 50.0))
+        .shadow(color: Color.black.opacity(0.85), radius: 2, x: 0, y: 1)
       Text(timestamp)
         .font(.system(size: 8.5, weight: .bold))
         .monospacedDigit()
         .foregroundColor(MochyWidgetTheme.ink.opacity(0.92))
+        .shadow(color: Color.black.opacity(0.85), radius: 2, x: 0, y: 1)
         .lineLimit(1)
     }
-    .padding(.horizontal, 6.5)
-    .padding(.vertical, 4.5)
-    .background(Color.black.opacity(0.76))
-    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
   }
 }
 

@@ -10,6 +10,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -52,7 +53,12 @@ import {
   PostVisibility,
   TaggedPerson,
 } from '@/types/database';
-import { embedKeepItWatermarkOnImageUri, formatMomentWatermarkTimestamp } from '@/utils/momentExport';
+import {
+  embedKeepItWatermarkOnImageUri,
+  exportAndShareCompositeMoment,
+  formatMomentWatermarkTimestamp,
+} from '@/utils/momentExport';
+import { extractVideoDualFramesJpeg } from '../../modules/keepit-widget-bridge';
 
 type CaptureStage =
   | 'ready'
@@ -132,6 +138,10 @@ export default function CameraModalScreen() {
   // Captured frames
   const [backUri, setBackUri] = useState<string | null>(null);
   const [frontUri, setFrontUri] = useState<string | null>(null);
+  const [vlogPipUri, setVlogPipUri] = useState<string | null>(null);
+  const [savePreviewOpen, setSavePreviewOpen] = useState(false);
+  const [savingDraftPhoto, setSavingDraftPhoto] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [capturedAtIso, setCapturedAtIso] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
 
@@ -393,7 +403,7 @@ export default function CameraModalScreen() {
       try {
         const recResult = await Promise.race([
           activeRecordingPromiseRef.current,
-          waitMs(3500).then(() => undefined),
+          waitMs(4000).then(() => undefined),
         ]);
         if (recResult?.uri) {
           recordedHardwareUri = recResult.uri;
@@ -408,6 +418,7 @@ export default function CameraModalScreen() {
 
     if (!recordedHardwareUri) {
       finalizeRecordingRef.current = false;
+      setVlogPipUri(null);
       setStage('ready');
       setError('The video could not be saved. Check camera and microphone access, then record again.');
       return;
@@ -415,47 +426,32 @@ export default function CameraModalScreen() {
 
     try {
       const primaryLens = recordingOriginRef.current;
-      const companionLens: 'back' | 'front' = primaryLens === 'front' ? 'back' : 'front';
-      setStage('switching_lens');
-      setCameraReady(false);
-      const { promise, resolve } = Promise.withResolvers<void>();
-      cameraReadyResolverRef.current = resolve;
-      setTimeout(resolve, 1200);
-      setFacing(companionLens);
-      await promise;
-      await waitMs(480);
-      if (!isMountedRef.current || !cameraRef.current) return;
-      setStage('capturing_second');
-      let companion = await cameraRef.current
-        .takePictureAsync({ quality: 0.55 })
-        .catch(() => null);
-      if (!companion?.uri && isMountedRef.current && cameraRef.current) {
-        await waitMs(500);
-        companion = await cameraRef.current
-          .takePictureAsync({ quality: 0.55 })
-          .catch(() => null);
-      }
-      if (!companion?.uri) throw new Error('Companion photo was not saved.');
-
       const captureLabel = formatMomentWatermarkTimestamp(capturedAtIso);
-      const watermarkedCompanion = await embedKeepItWatermarkOnImageUri(
-        companion.uri,
-        captureLabel
-      );
-      if (companionLens === 'front') {
-        setFrontUri(watermarkedCompanion);
-        setBackUri((prev) => prev || watermarkedCompanion);
+      const extractedFrames = await extractVideoDualFramesJpeg(recordedHardwareUri);
+
+      const rawStartFrame = extractedFrames?.startUri ?? vlogPipUri ?? recordedHardwareUri;
+      const rawEndFrame = extractedFrames?.endUri ?? vlogPipUri ?? rawStartFrame;
+
+      const [watermarkedStart, watermarkedEnd] = await Promise.all([
+        embedKeepItWatermarkOnImageUri(rawStartFrame, captureLabel),
+        embedKeepItWatermarkOnImageUri(rawEndFrame, captureLabel),
+      ]);
+
+      if (primaryLens === 'front') {
+        setFrontUri(watermarkedEnd);
+        setBackUri(vlogPipUri ?? watermarkedStart);
       } else {
-        setBackUri(watermarkedCompanion);
-        setFrontUri((prev) => prev || watermarkedCompanion);
+        setBackUri(watermarkedEnd);
+        setFrontUri(vlogPipUri ?? watermarkedStart);
       }
+
       setVideoDurationSec(finalDuration);
       setVideoUri(recordedHardwareUri);
       setPipSwapped(false);
       setStage('preview');
     } catch {
       setStage('ready');
-      setError('The companion camera frame could not be saved. Record again to capture both sides.');
+      setError('The video could not be saved. Record again to capture your Moment.');
     } finally {
       finalizeRecordingRef.current = false;
     }
@@ -504,24 +500,7 @@ export default function CameraModalScreen() {
       }
       if (!isMountedRef.current || !cameraRef.current) return;
 
-      // Capture a lightweight poster frame before starting the video stream if supported;
-      // if the video session rejects still capture, finalizeVideoCapture falls back cleanly.
-      const posterShot = await cameraRef.current
-        .takePictureAsync({ quality: 0.5 })
-        .catch(() => null);
-      if (!isMountedRef.current || !cameraRef.current) return;
-      if (posterShot?.uri) {
-        const watermarkedPoster = await embedKeepItWatermarkOnImageUri(
-          posterShot.uri,
-          formatMomentWatermarkTimestamp(new Date().toISOString())
-        );
-        if (startLens === 'front') setFrontUri(watermarkedPoster);
-        else setBackUri(watermarkedPoster);
-      } else {
-        if (startLens === 'front') setFrontUri(null);
-        else setBackUri(null);
-      }
-
+      // Record immediately without sequential lens switching!
       setStage('recording_video');
       const recPromise = cameraRef.current.recordAsync({ maxDuration: 15 });
       activeRecordingPromiseRef.current = recPromise;
@@ -530,8 +509,9 @@ export default function CameraModalScreen() {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = undefined;
         activeRecordingPromiseRef.current = null;
+        setVlogPipUri(null);
         setStage('ready');
-        setError('Video recording failed. Record again to capture both sides.');
+        setError('Video recording failed. Record again to capture your Moment.');
       });
       recordingTimerRef.current = setInterval(() => {
         elapsedRecordingRef.current += 1;
@@ -541,6 +521,7 @@ export default function CameraModalScreen() {
         }
       }, 1000) as unknown as number;
     } catch {
+      setVlogPipUri(null);
       setStage('ready');
       setError('Video recording could not start. Check camera access and try again.');
     }
@@ -726,15 +707,21 @@ export default function CameraModalScreen() {
       await queryClient.invalidateQueries({ queryKey: ['user-posts'] });
       setAllowLeave(true);
       disableRemovalPrevention();
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace('/(tabs)');
-      }
+      setTimeout(() => {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(tabs)');
+        }
+      }, 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not publish Moment. Try again.');
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'Could not publish Moment. Try again.');
+      }
     } finally {
-      setSubmitting(false);
+      if (isMountedRef.current) {
+        setSubmitting(false);
+      }
     }
   };
 
@@ -980,6 +967,52 @@ export default function CameraModalScreen() {
                   </View>
                 )}
 
+                {/* Simultaneous Vlogging PIP Overlay During Video Mode */}
+                {mediaType === 'video' ? (
+                  <View pointerEvents="box-none" style={styles.previewPipAnchor}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Switch active vlogging lens, currently ${facing}`}
+                      disabled={stage !== 'ready' && stage !== 'recording_video'}
+                      onPress={() => {
+                        if (Platform.OS !== 'web') void Haptics.selectionAsync();
+                        handleSwitchLens(facing === 'back' ? 'front' : 'back');
+                      }}
+                      style={[
+                        styles.previewPip,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: stage === 'recording_video' ? colors.danger : colors.canvas,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        },
+                      ]}>
+                      {vlogPipUri ? (
+                        <Image
+                          source={{ uri: vlogPipUri }}
+                          contentFit="cover"
+                          style={styles.full}
+                        />
+                      ) : (
+                        <View style={{ alignItems: 'center', justifyContent: 'center', gap: 4, padding: 6 }}>
+                          <SymbolView
+                            name={{
+                              ios: 'arrow.triangle.2.circlepath.camera',
+                              android: 'flip_camera_ios',
+                              web: 'flip_camera_ios',
+                            }}
+                            tintColor={colors.ink}
+                            size={20}
+                            fallback={<Text style={[styles.iconFallbackText, { color: colors.ink }]}>↻</Text>}
+                          />
+                          <Text style={{ color: colors.ink, fontSize: 11, fontWeight: '700', textAlign: 'center' }}>
+                            {facing === 'back' ? 'Front PIP' : 'Back PIP'}
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  </View>
+                ) : null}
                 {/* Shutter Flash Feedback Layer */}
                 <Animated.View
                   pointerEvents="none"
@@ -2163,8 +2196,9 @@ export default function CameraModalScreen() {
               </View>
 
               {error ? <InlineNotice message={error} tone="error" /> : null}
+              {saveFeedback ? <InlineNotice message={saveFeedback} tone="success" /> : null}
 
-              {/* Post / Retake Buttons */}
+              {/* Post / Save Preview / Retake Buttons */}
               <View style={styles.previewActions}>
                 <KeepItButton
                   label={
@@ -2178,6 +2212,15 @@ export default function CameraModalScreen() {
                   onPress={() => void handlePostMoment()}
                 />
                 <KeepItButton
+                  label="Save Photo (Preview)"
+                  variant="secondary"
+                  disabled={submitting || !backUri || !frontUri}
+                  onPress={() => {
+                    setSaveFeedback(null);
+                    setSavePreviewOpen(true);
+                  }}
+                />
+                <KeepItButton
                   label="Retake"
                   variant="secondary"
                   disabled={submitting}
@@ -2185,9 +2228,11 @@ export default function CameraModalScreen() {
                     const retake = () => {
                       setBackUri(null);
                       setFrontUri(null);
+                      setVlogPipUri(null);
                       setVideoUri(null);
                       setVideoDurationSec(null);
                       setCapturedAtIso(null);
+                      setSaveFeedback(null);
                       setStage('ready');
                       setError(null);
                     };
@@ -2202,6 +2247,147 @@ export default function CameraModalScreen() {
                   }}
                 />
               </View>
+
+              <Modal
+                visible={savePreviewOpen}
+                animationType={motionEnabled ? 'slide' : 'none'}
+                transparent
+                onRequestClose={() => { if (!savingDraftPhoto) setSavePreviewOpen(false); }}>
+                <View style={styles.saveModalBackdrop}>
+                  <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.saveModalContent}
+                    style={[
+                      styles.saveModalSheet,
+                      {
+                        backgroundColor: colors.sheetSurface,
+                        borderColor: colors.border,
+                        borderRadius: radii.group,
+                      },
+                    ]}>
+                    <View style={styles.captureTopBar}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.drawerTitle, { color: colors.ink }]}>
+                          Save Moment Preview
+                        </Text>
+                        <Text style={[styles.musicSub, { color: colors.inkMuted }]}>
+                          Tap the corner photo to swap lenses before saving
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Close Save preview"
+                        disabled={savingDraftPhoto}
+                        onPress={() => setSavePreviewOpen(false)}
+                        style={[
+                          styles.smallChoicePill,
+                          {
+                            backgroundColor: colors.surfaceElevated,
+                            borderColor: colors.controlBorder,
+                            borderWidth: 1,
+                            borderRadius: radii.input,
+                          },
+                        ]}>
+                        <Text style={{ color: colors.ink, fontWeight: '600', fontSize: 15 }}>
+                          Close
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.viewfinderFrame,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: activeFilterMeta.borderAccent || colors.border,
+                          borderRadius: radii.photo,
+                        },
+                      ]}>
+                      {backUri && frontUri ? (
+                        <Image
+                          source={{ uri: pipSwapped ? frontUri : backUri }}
+                          contentFit="cover"
+                          style={styles.full}
+                        />
+                      ) : null}
+                      {activeFilterMeta.tintOverlay !== 'transparent' ? (
+                        <View
+                          pointerEvents="none"
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: activeFilterMeta.tintOverlay },
+                          ]}
+                        />
+                      ) : null}
+                      {frontUri && backUri ? (
+                        <View style={styles.previewPipAnchor}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Swap front and back lens for saved photo"
+                            onPress={() => setPipSwapped((prev) => !prev)}
+                            style={[
+                              styles.previewPip,
+                              {
+                                backgroundColor: colors.surfaceElevated,
+                                borderColor: colors.canvas,
+                              },
+                            ]}>
+                            <Image
+                              source={{ uri: pipSwapped ? backUri : frontUri }}
+                              contentFit="cover"
+                              style={styles.full}
+                            />
+                          </Pressable>
+                        </View>
+                      ) : null}
+                      <View pointerEvents="none" style={styles.keepItPhotoWatermark}>
+                        <KeepItWatermarkLogo width={76} color="#FFFFFF" />
+                        <Text style={styles.keepItWatermarkTime}>{watermarkTimestamp}</Text>
+                      </View>
+                    </View>
+
+                    <KeepItButton
+                      label="Confirm & Save Photo"
+                      loading={savingDraftPhoto}
+                      loadingLabel="Saving Photo…"
+                      onPress={() => {
+                        if (!backUri || !frontUri || savingDraftPhoto) return;
+                        setSavingDraftPhoto(true);
+                        const author = user?.display_name ?? 'KeepIt';
+                        const safeAuthor = author.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'keepit';
+                        void exportAndShareCompositeMoment({
+                          backUri: pipSwapped ? frontUri : backUri,
+                          frontUri: pipSwapped ? backUri : frontUri,
+                          authorName: author,
+                          postedAtIso: capturedAtIso ?? new Date().toISOString(),
+                          timestampLabel: watermarkTimestamp,
+                          caption,
+                          locationLabel,
+                          musicTitle: selectedMusic
+                            ? `${selectedMusic.title} · ${selectedMusic.artist}`
+                            : null,
+                          taggedUsers,
+                          filterPreset,
+                          overlays,
+                          aspect: '3:4',
+                          baseFilename: `keepit-${safeAuthor}-moment`,
+                          title: `${author}’s KeepIt Moment`,
+                        })
+                          .then((msg) => {
+                            setSaveFeedback(msg);
+                            setSavePreviewOpen(false);
+                          })
+                          .catch((err) => {
+                            setError(err instanceof Error ? err.message : 'Could not save photo.');
+                          })
+                          .finally(() => {
+                            setSavingDraftPhoto(false);
+                          });
+                      }}
+                    />
+                  </ScrollView>
+                </View>
+              </Modal>
           </ScrollView>
         )}
       </KeyboardAvoidingView>
@@ -2281,7 +2467,7 @@ const styles = StyleSheet.create({
     height: '100%',
     maxHeight: '100%',
     maxWidth: '100%',
-    aspectRatio: 0.75,
+    aspectRatio: 4 / 5,
     borderWidth: 1,
     overflow: 'hidden',
     position: 'relative',
@@ -2290,7 +2476,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 440,
     alignSelf: 'center',
-    aspectRatio: 0.75,
+    aspectRatio: 4 / 5,
     overflow: 'hidden',
     position: 'relative',
   },
@@ -2317,25 +2503,27 @@ const styles = StyleSheet.create({
     bottom: 14,
     left: 16,
     maxWidth: '48%',
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: 'rgba(10, 7, 8, 0.72)',
     alignItems: 'flex-start',
-    gap: 4,
+    gap: 3,
   },
   keepItWatermarkTitle: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
     lineHeight: 24,
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 5,
   },
   keepItWatermarkTime: {
     color: '#FFFFFF',
     fontSize: 13,
-    lineHeight: 20,
+    lineHeight: 18,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   floatingFilterTray: {
     position: 'absolute',
@@ -2429,8 +2617,8 @@ const styles = StyleSheet.create({
     zIndex: 5,
   },
   previewPip: {
-    width: 80,
-    height: 108,
+    width: 84,
+    height: 105,
     borderRadius: 10,
     borderWidth: 2,
     overflow: 'hidden',
@@ -2667,5 +2855,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flexShrink: 1,
     fontVariant: ['tabular-nums'],
+  },
+  saveModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  saveModalSheet: {
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+    maxHeight: '92%',
+    borderWidth: 1,
+  },
+  saveModalContent: {
+    padding: 20,
+    gap: 16,
   }
 });

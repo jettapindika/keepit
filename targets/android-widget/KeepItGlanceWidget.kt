@@ -284,9 +284,7 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
       )
     }
 
-    // Bottom row: #keepit SVG watermark + timestamp below on bottom-left + caption/subtitle above or alongside
-    val watermarkBadgePadH = 7f * density
-    val watermarkBadgePadV = 4.5f * density
+    // Bottom row: frameless #keepit SVG watermark + timestamp below on bottom-left + caption/subtitle
     val wmLogoWidth = 46f * density
     val wmLogoHeight = wmLogoWidth * (11f / 50f)
     val wmTimeText = formatWatermarkTimestamp(snapshot?.momentPostedAt ?: snapshot?.updatedAt)
@@ -294,41 +292,30 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
       color = Color.argb(235, 255, 255, 255)
       textSize = 9f * scaledDensity
       typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+      setShadowLayer(4f * density, 0f, 1.5f * density, Color.argb(210, 0, 0, 0))
     }
     val wmTimeWidth = wmTimePaint.measureText(wmTimeText)
     val wmGap = 2.5f * density
     val wmContentWidth = maxOf(wmLogoWidth, wmTimeWidth)
-    val wmHeight = wmLogoHeight + wmGap + wmTimePaint.textSize + watermarkBadgePadV * 2f
+    val wmHeight = wmLogoHeight + wmGap + wmTimePaint.textSize
     val wmRect = RectF(
       pad,
       h - pad - wmHeight,
-      pad + wmContentWidth + watermarkBadgePadH * 2f,
+      pad + wmContentWidth,
       h - pad
     )
-    val wmBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = Color.argb(168, 10, 7, 8)
-    }
-    val wmStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-      style = Paint.Style.STROKE
-      strokeWidth = 1f * density
-      color = Color.argb(72, 255, 255, 255)
-    }
-    val wmRadius = 8f * density
-    canvas.drawRoundRect(wmRect, wmRadius, wmRadius, wmBgPaint)
-    canvas.drawRoundRect(wmRect, wmRadius, wmRadius, wmStrokePaint)
     drawKeepItWatermarkSvgPath(
       canvas,
-      wmRect.left + watermarkBadgePadH,
-      wmRect.top + watermarkBadgePadV,
+      wmRect.left,
+      wmRect.top,
       wmLogoWidth / 50f
     )
     canvas.drawText(
       wmTimeText,
-      wmRect.left + watermarkBadgePadH,
-      wmRect.bottom - watermarkBadgePadV - wmTimePaint.descent() * 0.35f,
+      wmRect.left,
+      wmRect.bottom - wmTimePaint.descent() * 0.35f,
       wmTimePaint
     )
-
     val subtitle = when {
       snapshot == null -> "Tap to pair & share Moments"
       isLocked -> "Moment locked · Tap to post yours"
@@ -778,12 +765,30 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
         uriStr.startsWith("file://") -> {
           val path = Uri.parse(uriStr).path ?: return null
           val file = File(path)
-          if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
+          if (!file.exists()) return null
+          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeFile(file.absolutePath, bounds)
+          var sample = 1
+          val largest = maxOf(bounds.outWidth, bounds.outHeight)
+          while (largest / sample > 640) sample *= 2
+          BitmapFactory.decodeFile(
+            file.absolutePath,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+          )
         }
         uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
-          URL(uriStr).openStream().use { stream ->
-            BitmapFactory.decodeStream(stream)
-          }
+          val bytes = URL(uriStr).openStream().use { it.readBytes() }
+          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+          var sample = 1
+          val largest = maxOf(bounds.outWidth, bounds.outHeight)
+          while (largest / sample > 640) sample *= 2
+          BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+          )
         }
         uriStr.startsWith("data:image/svg+xml") -> {
           renderSimulatedSvgDataUriToBitmap(uriStr)

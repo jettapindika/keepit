@@ -406,7 +406,17 @@ export function KeepItWatermarkLogo({
       accessible
       accessibilityRole="image"
       accessibilityLabel="#keepit"
-      style={[{ width, height: resolvedHeight }, style]}>
+      style={[
+        {
+          width,
+          height: resolvedHeight,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.85,
+          shadowRadius: 3,
+        },
+        style,
+      ]}>
       <Image
         source={{ uri }}
         contentFit="contain"

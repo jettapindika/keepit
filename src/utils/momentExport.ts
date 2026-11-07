@@ -10,14 +10,38 @@ import { exportNativeCompositeMomentJpeg } from '../../modules/keepit-widget-bri
 export const KEEPIT_WATERMARK_SVG_PATH_D =
   'M4.20738 8.50945L7.35848 0.233129H9.53048L6.36738 8.50945H4.20738ZM0.829146 6.86584L1.50226 5.09401H8.49826L7.82515 6.86584H0.829146ZM1.00338 8.50945L4.15448 0.233129H6.32648L3.16338 8.50945H1.00338ZM2.02195 3.75348L2.69506 1.98165H9.67906L9.00595 3.75348H2.02195ZM8.91241 8.50945L10.9355 0.233129H13.2635L12.2776 4.26638L14.6991 2.21478H17.4111L14.2939 4.75596L15.9204 8.50945H13.4484L12.5096 5.96827L11.6963 6.64436L11.2404 8.50945H8.91241ZM19.2418 8.64933C18.5458 8.64933 17.9711 8.51334 17.5175 8.24134C17.064 7.96935 16.7531 7.58856 16.5848 7.09898C16.4184 6.60162 16.4159 6.02267 16.5773 5.36212C16.7388 4.70157 17.0234 4.1265 17.4311 3.63691C17.8387 3.14733 18.3358 2.76654 18.9223 2.49455C19.5107 2.21478 20.1529 2.0749 20.8489 2.0749C21.5449 2.0749 22.1097 2.21867 22.5435 2.5062C22.9871 2.78597 23.2812 3.18618 23.426 3.70685C23.5707 4.22752 23.5566 4.84145 23.3838 5.54863L23.2869 5.94496H18.8349C18.7578 6.32574 18.7965 6.60939 18.9509 6.7959C19.1152 6.97464 19.3573 7.06401 19.6773 7.06401C19.9093 7.06401 20.1158 7.02127 20.2967 6.93578C20.4856 6.8503 20.6426 6.69876 20.7678 6.48117L23.0433 6.59774C22.702 7.27383 22.1927 7.78673 21.5152 8.13643C20.8396 8.47837 20.0818 8.64933 19.2418 8.64933ZM19.1312 4.73265H21.2552C21.3365 4.3674 21.3039 4.09153 21.1575 3.90502C21.013 3.71074 20.7848 3.6136 20.4728 3.6136C20.1768 3.6136 19.9041 3.71462 19.6547 3.91668C19.4133 4.11873 19.2388 4.39072 19.1312 4.73265ZM26.7418 8.64933C26.0458 8.64933 25.4711 8.51334 25.0175 8.24134C24.564 7.96935 24.2531 7.58856 24.0848 7.09898C23.9184 6.60162 23.9159 6.02267 24.0773 5.36212C24.2388 4.70157 24.5234 4.1265 24.9311 3.63691C25.3387 3.14733 25.8358 2.76654 26.4223 2.49455C27.0107 2.21478 27.6529 2.0749 28.3489 2.0749C29.0449 2.0749 29.6097 2.21867 30.0435 2.5062C30.4871 2.78597 30.7812 3.18618 30.926 3.70685C31.0707 4.22752 31.0566 4.84145 30.8838 5.54863L30.7869 5.94496H26.3349C26.2578 6.32574 26.2965 6.60939 26.4509 6.7959C26.6152 6.97464 26.8573 7.06401 27.1773 7.06401C27.4093 7.06401 27.6158 7.02127 27.7967 6.93578C27.9856 6.8503 28.1426 6.69876 28.2678 6.48117L30.5433 6.59774C30.202 7.27383 29.6927 7.78673 29.0152 8.13643C28.3396 8.47837 27.5818 8.64933 26.7418 8.64933ZM26.6312 4.73265H28.7552C28.8365 4.3674 28.8039 4.09153 28.6575 3.90502C28.513 3.71074 28.2848 3.6136 27.9728 3.6136C27.6768 3.6136 27.4041 3.71462 27.1547 3.91668C26.9133 4.11873 26.7388 4.39072 26.6312 4.73265ZM30.6686 10.258L32.6347 2.21478H34.9027L34.6287 3.532L34.487 3.47372C34.7571 3.02299 35.0977 2.67717 35.5086 2.43626C35.9194 2.19536 36.3649 2.0749 36.8449 2.0749C37.4209 2.0749 37.8747 2.21478 38.2063 2.49455C38.5379 2.77431 38.7469 3.16287 38.8334 3.66023C38.9217 4.14981 38.887 4.71711 38.7293 5.36212C38.5736 5.99936 38.3269 6.56665 37.9893 7.06401C37.6598 7.56136 37.2568 7.94992 36.7804 8.22969C36.312 8.50945 35.7898 8.64933 35.2138 8.64933C34.9098 8.64933 34.6391 8.59493 34.4017 8.48614C34.1662 8.36957 33.9741 8.20637 33.8254 7.99655C33.6847 7.78673 33.6015 7.53805 33.5757 7.25052L33.7431 7.20389L32.9966 10.258H30.6686ZM34.8539 7.02904C35.1899 7.02904 35.49 6.88139 35.7542 6.58608C36.0202 6.283 36.216 5.87502 36.3413 5.36212C36.4667 4.84922 36.4695 4.44512 36.3497 4.14981C36.2318 3.84673 36.0048 3.6952 35.6688 3.6952C35.4448 3.6952 35.2376 3.75737 35.0472 3.8817C34.8568 4.00604 34.6872 4.19255 34.5385 4.44123C34.3977 4.68991 34.2826 4.99687 34.1933 5.36212C34.1041 5.72736 34.069 6.03432 34.0882 6.283C34.1155 6.53168 34.1939 6.71819 34.3235 6.84253C34.4531 6.96687 34.6299 7.02904 34.8539 7.02904ZM38.9007 8.50945L40.4394 2.21478H42.7674L41.2287 8.50945H38.9007ZM40.5573 1.58532L40.9448 -6.10651e-06H43.3448L42.9573 1.58532H40.5573ZM45.2031 8.50945C44.4751 8.50945 43.983 8.34625 43.7268 8.01987C43.4725 7.6857 43.4337 7.15726 43.6103 6.43454L45.0037 0.734371H47.3317L46.0181 6.10815C45.9421 6.419 45.9539 6.63271 46.0534 6.74927C46.1628 6.85807 46.3535 6.91247 46.6255 6.91247H47.5135L47.1231 8.50945H45.2031ZM43.1475 3.81176L43.5378 2.21478H48.6618L48.2715 3.81176H43.1475Z';
 
+function toSvgBase64DataUri(svg: string): string {
+  const bytes = new TextEncoder().encode(svg.trim());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
+}
+
+export function decodeSvgDataUriToXml(svgDataUri: string): string {
+  if (svgDataUri.startsWith('data:image/svg+xml;base64,')) {
+    const b64 = svgDataUri.slice('data:image/svg+xml;base64,'.length);
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  }
+  if (svgDataUri.startsWith('data:image/svg+xml;utf8,')) {
+    return decodeURIComponent(svgDataUri.slice('data:image/svg+xml;utf8,'.length));
+  }
+  return decodeURIComponent(svgDataUri);
+}
+
 export function buildKeepItWatermarkSvgDataUri(fill = 'white'): string {
   const safeFill = fill.replace(/[^a-zA-Z0-9#(),.% -]/g, '') || 'white';
   const svg = `<svg width="50" height="11" viewBox="0 0 50 11" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="${safeFill}"/></svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  return toSvgBase64DataUri(svg);
 }
 
 export const KEEPIT_WATERMARK_SVG_DATA_URI = buildKeepItWatermarkSvgDataUri('white');
-
 export type StoryThemePreset = 'midnight' | 'terracotta' | 'forest' | 'neon';
 
 export const STORY_THEME_PRESETS: readonly {
@@ -214,7 +238,7 @@ export function buildMomentCompositeSvgDataUri(params: {
       </svg>
     `;
 
-    return `data:image/svg+xml;utf8,${encodeURIComponent(svg3x4.trim())}`;
+    return toSvgBase64DataUri(svg3x4);
   }
 
   const theme =
@@ -346,7 +370,7 @@ export function buildMomentCompositeSvgDataUri(params: {
     </svg>
   `;
 
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg9x16.trim())}`;
+  return toSvgBase64DataUri(svg9x16);
 }
 
 async function loadDrawableImageOnWeb(uri: string): Promise<HTMLImageElement | null> {
@@ -789,11 +813,9 @@ async function resolveExportSourceFileOnNative(params: {
   const { svgDataUri, svgName } = params;
 
   // Always write the full composite SVG (which contains both primary + secondary PIP photos + #keepit + timestamp watermark)
-  if (svgDataUri.startsWith('data:image/svg+xml;utf8,')) {
+  if (svgDataUri.startsWith('data:image/svg+xml')) {
     try {
-      const rawSvg = decodeURIComponent(
-        svgDataUri.slice('data:image/svg+xml;utf8,'.length)
-      );
+      const rawSvg = decodeSvgDataUriToXml(svgDataUri);
       const svgFile = new FileSystem.File(FileSystem.Paths.cache, svgName);
       await svgFile.write(rawSvg);
       return { file: svgFile, filename: svgName, mimeType: 'image/svg+xml' };

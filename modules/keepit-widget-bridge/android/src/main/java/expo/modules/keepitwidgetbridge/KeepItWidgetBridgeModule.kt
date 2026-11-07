@@ -16,6 +16,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
+import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -75,6 +76,60 @@ class KeepItWidgetBridgeModule : Module() {
       appWidgetManager.requestPinAppWidget(componentName, null, null)
     }
 
+
+    AsyncFunction("extractVideoThumbnailJpegAsync") Coroutine { videoUri: String ->
+      if (videoUri.isBlank()) return@Coroutine null
+      val retriever = MediaMetadataRetriever()
+      try {
+        if (videoUri.startsWith("file://")) {
+          val path = Uri.parse(videoUri).path ?: return@Coroutine null
+          retriever.setDataSource(path)
+        } else {
+          retriever.setDataSource(context, Uri.parse(videoUri))
+        }
+        val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        val firstFrame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+          ?: retriever.frameAtTime
+          ?: return@Coroutine null
+        val endTimestampUs = if (durationMs > 800L) (durationMs - 300L) * 1000L else (durationMs * 500L)
+        val lastFrame = retriever.getFrameAtTime(endTimestampUs, MediaMetadataRetriever.OPTION_CLOSEST)
+          ?: firstFrame
+
+        fun saveScaledJpeg(bmp: Bitmap, tag: String): String {
+          val maxDim = 960
+          val scale = minOf(1f, maxDim.toFloat() / maxOf(bmp.width, bmp.height).coerceAtLeast(1))
+          val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+              bmp,
+              (bmp.width * scale).toInt().coerceAtLeast(1),
+              (bmp.height * scale).toInt().coerceAtLeast(1),
+              true
+            )
+          } else {
+            bmp
+          }
+          val outFile = File(context.cacheDir, "keepit-vthumb-$tag-${System.currentTimeMillis()}.jpg")
+          FileOutputStream(outFile).use { fos ->
+            scaled.compress(Bitmap.CompressFormat.JPEG, 82, fos)
+          }
+          if (scaled !== bmp) scaled.recycle()
+          return Uri.fromFile(outFile).toString()
+        }
+
+        val startUri = saveScaledJpeg(firstFrame, "start")
+        val endUri = if (lastFrame !== firstFrame) saveScaledJpeg(lastFrame, "end") else startUri
+        if (lastFrame !== firstFrame) lastFrame.recycle()
+        firstFrame.recycle()
+        org.json.JSONObject().apply {
+          put("startUri", startUri)
+          put("endUri", endUri)
+        }.toString()
+      } catch (_: Throwable) {
+        null
+      } finally {
+        runCatching { retriever.release() }
+      }
+    }
     AsyncFunction("exportCompositeMomentJpegAsync") Coroutine { payloadJson: String ->
       val json = org.json.JSONObject(payloadJson)
       val aspect = json.optString("aspect", "3:4")
@@ -261,7 +316,7 @@ class KeepItWidgetBridgeModule : Module() {
     }
   }
 
-  private fun decodeUriToBitmap(uriStr: String): Bitmap? {
+  private fun decodeUriToBitmap(uriStr: String, maxDimension: Int = 1280): Bitmap? {
     if (uriStr.isBlank()) return null
     return runCatching {
       when {
@@ -272,18 +327,47 @@ class KeepItWidgetBridgeModule : Module() {
           val comma = uriStr.indexOf(',')
           if (comma < 0) return null
           val bytes = Base64.decode(uriStr.substring(comma + 1), Base64.DEFAULT)
-          BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+          val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+          BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+          )
         }
         uriStr.startsWith("file://") -> {
           val path = Uri.parse(uriStr).path ?: return null
-          BitmapFactory.decodeFile(path)
+          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeFile(path, bounds)
+          val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+          BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
         }
         uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
-          URL(uriStr).openStream().use { BitmapFactory.decodeStream(it) }
+          val bytes = URL(uriStr).openStream().use { it.readBytes() }
+          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+          val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+          BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+          )
         }
         else -> null
       }
     }.getOrNull()
+  }
+
+  private fun computeInSampleSize(width: Int, height: Int, maxDimension: Int): Int {
+    var sample = 1
+    val largest = maxOf(width, height)
+    while (largest / sample > maxDimension) {
+      sample *= 2
+    }
+    return sample
   }
 
   private fun drawCenterCrop(canvas: Canvas, source: Bitmap, dst: RectF) {

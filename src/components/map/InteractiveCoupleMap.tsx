@@ -134,11 +134,15 @@ export function InteractiveCoupleMap({
     return { x: point.x - worldLeft, y: point.y - worldTop };
   };
 
-  const tiles: { key: string; url: string; left: number; top: number }[] = [];
+  const tiles: { key: string; url: string; labelUrl: string; left: number; top: number }[] = [];
   if (anchor && mapStyle === 'street') {
     const numTilesAxis = 2 ** zoom;
-    const cartoTheme = isDark ? 'dark_all' : 'rastertiles/voyager';
-    const subdomains = ['a', 'b', 'c', 'd'] as const;
+    const baseService = isDark
+      ? 'Canvas/World_Dark_Gray_Base'
+      : 'Canvas/World_Light_Gray_Base';
+    const refService = isDark
+      ? 'Canvas/World_Dark_Gray_Reference'
+      : 'Canvas/World_Light_Gray_Reference';
     for (
       let tx = Math.floor(worldLeft / TILE_SIZE);
       tx <= Math.floor((worldLeft + width) / TILE_SIZE);
@@ -150,11 +154,12 @@ export function InteractiveCoupleMap({
         ty <= clamp(Math.floor((worldTop + HEIGHT) / TILE_SIZE), 0, numTilesAxis - 1);
         ty += 1
       ) {
-        const sub = subdomains[Math.abs(wrappedTx + ty) % subdomains.length];
-        const tileUrl = `https://${sub}.basemaps.cartocdn.com/${cartoTheme}/${zoom}/${wrappedTx}/${ty}@2x.png`;
+        const tileUrl = `https://services.arcgisonline.com/ArcGIS/rest/services/${baseService}/MapServer/tile/${zoom}/${ty}/${wrappedTx}`;
+        const labelUrl = `https://services.arcgisonline.com/ArcGIS/rest/services/${refService}/MapServer/tile/${zoom}/${ty}/${wrappedTx}`;
         tiles.push({
-          key: `${cartoTheme}_${zoom}_${tx}_${ty}_${tileAttempt}`,
+          key: `${isDark ? 'dark' : 'light'}_${zoom}_${tx}_${ty}_${tileAttempt}`,
           url: tileUrl,
+          labelUrl,
           left: Math.round(tx * TILE_SIZE - worldLeft),
           top: Math.round(ty * TILE_SIZE - worldTop),
         });
@@ -362,29 +367,42 @@ export function InteractiveCoupleMap({
             >
               {mapStyle === 'street'
                 ? tiles.map((tile) => (
-                    <Image
-                      key={tile.key}
-                      source={{ uri: tile.url }}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                      onLoad={() =>
-                        setLoadedTiles((current) =>
-                          current.includes(tile.key) ? current : [...current.slice(-80), tile.key],
-                        )
-                      }
-                      onError={() =>
-                        setFailedTiles((current) =>
-                          current.includes(tile.key) ? current : [...current.slice(-80), tile.key],
-                        )
-                      }
-                      style={{
-                        position: 'absolute',
-                        left: tile.left,
-                        top: tile.top,
-                        width: TILE_SIZE + 0.5,
-                        height: TILE_SIZE + 0.5,
-                      }}
-                    />
+                    <React.Fragment key={tile.key}>
+                      <Image
+                        source={{ uri: tile.url }}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        onLoad={() =>
+                          setLoadedTiles((current) =>
+                            current.includes(tile.key) ? current : [...current.slice(-80), tile.key],
+                          )
+                        }
+                        onError={() =>
+                          setFailedTiles((current) =>
+                            current.includes(tile.key) ? current : [...current.slice(-80), tile.key],
+                          )
+                        }
+                        style={{
+                          position: 'absolute',
+                          left: tile.left,
+                          top: tile.top,
+                          width: TILE_SIZE + 0.5,
+                          height: TILE_SIZE + 0.5,
+                        }}
+                      />
+                      <Image
+                        source={{ uri: tile.labelUrl }}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        style={{
+                          position: 'absolute',
+                          left: tile.left,
+                          top: tile.top,
+                          width: TILE_SIZE + 0.5,
+                          height: TILE_SIZE + 0.5,
+                        }}
+                      />
+                    </React.Fragment>
                   ))
                 : [52, 106, 160].map((radius) => (
                     <View
@@ -624,7 +642,7 @@ export function InteractiveCoupleMap({
                 </View>
               ) : null}
               <Text style={[styles.metaText, { color: colors.inkMuted }]}>
-                {scaleMeters}m · z{zoom} · © OSM · CARTO
+                {scaleMeters}m · z{zoom} · © Esri · OSM
               </Text>
             </View>
           </View>

@@ -64,7 +64,9 @@ import {
 } from '@/utils/audioPreview';
 import {
   buildMomentCompositeSvgDataUri,
+  decodeSvgDataUriToXml,
   exportAndShareCompositeMoment,
+  KEEPIT_WATERMARK_SVG_DATA_URI,
   KEEPIT_WATERMARK_SVG_PATH_D,
 } from '@/utils/momentExport';
 import {
@@ -916,7 +918,12 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     );
     Platform.OS = 'web';
 
-    const svg3x4 = decodeURIComponent(
+    assert.ok(
+      KEEPIT_WATERMARK_SVG_DATA_URI.startsWith('data:image/svg+xml;base64,'),
+      'Watermark SVG data URI must be base64-encoded so native Glide Base64DataFetcher renders it'
+    );
+
+    const svg3x4 = decodeSvgDataUriToXml(
       buildMomentCompositeSvgDataUri({
         backUri: 'data:image/jpeg;base64,AAA',
         frontUri: 'data:image/jpeg;base64,BBB',
@@ -928,7 +935,7 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.ok(svg3x4.includes('#keepit'));
     assert.ok(svg3x4.includes(KEEPIT_WATERMARK_SVG_PATH_D));
     assert.ok(svg3x4.includes('Nov 6 · 02:30 PM'));
-    const svg9x16 = decodeURIComponent(
+    const svg9x16 = decodeSvgDataUriToXml(
       buildMomentCompositeSvgDataUri({
         backUri: 'data:image/jpeg;base64,AAA',
         frontUri: 'data:image/jpeg;base64,BBB',
