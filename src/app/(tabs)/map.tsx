@@ -676,7 +676,7 @@ export default function MapScreen() {
                     if (Platform.OS !== 'web') {
                       void Haptics.selectionAsync();
                     }
-                    router.push('/(tabs)/messages' as never);
+                    router.navigate('/(tabs)/messages' as never);
                   }}
                   style={[
                     styles.messageBtn,
@@ -685,7 +685,7 @@ export default function MapScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.messageBtnText, { color: colors.onAccent }]}>Message</Text>
+                  <Text pointerEvents="none" style={[styles.messageBtnText, { color: colors.onAccent }]}>Message</Text>
                 </Pressable>
               </View>
             ) : null}
@@ -697,7 +697,7 @@ export default function MapScreen() {
             ) : null}
 
             {/* Friends Rows */}
-            {friends.map((friend, index) => {
+            {friends.map((friend) => {
               const friendName = friend.display_name ?? 'Friend';
               const friendDistance =
                 mine?.lat != null &&

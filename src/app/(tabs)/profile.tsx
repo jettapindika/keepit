@@ -1019,7 +1019,9 @@ export default function ProfileScreen() {
               </View>
               ) : null}
               {/* Friends Circle List */}
-              {!isPartnerPaired && friendsList.length === 0 ? (
+              {friendsQuery.isLoading && friendsList.length === 0 ? (
+                <SkeletonBlock height={120} label="Loading Friends Circle..." />
+              ) : !isPartnerPaired && friendsList.length === 0 ? (
                 <View
                   style={[
                     styles.emptyFeedCard,

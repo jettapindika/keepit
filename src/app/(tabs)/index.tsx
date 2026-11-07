@@ -378,7 +378,7 @@ export default function HomeScreen() {
             nudging={nudging}
             nudgeFeedback={nudgeFeedback}
             onSendNudge={isPartnerPaired ? () => void handleSendNudge() : undefined}
-            onPressPair={() => router.push('/(auth)/pair')}
+            onPressPair={() => router.navigate('/(auth)/pair')}
             onOpenStatusSheet={() => router.push('/status-sheet')}
           />
         </RevealOnAppear>
@@ -728,7 +728,7 @@ export default function HomeScreen() {
                   <KeepItButton
                     label="Pair with Partner (Invite Code)"
                     variant="secondary"
-                    onPress={() => router.push('/(auth)/pair')}
+                    onPress={() => router.navigate('/(auth)/pair')}
                   />
                 )}
               </View>
@@ -931,7 +931,7 @@ export default function HomeScreen() {
                 <KeepItButton
                   label="Pair with Partner"
                   variant="secondary"
-                  onPress={() => router.push('/(auth)/pair')}
+                  onPress={() => router.navigate('/(auth)/pair')}
                 />
               ) : null}
             </View>

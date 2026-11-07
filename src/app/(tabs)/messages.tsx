@@ -24,7 +24,7 @@ import {
   sendDirectMessage,
   toggleDirectMessageReaction,
 } from '@/api/social';
-import { InlineNotice, KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
+import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { DirectMessageRecord } from '@/types/database';
@@ -418,9 +418,10 @@ export default function MessagesScreen() {
                       },
                     ]}>
                     <View
+                      pointerEvents="none"
                       style={[
                         styles.peerAvatarCircle,
-                        { backgroundColor: peer.accentColor },
+                        { backgroundColor: selected ? colors.surfaceElevated : colors.badgeBg },
                       ]}>
                       {peer.avatarPath ? (
                         <Image
@@ -429,10 +430,10 @@ export default function MessagesScreen() {
                           style={styles.peerAvatarImg}
                         />
                       ) : (
-                        <Text style={styles.peerAvatarLetter}>{monogram}</Text>
+                        <Text style={[styles.peerAvatarLetter, { color: selected ? colors.ink : colors.badgeFg }]}>{monogram}</Text>
                       )}
                     </View>
-                    <View style={styles.peerTextCol}>
+                    <View pointerEvents="none" style={styles.peerTextCol}>
                       <Text
                         numberOfLines={1}
                         style={[
@@ -447,7 +448,7 @@ export default function MessagesScreen() {
                           styles.peerRoleText,
                           { color: selected ? colors.canvas : colors.inkMuted, opacity: selected ? 0.78 : 1 },
                         ]}>
-                        {peer.isPartner ? '❤️ Partner' : peer.roleLabel}
+                        {peer.isPartner ? 'Partner' : peer.roleLabel}
                       </Text>
                     </View>
                   </Pressable>
@@ -507,6 +508,8 @@ export default function MessagesScreen() {
                 Pair with your partner or add friends to your Friends Circle on your Profile to send messages and 15s disappearing Snaps.
               </Text>
             </View>
+          ) : messagesQuery.isLoading && messages.length === 0 ? (
+            <SkeletonBlock height={140} label="Loading conversation..." />
           ) : messages.length === 0 ? (
             <View
               style={[
@@ -787,7 +790,7 @@ export default function MessagesScreen() {
                 borderTopColor: colors.border,
                 paddingHorizontal: spacing.md,
                 paddingTop: spacing.sm,
-                paddingBottom: 96,
+                paddingBottom: 148,
               },
             ]}>
             {/* Quick Emoji / Nudge Chips */}
@@ -810,7 +813,7 @@ export default function MessagesScreen() {
                       borderRadius: radii.pill,
                     },
                   ]}>
-                  <Text style={[styles.nudgeChipText, { color: colors.ink }]}>{chip}</Text>
+                  <Text pointerEvents="none" style={[styles.nudgeChipText, { color: colors.ink }]}>{chip}</Text>
                 </Pressable>
               ))}
             </ScrollView>
@@ -828,17 +831,18 @@ export default function MessagesScreen() {
                 style={[
                   styles.snapToggleBtn,
                   {
-                    backgroundColor: snapOnceMode ? '#D95D39' : colors.surface,
-                    borderColor: snapOnceMode ? '#F97316' : colors.border,
+                    backgroundColor: snapOnceMode ? colors.accentSoft : colors.surface,
+                    borderColor: snapOnceMode ? colors.warning : colors.border,
                     borderRadius: radii.pill,
                   },
                 ]}>
                 <Text
+                  pointerEvents="none"
                   style={[
                     styles.snapToggleLabel,
-                    { color: snapOnceMode ? '#FFFFFF' : colors.inkMuted },
+                    { color: snapOnceMode ? colors.warning : colors.inkMuted },
                   ]}>
-                  🔥 15s
+                  15s Snap
                 </Text>
               </Pressable>
 
@@ -859,7 +863,7 @@ export default function MessagesScreen() {
                   styles.textInput,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: snapOnceMode ? '#F97316' : colors.border,
+                    borderColor: snapOnceMode ? colors.warning : colors.border,
                     color: colors.ink,
                     borderRadius: radii.pill,
                   },

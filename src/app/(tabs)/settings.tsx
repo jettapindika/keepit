@@ -170,8 +170,9 @@ export default function SettingsScreen() {
             ) : !isPartnerPaired ? (
               <KeepItButton
                 label="Pair with Partner"
+                accessibilityLabel="Pair with Partner using Invite Code"
                 variant="secondary"
-                onPress={() => router.push('/(auth)/pair')}
+                onPress={() => router.navigate('/(auth)/pair')}
               />
             ) : null}
           </View>

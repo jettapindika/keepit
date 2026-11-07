@@ -361,7 +361,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
 
   return (
     <View
-      pointerEvents="none"
+      pointerEvents="box-none"
       style={[
         styles.outerWrap,
         {

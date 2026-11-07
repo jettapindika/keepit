@@ -48,3 +48,9 @@ Without environment variables, KeepIt runs out of the box in **Local Sandbox Mod
    EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
    ```
 4. For native widgets on physical devices/simulators, run `npx expo prebuild` and build via `npx expo run:ios` / `npx expo run:android` or EAS Build.
+
+## UX maintenance handoff
+
+The recent UX update adds permission primers, location pause controls, loading/error treatments, and navigation hit-target fixes. The strict antislop gate is still incomplete.
+
+Read [NEXT_AI_NOTES.md](NEXT_AI_NOTES.md) before continuing the UX audit. It lists the remaining contrast, control coverage, data states, keyboard focus, demo-content, palette, decision-rationale, and design-direction checks. Coordinate `DESIGN.md` changes with the owner instead of replacing their other-worktree update.
