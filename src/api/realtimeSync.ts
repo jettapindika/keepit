@@ -302,9 +302,28 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     const state = await readLocalMoments();
 
     const m = packet.moment;
-    state.moments[m.id] = m;
+    const existing = state.moments[m.id];
+    const mergedMoment: MomentRecord = existing
+      ? {
+          ...existing,
+          ...m,
+          back_photo_path:
+            m.back_photo_path || m.back_photo_url || existing.back_photo_path,
+          front_photo_path:
+            m.front_photo_path || m.front_photo_url || existing.front_photo_path,
+          back_photo_url:
+            m.back_photo_url || m.back_photo_path || existing.back_photo_url,
+          front_photo_url:
+            m.front_photo_url || m.front_photo_path || existing.front_photo_url,
+        }
+      : {
+          ...m,
+          back_photo_url: m.back_photo_url || m.back_photo_path,
+          front_photo_url: m.front_photo_url || m.front_photo_path,
+        };
+    state.moments[m.id] = mergedMoment;
     // Also maintain legacy key if needed so both lookups succeed
-    state.moments[`${m.prompt_id}:${m.user_id}`] = m;
+    state.moments[`${m.prompt_id}:${m.user_id}`] = mergedMoment;
 
     const promptMoments = Object.values(state.moments).filter(
       (item) => item.prompt_id === m.prompt_id && !item.user_id.startsWith('friend_')
@@ -323,7 +342,6 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
     await writeLocalMoments(state);
     return;
   }
-
   if (packet.kind === 'moment_delete') {
     const state = await readLocalMoments();
     for (const [k, rec] of Object.entries(state.moments)) {

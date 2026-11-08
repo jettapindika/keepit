@@ -31,8 +31,12 @@ interface KeepItWidgetBridgeNativeModule {
   requestPinWidgetAsync?(): Promise<boolean>;
   exportCompositeMomentJpegAsync?(payloadJson: string): Promise<string>;
   extractVideoThumbnailJpegAsync?(videoUri: string): Promise<string | null>;
+  compressImageToDataUriAsync?(
+    uriStr: string,
+    maxDimension: number,
+    quality: number
+  ): Promise<string | null>;
 }
-
 function getNativeBridge(): KeepItWidgetBridgeNativeModule | null {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
     return null;
@@ -266,6 +270,26 @@ export async function extractVideoDualFramesJpeg(
   } catch {
     return null;
   }
+}
+export async function compressImageForCrossDeviceShare(
+  uri: string,
+  maxDimension = 640,
+  quality = 68
+): Promise<string | null> {
+  if (!uri) return null;
+  const nativeBridge = getNativeBridge();
+  if (!nativeBridge?.compressImageToDataUriAsync) {
+    return null;
+  }
+  try {
+    const dataUri = await nativeBridge.compressImageToDataUriAsync(uri, maxDimension, quality);
+    if (dataUri && dataUri.startsWith('data:image/')) {
+      return dataUri;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export async function isKeepItWidgetPinned(): Promise<boolean> {

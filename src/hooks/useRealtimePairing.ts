@@ -2,6 +2,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import {
+  ensureCrossDeviceShareableUri,
+  readLocalMoments,
+  todayLocalDateString,
+} from '@/api/moments';
+import {
   fetchPairingSnapshot,
   normalizeInviteCode,
   RealtimeInvitePresence,
@@ -19,7 +24,7 @@ import {
   registerActiveDirectoryChannel,
   syncDirectoryPresence,
 } from '@/api/realtimeSync';
-import { matchesUserByQuery } from '@/api/social';
+import { fetchFriendsCircle, matchesUserByQuery } from '@/api/social';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
 import { UserProfile } from '@/types/database';
@@ -164,6 +169,54 @@ export function useRealtimePairing() {
           void queryClient.invalidateQueries({ queryKey: ['couple-locations'] });
         });
       })
+      .on('broadcast', { event: 'RequestRecentMoments' }, (msg) => {
+        const payload = msg.payload as { requesterId?: string } | undefined;
+        const currentUser = useSessionStore.getState().user;
+        if (!currentUser || payload?.requesterId === currentUser.id) return;
+        void (async () => {
+          const [state, friends] = await Promise.all([
+            readLocalMoments(),
+            fetchFriendsCircle({ userId: currentUser.id }),
+          ]);
+          const requesterIsFriend =
+            Boolean(payload?.requesterId) &&
+            friends.some((f) => f.friend_id === payload?.requesterId);
+          const today = todayLocalDateString();
+          const myTodayMoments = Object.values(state.moments).filter(
+            (m) =>
+              m?.id &&
+              m.user_id === currentUser.id &&
+              m.visibility !== 'partner' &&
+              (m.posted_at?.startsWith(today) || m.captured_at?.startsWith(today)) &&
+              (!currentUser.is_private ||
+                friends.some((f) => f.friend_id === payload?.requesterId && f.relationship === 'bestie') ||
+                !requesterIsFriend)
+          );
+          const seen = new Set<string>();
+          for (const m of myTodayMoments) {
+            if (seen.has(m.id)) continue;
+            seen.add(m.id);
+            const [portableBack, portableFront] = await Promise.all([
+              ensureCrossDeviceShareableUri(m.back_photo_url || m.back_photo_path),
+              ensureCrossDeviceShareableUri(m.front_photo_url || m.front_photo_path),
+            ]);
+            const shareable: typeof m = {
+              ...m,
+              back_photo_path: portableBack,
+              front_photo_path: portableFront,
+              back_photo_url: portableBack,
+              front_photo_url: portableFront,
+            };
+            await directoryChannel
+              .send({
+                type: 'broadcast',
+                event: 'couple_packet',
+                payload: { kind: 'moment_upsert', moment: shareable } satisfies CoupleSyncPacket,
+              })
+              .catch(() => {});
+          }
+        })();
+      })
       .on('broadcast', { event: 'couple_packet' }, (msg) => {
         const packet = msg.payload as CoupleSyncPacket | undefined;
         if (!packet) return;
@@ -173,6 +226,16 @@ export function useRealtimePairing() {
             void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
           } else if (packet.kind === 'profile_upsert') {
             emitDirectoryUserAnnounce(packet.profile);
+          } else if (
+            packet.kind === 'moment_upsert' ||
+            packet.kind === 'moment_delete' ||
+            packet.kind === 'moment_comment' ||
+            packet.kind === 'moment_comment_delete' ||
+            packet.kind === 'moment_reaction' ||
+            packet.kind === 'moment_snap_viewed'
+          ) {
+            void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
+            void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
           }
         });
       })
@@ -187,10 +250,16 @@ export function useRealtimePairing() {
                 couple: snap.couple,
               });
             });
+            void directoryChannel
+              .send({
+                type: 'broadcast',
+                event: 'RequestRecentMoments',
+                payload: { requesterId: currentUser.id },
+              })
+              .catch(() => {});
           }
         }
       });
-
     return () => {
       registerActiveDirectoryChannel(null);
       void client.removeChannel(directoryChannel);
@@ -267,10 +336,51 @@ export function useRealtimePairing() {
           void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
         });
       })
+      .on('broadcast', { event: 'RequestCoupleMoments' }, (msg) => {
+        const payload = msg.payload as { requesterId?: string } | undefined;
+        const currentUser = useSessionStore.getState().user;
+        if (!currentUser || payload?.requesterId === currentUser.id) return;
+        void (async () => {
+          const state = await readLocalMoments();
+          const myCoupleMoments = Object.values(state.moments).filter(
+            (m) => m?.id && m.couple_id === coupleId && m.user_id === currentUser.id
+          );
+          const seen = new Set<string>();
+          for (const m of myCoupleMoments.slice(0, 10)) {
+            if (seen.has(m.id)) continue;
+            seen.add(m.id);
+            const [portableBack, portableFront] = await Promise.all([
+              ensureCrossDeviceShareableUri(m.back_photo_url || m.back_photo_path),
+              ensureCrossDeviceShareableUri(m.front_photo_url || m.front_photo_path),
+            ]);
+            const shareable: typeof m = {
+              ...m,
+              back_photo_path: portableBack,
+              front_photo_path: portableFront,
+              back_photo_url: portableBack,
+              front_photo_url: portableFront,
+            };
+            await syncChannel
+              .send({
+                type: 'broadcast',
+                event: 'couple_packet',
+                payload: { kind: 'moment_upsert', moment: shareable } satisfies CoupleSyncPacket,
+              })
+              .catch(() => {});
+          }
+        })();
+      })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           registerActiveCoupleChannel(coupleId, syncChannel);
           void syncChannel.track({ profile: user }).catch(() => {});
+          void syncChannel
+            .send({
+              type: 'broadcast',
+              event: 'RequestCoupleMoments',
+              payload: { requesterId: user.id },
+            })
+            .catch(() => {});
         }
       });
 

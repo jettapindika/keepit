@@ -679,6 +679,8 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
     assert.equal(bundle1.friendMomentsToday?.length, 1);
     const soraPost = bundle1.friendMomentsToday![0];
     assert.equal(soraPost.id, friendPost.id);
+    assert.equal(soraPost.back_photo_url, 'data:image/jpeg;base64,FRIEND_BACK');
+    assert.equal(soraPost.front_photo_url, 'data:image/jpeg;base64,FRIEND_FRONT');
 
     await toggleMomentReaction({
       momentId: soraPost.id,
@@ -1378,5 +1380,117 @@ describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Ch
     } finally {
       Platform.OS = 'web';
     }
+  });
+
+  it('hydrates incoming Realtime partner and friend moment packets with visible photo URLs without leaking file:// paths', async () => {
+    const viewerId = 'user_viewer_photos';
+    const partnerId = 'user_partner_photos';
+    const friendId = 'user_friend_photos';
+    const coupleId = 'couple_photo_visibility';
+    const today = todayLocalDateString();
+
+    useSessionStore.setState({
+      user: {
+        id: viewerId,
+        display_name: 'Viewer',
+        username: 'viewer',
+        avatar_path: null,
+        timezone: 'UTC',
+        push_token: null,
+        created_at: new Date().toISOString(),
+      },
+      partner: {
+        id: partnerId,
+        display_name: 'Partner',
+        username: 'partner',
+        avatar_path: null,
+        timezone: 'UTC',
+        push_token: null,
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    await upsertUserProfile({
+      userId: friendId,
+      displayName: 'Friend Photos',
+      username: 'friend.photos',
+    });
+    await addFriendByHandleOrCode({
+      userId: viewerId,
+      query: '@friend.photos',
+      relationship: 'bestie',
+    });
+
+    // Viewer posts first so partner's moment unlocks
+    await submitDailyMoment({
+      coupleId,
+      promptId: `prompt_${coupleId}_${today}`,
+      userId: viewerId,
+      authorName: 'Viewer',
+      backUri: 'data:image/jpeg;base64,VIEWER_BACK',
+      frontUri: 'data:image/jpeg;base64,VIEWER_FRONT',
+    });
+
+    // Simulate incoming Realtime moment_upsert packets from Partner and Friend
+    await applyIncomingCouplePacket({
+      kind: 'moment_upsert',
+      moment: {
+        id: 'moment_partner_remote_1',
+        couple_id: coupleId,
+        prompt_id: `prompt_${coupleId}_${today}`,
+        user_id: partnerId,
+        author_name: 'Partner',
+        back_photo_path: 'data:image/jpeg;base64,PARTNER_REMOTE_BACK',
+        front_photo_path: 'data:image/jpeg;base64,PARTNER_REMOTE_FRONT',
+        back_blurhash: 'LKO2?U%2Tw=w]~RBVZRi};RPxuwH',
+        collage_photo_path: null,
+        caption: 'Partner shot',
+        captured_at: new Date().toISOString(),
+        posted_at: new Date().toISOString(),
+        late_by_seconds: 0,
+        is_late: false,
+        retake_count: 0,
+        lat: null,
+        lng: null,
+      },
+    });
+
+    await applyIncomingCouplePacket({
+      kind: 'moment_upsert',
+      moment: {
+        id: 'moment_friend_remote_1',
+        couple_id: `solo_${friendId}`,
+        prompt_id: `prompt_solo_${friendId}_${today}`,
+        user_id: friendId,
+        author_name: 'Friend Photos',
+        back_photo_path: 'data:image/jpeg;base64,FRIEND_REMOTE_BACK',
+        front_photo_path: 'data:image/jpeg;base64,FRIEND_REMOTE_FRONT',
+        back_blurhash: 'LKO2?U%2Tw=w]~RBVZRi};RPxuwH',
+        collage_photo_path: null,
+        caption: 'Friend shot',
+        captured_at: new Date().toISOString(),
+        posted_at: new Date().toISOString(),
+        late_by_seconds: 0,
+        is_late: false,
+        retake_count: 0,
+        lat: null,
+        lng: null,
+        visibility: 'everyone',
+      },
+    });
+
+    const bundle = await fetchTodayMomentBundle({ coupleId, userId: viewerId });
+    assert.equal(bundle.partner?.locked, false);
+    assert.equal(bundle.partner?.back_photo_url, 'data:image/jpeg;base64,PARTNER_REMOTE_BACK');
+    assert.equal(bundle.partner?.front_photo_url, 'data:image/jpeg;base64,PARTNER_REMOTE_FRONT');
+    assert.equal(bundle.friendMomentsToday?.length, 1);
+    assert.equal(
+      bundle.friendMomentsToday?.[0].back_photo_url,
+      'data:image/jpeg;base64,FRIEND_REMOTE_BACK'
+    );
+    assert.equal(
+      bundle.friendMomentsToday?.[0].front_photo_url,
+      'data:image/jpeg;base64,FRIEND_REMOTE_FRONT'
+    );
   });
 });

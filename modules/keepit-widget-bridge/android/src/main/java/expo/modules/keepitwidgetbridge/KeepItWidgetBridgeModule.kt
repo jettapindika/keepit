@@ -10,18 +10,22 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
-import android.net.Uri
+import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.text.TextPaint
 import android.util.Base64
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
@@ -130,6 +134,58 @@ class KeepItWidgetBridgeModule : Module() {
         runCatching { retriever.release() }
       }
     }
+
+    AsyncFunction("compressImageToDataUriAsync") Coroutine { uriStr: String, maxDimension: Int, quality: Int ->
+      if (uriStr.isBlank()) return@Coroutine null
+      val targetMax = maxDimension.coerceIn(128, 1280)
+      val initialQuality = quality.coerceIn(30, 92)
+      val decoded = decodeUriToBitmap(uriStr, targetMax) ?: return@Coroutine null
+      try {
+        val maxEdge = maxOf(decoded.width, decoded.height).coerceAtLeast(1)
+        val scale = minOf(1f, targetMax.toFloat() / maxEdge.toFloat())
+        val scaled = if (scale < 1f) {
+          Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * scale).toInt().coerceAtLeast(1),
+            (decoded.height * scale).toInt().coerceAtLeast(1),
+            true
+          )
+        } else {
+          decoded
+        }
+        try {
+          val baos = ByteArrayOutputStream()
+          var q = initialQuality
+          scaled.compress(Bitmap.CompressFormat.JPEG, q, baos)
+          while (baos.size() > 56_000 && q > 34) {
+            baos.reset()
+            q -= 12
+            scaled.compress(Bitmap.CompressFormat.JPEG, q.coerceAtLeast(30), baos)
+          }
+          if (baos.size() > 62_000) {
+            val smallerW = (scaled.width * 0.72f).toInt().coerceAtLeast(1)
+            val smallerH = (scaled.height * 0.72f).toInt().coerceAtLeast(1)
+            val smaller = Bitmap.createScaledBitmap(scaled, smallerW, smallerH, true)
+            try {
+              baos.reset()
+              smaller.compress(Bitmap.CompressFormat.JPEG, 52, baos)
+            } finally {
+              if (smaller !== scaled) smaller.recycle()
+            }
+          }
+          val bytes = baos.toByteArray()
+          if (bytes.isEmpty()) return@Coroutine null
+          "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+        } finally {
+          if (scaled !== decoded) scaled.recycle()
+        }
+      } catch (_: Throwable) {
+        null
+      } finally {
+        decoded.recycle()
+      }
+    }
+
     AsyncFunction("exportCompositeMomentJpegAsync") Coroutine { payloadJson: String ->
       val json = org.json.JSONObject(payloadJson)
       val aspect = json.optString("aspect", "3:4")
@@ -316,6 +372,31 @@ class KeepItWidgetBridgeModule : Module() {
     }
   }
 
+  private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+    val matrix = Matrix()
+    when (orientation) {
+      ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+      ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+      ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+      ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+      ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
+      ExifInterface.ORIENTATION_TRANSPOSE -> {
+        matrix.postRotate(90f)
+        matrix.preScale(-1f, 1f)
+      }
+      ExifInterface.ORIENTATION_TRANSVERSE -> {
+        matrix.postRotate(270f)
+        matrix.preScale(-1f, 1f)
+      }
+      else -> return bitmap
+    }
+    return runCatching {
+      val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+      if (rotated !== bitmap) bitmap.recycle()
+      rotated
+    }.getOrDefault(bitmap)
+  }
+
   private fun decodeUriToBitmap(uriStr: String, maxDimension: Int = 1280): Bitmap? {
     if (uriStr.isBlank()) return null
     return runCatching {
@@ -329,25 +410,64 @@ class KeepItWidgetBridgeModule : Module() {
           val bytes = Base64.decode(uriStr.substring(comma + 1), Base64.DEFAULT)
           val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+          if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
           val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
-          BitmapFactory.decodeByteArray(
+          val decoded = BitmapFactory.decodeByteArray(
             bytes,
             0,
             bytes.size,
             BitmapFactory.Options().apply { inSampleSize = sample }
-          )
+          ) ?: return null
+          val orientation = runCatching {
+            ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
+              ExifInterface.TAG_ORIENTATION,
+              ExifInterface.ORIENTATION_NORMAL
+            )
+          }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+          applyExifOrientation(decoded, orientation)
         }
         uriStr.startsWith("file://") -> {
           val path = Uri.parse(uriStr).path ?: return null
           val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeFile(path, bounds)
+          if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
           val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
-          BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+          val decoded = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: return null
+          val orientation = runCatching {
+            ExifInterface(path).getAttributeInt(
+              ExifInterface.TAG_ORIENTATION,
+              ExifInterface.ORIENTATION_NORMAL
+            )
+          }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+          applyExifOrientation(decoded, orientation)
+        }
+        uriStr.startsWith("content://") -> {
+          val uri = Uri.parse(uriStr)
+          val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+          if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+          val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+          val decoded = BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+          ) ?: return null
+          val orientation = runCatching {
+            ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
+              ExifInterface.TAG_ORIENTATION,
+              ExifInterface.ORIENTATION_NORMAL
+            )
+          }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+          applyExifOrientation(decoded, orientation)
         }
         uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
           val bytes = URL(uriStr).openStream().use { it.readBytes() }
           val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+          if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
           val sample = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
           BitmapFactory.decodeByteArray(
             bytes,
@@ -360,7 +480,6 @@ class KeepItWidgetBridgeModule : Module() {
       }
     }.getOrNull()
   }
-
   private fun computeInSampleSize(width: Int, height: Int, maxDimension: Int): Int {
     var sample = 1
     val largest = maxOf(width, height)

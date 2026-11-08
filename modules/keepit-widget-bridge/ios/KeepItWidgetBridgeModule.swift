@@ -80,6 +80,37 @@ public final class KeepItWidgetBridgeModule: Module {
       }
       return startUrl.absoluteString
     }
+    AsyncFunction("compressImageToDataUriAsync") { (uriStr: String, maxDimension: Int, quality: Int) -> String? in
+      guard !uriStr.isEmpty, let image = Self.loadUIImage(from: uriStr) else {
+        return nil
+      }
+      let targetMax = CGFloat(min(max(maxDimension, 128), 1280))
+      let maxEdge = max(image.size.width, image.size.height, 1)
+      let scale = min(1.0, targetMax / maxEdge)
+      let targetSize = CGSize(
+        width: max(1, round(image.size.width * scale)),
+        height: max(1, round(image.size.height * scale))
+      )
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1.0
+      let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+      let scaledImage = renderer.image { _ in
+        image.draw(in: CGRect(origin: .zero, size: targetSize))
+      }
+      var q = CGFloat(min(max(quality, 30), 92)) / 100.0
+      guard var jpegData = scaledImage.jpegData(compressionQuality: q) else {
+        return nil
+      }
+      while jpegData.count > 56_000 && q > 0.34 {
+        q -= 0.12
+        if let nextData = scaledImage.jpegData(compressionQuality: max(0.30, q)) {
+          jpegData = nextData
+        } else {
+          break
+        }
+      }
+      return "data:image/jpeg;base64," + jpegData.base64EncodedString()
+    }
     AsyncFunction("exportCompositeMomentJpegAsync") { (payloadJson: String) -> String in
       guard
         let data = payloadJson.data(using: .utf8),

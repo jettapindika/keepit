@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
+import { compressImageForCrossDeviceShare } from '../../modules/keepit-widget-bridge';
 export type ProfileImageKind = 'avatar' | 'banner';
 
 export interface PickedProfileImage {
@@ -152,9 +153,19 @@ async function pickNativeImageFile(kind: ProfileImageKind): Promise<PickedProfil
       if (!fileObj?.uri) return null;
 
       const mimeType = fileObj.type && fileObj.type.startsWith('image/') ? fileObj.type : 'image/jpeg';
+      const maxDim = kind === 'avatar' ? 320 : 720;
+      const compressedUri = await compressImageForCrossDeviceShare(fileObj.uri, maxDim, 70);
+      if (compressedUri && compressedUri.startsWith('data:image/')) {
+        return {
+          uri: compressedUri,
+          mimeType: 'image/jpeg',
+          name: fileObj.name ?? `${kind}.jpg`,
+        };
+      }
+
       const byteSize =
-        'size' in fileObj && typeof (fileObj as { size?: unknown }).size === 'number'
-          ? ((fileObj as { size: number }).size ?? 0)
+        'size' in fileObj && typeof fileObj.size === 'number'
+          ? (fileObj.size ?? 0)
           : 0;
       // Only inline small images (<60 KB) as base64; keep larger native picks as file:// / content:// URIs
       // so Android SQLite CursorWindow (2 MB limit) never overflows when saving profile in AsyncStorage.

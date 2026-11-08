@@ -1,10 +1,14 @@
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
-import { broadcastCoupleSync } from '@/api/realtimeSync';
+import {
+  broadcastCoupleSync,
+  buildUserDirectoryChannelTopic,
+} from '@/api/realtimeSync';
 import { fetchFriendsCircle, getFilterPresetMeta } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { formatMomentWatermarkTimestamp, KEEPIT_WATERMARK_SVG_PATH_D } from '@/utils/momentExport';
+import { compressImageForCrossDeviceShare } from '../../modules/keepit-widget-bridge';
 import {
   MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
   safeGetStorageItem,
@@ -163,20 +167,30 @@ export async function ensureCrossDeviceShareableUri(uri: string): Promise<string
   if (uri.startsWith('data:') || uri.startsWith('http://') || uri.startsWith('https://')) {
     return uri;
   }
-  if (Platform.OS !== 'web' && uri.startsWith('file://')) {
+  if (Platform.OS !== 'web' && (uri.startsWith('file://') || uri.startsWith('content://'))) {
     try {
-      const file = new FileSystem.File(uri);
-      const byteSize = typeof file.size === 'number' ? file.size : 0;
-      if (byteSize > 90_000) {
-        return uri;
-      }
-      const base64 = await file.base64();
-      // Keep base64 payload bounded (< 120 KB) so Android SQLite CursorWindow (2 MB) and Realtime Broadcast never overflow
-      if (base64 && base64.length > 0 && base64.length <= 120_000) {
-        return `data:image/jpeg;base64,${base64}`;
+      const compressedDataUri = await compressImageForCrossDeviceShare(uri, 640, 68);
+      if (compressedDataUri && compressedDataUri.startsWith('data:image/')) {
+        return compressedDataUri;
       }
     } catch {
-      // Fallback to original URI if File API read fails
+      // Fall back to direct file read below when native bridge is unavailable (e.g. unit tests)
+    }
+    if (uri.startsWith('file://')) {
+      try {
+        const file = new FileSystem.File(uri);
+        const byteSize = typeof file.size === 'number' ? file.size : 0;
+        if (byteSize > 180_000) {
+          return uri;
+        }
+        const base64 = await file.base64();
+        // Keep base64 payload bounded so Android SQLite CursorWindow (2 MB) and Realtime Broadcast never overflow
+        if (base64 && base64.length > 0 && base64.length <= 245_000) {
+          return `data:image/jpeg;base64,${base64}`;
+        }
+      } catch {
+        // Fallback to original URI if File API read fails
+      }
     }
   }
   return uri;
@@ -750,12 +764,16 @@ export async function fetchTodayMomentBundle(params: {
       media_type: m.media_type ?? 'photo',
     }));
 
+  const sessionPartnerId = useSessionStore.getState().partner?.id;
   const rawPartnerMoments = allForToday.filter(
     (m) =>
       m.user_id !== params.userId &&
       !m.user_id.startsWith('friend_') &&
       !friendIdsSet.has(m.user_id) &&
-      m.visibility !== 'friends'
+      m.visibility !== 'friends' &&
+      (m.couple_id === params.coupleId ||
+        m.prompt_id === prompt.id ||
+        (sessionPartnerId && m.user_id === sessionPartnerId))
   );
 
   const unlocked = Boolean(myMomentsToday.length > 0 && rawPartnerMoments.length > 0);
@@ -770,6 +788,7 @@ export async function fetchTodayMomentBundle(params: {
   const friendMomentsToday = allForToday
     .filter((m) => {
       if (m.user_id === params.userId) return false;
+      if (sessionPartnerId && m.user_id === sessionPartnerId) return false;
       if (!friendIdsSet.has(m.user_id)) return false;
       if (m.visibility === 'partner') return false;
       const friendEntry = friendsCircle.find((f) => f.friend_id === m.user_id);
@@ -778,8 +797,15 @@ export async function fetchTodayMomentBundle(params: {
       }
       return true;
     })
-    .map((m) => redactExpiredSnapMomentForViewer(m, params.userId, nowMs));
-
+    .map((m) => {
+      const redacted = redactExpiredSnapMomentForViewer(m, params.userId, nowMs);
+      const expired = isSnapOnceExpiredForViewer(redacted, params.userId, nowMs);
+      return {
+        ...redacted,
+        back_photo_url: expired ? null : (redacted.back_photo_url || redacted.back_photo_path),
+        front_photo_url: expired ? null : (redacted.front_photo_url || redacted.front_photo_path),
+      };
+    });
   const rawStreak = state.streaks[params.coupleId] ?? {
     couple_id: params.coupleId,
     current_count: unlocked ? 1 : 0,
@@ -1073,6 +1099,17 @@ export async function submitDailyMoment(params: {
     }
   }
 
+  // Prepare cross-device broadcast packet BEFORE writeLocalMoments spills oversized data: URIs to local file:// paths!
+  const broadcastBackPath = finalBackUrl.startsWith('http') ? finalBackUrl : finalBackPath;
+  const broadcastFrontPath = finalFrontUrl.startsWith('http') ? finalFrontUrl : finalFrontPath;
+  const broadcastMoment: MomentRecord = {
+    ...record,
+    back_photo_path: broadcastBackPath,
+    front_photo_path: broadcastFrontPath,
+    back_photo_url: broadcastBackPath,
+    front_photo_url: broadcastFrontPath,
+  };
+
   state.moments[record.id] = record;
   state.moments[`${prompt.id}:${params.userId}`] = record;
 
@@ -1096,18 +1133,16 @@ export async function submitDailyMoment(params: {
 
   await writeLocalMoments(state);
 
-  // Prefer lightweight URLs in Realtime broadcast packet when signed URLs exist
-  const broadcastMoment: MomentRecord = {
-    ...record,
-    back_photo_path:
-      finalBackUrl.startsWith('http') ? finalBackUrl : record.back_photo_path,
-    front_photo_path:
-      finalFrontUrl.startsWith('http') ? finalFrontUrl : record.front_photo_path,
-  };
   void broadcastCoupleSync(params.coupleId, {
     kind: 'moment_upsert',
     moment: broadcastMoment,
   });
+  if (record.visibility !== 'partner') {
+    void broadcastCoupleSync(buildUserDirectoryChannelTopic(), {
+      kind: 'moment_upsert',
+      moment: broadcastMoment,
+    });
+  }
   return {
     ...record,
     back_photo_url: record.back_photo_url || record.back_photo_path,
@@ -1209,7 +1244,24 @@ export async function updateMomentDetails(params: {
     }
   }
 
-  void broadcastCoupleSync(updated.couple_id, { kind: 'moment_upsert', moment: updated });
+  const [portableBack, portableFront] = await Promise.all([
+    ensureCrossDeviceShareableUri(updated.back_photo_url || updated.back_photo_path),
+    ensureCrossDeviceShareableUri(updated.front_photo_url || updated.front_photo_path),
+  ]);
+  const broadcastUpdated: MomentRecord = {
+    ...updated,
+    back_photo_path: portableBack,
+    front_photo_path: portableFront,
+    back_photo_url: portableBack,
+    front_photo_url: portableFront,
+  };
+  void broadcastCoupleSync(updated.couple_id, { kind: 'moment_upsert', moment: broadcastUpdated });
+  if (updated.visibility !== 'partner') {
+    void broadcastCoupleSync(buildUserDirectoryChannelTopic(), {
+      kind: 'moment_upsert',
+      moment: broadcastUpdated,
+    });
+  }
   return updated;
 }
 
@@ -1275,11 +1327,13 @@ export async function deleteMomentPost(params: {
     }
   }
 
-  void broadcastCoupleSync(params.coupleId, {
-    kind: 'moment_delete',
+  const deletePacket = {
+    kind: 'moment_delete' as const,
     momentId: params.momentId,
     userId: params.userId,
-  });
+  };
+  void broadcastCoupleSync(params.coupleId, deletePacket);
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), deletePacket);
 }
 
 export async function addMomentComment(params: {
@@ -1330,11 +1384,13 @@ export async function addMomentComment(params: {
     }
   }
 
-  void broadcastCoupleSync(params.coupleId, {
-    kind: 'moment_comment',
+  const commentPacket = {
+    kind: 'moment_comment' as const,
     momentId: params.momentId,
     comment,
-  });
+  };
+  void broadcastCoupleSync(params.coupleId, commentPacket);
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), commentPacket);
   return comment;
 }
 
@@ -1374,11 +1430,13 @@ export async function deleteMomentComment(params: {
     }
   }
 
-  void broadcastCoupleSync(params.coupleId, {
-    kind: 'moment_comment_delete',
+  const commentDeletePacket = {
+    kind: 'moment_comment_delete' as const,
     momentId: params.momentId,
     commentId: params.commentId,
-  });
+  };
+  void broadcastCoupleSync(params.coupleId, commentDeletePacket);
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), commentDeletePacket);
 }
 
 export async function toggleMomentReaction(params: {
@@ -1420,12 +1478,14 @@ export async function toggleMomentReaction(params: {
     }
   }
 
-  void broadcastCoupleSync(params.coupleId, {
-    kind: 'moment_reaction',
+  const reactionPacket = {
+    kind: 'moment_reaction' as const,
     momentId: params.momentId,
     userId: params.userId,
     emoji: nextEmoji,
-  });
+  };
+  void broadcastCoupleSync(params.coupleId, reactionPacket);
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), reactionPacket);
 }
 
 export async function markSnapOnceMomentState(params: {
@@ -1485,13 +1545,15 @@ export async function markSnapOnceMomentState(params: {
     }
   }
 
-  void broadcastCoupleSync(params.coupleId, {
-    kind: 'moment_snap_viewed',
+  const snapViewedPacket = {
+    kind: 'moment_snap_viewed' as const,
     momentId: params.momentId,
     viewerId: params.viewerId,
     openedAtIso: openedIsoToSend,
     expired: params.expired,
-  });
+  };
+  void broadcastCoupleSync(params.coupleId, snapViewedPacket);
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), snapViewedPacket);
 }
 
 export async function fetchUserMomentsFeed(params: {
