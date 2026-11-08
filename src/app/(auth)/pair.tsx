@@ -18,7 +18,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   buildInviteDeepLink,
+  buildInviteShareMessage,
   createOrRefreshInvite,
+  extractInviteCodeFromText,
   formatInviteCodeDisplay,
   normalizeInviteCode,
   redeemInviteCode,
@@ -66,10 +68,15 @@ export default function PairScreen() {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [screenError, setScreenError] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const [partnerCode, setPartnerCode] = useState(() => {
-    const rawCode = typeof params.code === 'string' && params.code.trim() ? params.code : pendingInviteCode ?? '';
-    return normalizeInviteCode(rawCode).slice(0, 6);
-  });
+  const incomingCodeParam = (() => {
+    const rawCode =
+      typeof params.code === 'string' && params.code.trim()
+        ? params.code
+        : pendingInviteCode ?? '';
+    return (extractInviteCodeFromText(rawCode) || normalizeInviteCode(rawCode)).slice(0, 6);
+  })();
+  const [partnerCode, setPartnerCode] = useState<string | null>(null);
+  const effectivePartnerCode = partnerCode ?? incomingCodeParam;
   const busy = loadingInvite || operation !== null || savingPairing;
   const navigationBusy = savingPairing || (operation !== null && operation !== 'invite');
   const inviteExpired = Boolean(inviteRecord?.invite_expires_at && new Date(inviteRecord.invite_expires_at).getTime() <= nowTick);
@@ -125,6 +132,7 @@ export default function PairScreen() {
   useEffect(() => {
     if (pendingInviteCode) setPendingInviteCode(null);
   }, [pendingInviteCode, setPendingInviteCode]);
+
 
   useEffect(() => {
     if (!copiedNotice) return;
@@ -215,11 +223,40 @@ export default function PairScreen() {
         throw new Error('This invite has expired. Create a new code before sharing it.');
       }
       const link = buildInviteDeepLink(inviteRecord.invite_code);
-      const formatted = formatInviteCodeDisplay(inviteRecord.invite_code);
-      const message = `Join me on KeepIt so we can share our daily Moment together.\nInvite code: ${formatted}\nLink: ${link}`;
+      const message = buildInviteShareMessage(inviteRecord.invite_code);
       if (share && Platform.OS !== 'web') {
-        await Share.share({ message, url: link });
+        try {
+          await Share.share(
+            Platform.OS === 'ios'
+              ? { title: 'Pair with me on KeepIt', message, url: link }
+              : { title: 'Pair with me on KeepIt', message },
+            { dialogTitle: 'Share KeepIt Partner Invite' }
+          );
+        } catch {
+          const copied = await Clipboard.setStringAsync(message);
+          if (!copied) {
+            throw new Error(
+              'Could not open the share sheet or copy the invite link. Copy the code manually.'
+            );
+          }
+          if (mounted.current) setCopiedNotice('Invite link and code copied.');
+          void Haptics.selectionAsync().catch(() => {});
+        }
       } else {
+        if (
+          share &&
+          Platform.OS === 'web' &&
+          typeof navigator !== 'undefined' &&
+          typeof navigator.share === 'function'
+        ) {
+          try {
+            await navigator.share({ title: 'Pair with me on KeepIt', text: message });
+            if (mounted.current) setCopiedNotice('Invite link shared.');
+            return;
+          } catch {
+            // Fall back to copying to clipboard when web share is dismissed or unsupported
+          }
+        }
         const copied = await Clipboard.setStringAsync(share ? message : inviteRecord.invite_code);
         if (!copied) throw new Error('Clipboard access was unavailable. Select the invite code and copy it manually.');
         if (mounted.current) setCopiedNotice(share ? 'Invite link and code copied.' : 'Invite code copied.');
@@ -237,8 +274,8 @@ export default function PairScreen() {
     setJoinError(null);
     try {
       const text = await Clipboard.getStringAsync();
-      const normalized = normalizeInviteCode(text);
-      if (normalized.length !== 6) throw new Error('Copy a 6-character invite code, or enter it below.');
+      const normalized = extractInviteCodeFromText(text) || normalizeInviteCode(text);
+      if (normalized.length !== 6) throw new Error('Copy a KeepIt invite link or 6-character code, or enter it below.');
       if (mounted.current) setPartnerCode(normalized);
     } catch (err) {
       if (mounted.current) setJoinError(err instanceof Error ? err.message : 'Clipboard access was unavailable. Enter the code instead.');
@@ -248,11 +285,11 @@ export default function PairScreen() {
   };
 
   const handleJoinPartner = async () => {
-    if (!user || loadingInvite || partnerCode.length !== 6 || !startOperation('join')) return;
+    if (!user || loadingInvite || effectivePartnerCode.length !== 6 || !startOperation('join')) return;
     setJoinError(null);
     Keyboard.dismiss();
     try {
-      const snapshot = await redeemInviteCode(user.id, normalizeInviteCode(partnerCode));
+      const snapshot = await redeemInviteCode(user.id, normalizeInviteCode(effectivePartnerCode));
       if (!mounted.current) return;
       if (Platform.OS !== 'web') void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setPairing(snapshot.couple, snapshot.partner);
@@ -332,17 +369,21 @@ export default function PairScreen() {
               autoCapitalize="characters"
               autoCorrect={false}
               autoComplete="off"
-              value={partnerCode}
+              value={effectivePartnerCode}
               editable={!busy}
               placeholder="6-character code"
               returnKeyType="go"
-              onChangeText={(value) => { setJoinError(null); setPartnerCode(normalizeInviteCode(value).slice(0, 6)); }}
+              onChangeText={(value) => {
+                setJoinError(null);
+                const extracted = extractInviteCodeFromText(value);
+                setPartnerCode(extracted || normalizeInviteCode(value).slice(0, 6));
+              }}
               onSubmitEditing={() => void handleJoinPartner()}
               style={styles.partnerInput}
             />
             <KeepItButton label="Paste Code" variant="secondary" loading={operation === 'paste'} loadingLabel="Reading Clipboard…" disabled={busy} onPress={() => void handlePaste()} />
             {joinError ? <InlineNotice message={joinError} tone="error" /> : null}
-            <KeepItButton label="Connect Our KeepIt" loading={operation === 'join'} loadingLabel="Connecting…" disabled={busy || partnerCode.length !== 6} onPress={() => void handleJoinPartner()} />
+            <KeepItButton label="Connect Our KeepIt" loading={operation === 'join'} loadingLabel="Connecting…" disabled={busy || effectivePartnerCode.length !== 6} onPress={() => void handleJoinPartner()} />
           </View>
           <View style={styles.soloBlock}>
             <Text style={[styles.body, { color: colors.inkMuted, textAlign: 'center' }]}>You can keep Moments on your own and pair later from Settings.</Text>

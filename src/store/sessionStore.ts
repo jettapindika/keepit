@@ -47,6 +47,32 @@ export function isEmailConfirmedUser(user: SupabaseAuthUserLike | null | undefin
   return typeof confirmedAt === 'string' && confirmedAt.trim().length > 0;
 }
 
+export function isEmailRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = 'code' in err && typeof err.code === 'string' ? err.code : '';
+  const status = 'status' in err && typeof err.status === 'number' ? err.status : 0;
+  const msg = 'message' in err && typeof err.message === 'string' ? err.message : '';
+  return (
+    code === 'over_email_send_rate_limit' ||
+    /email rate limit|over_email_send_rate_limit|for security purposes, you can only request this after|error sending confirmation email/i.test(
+      msg
+    ) ||
+    (status === 429 && /email|confirmation|security purposes|rate limit/i.test(msg))
+  );
+}
+
+export function formatEmailRateLimitMessage(err: unknown): string {
+  const msg =
+    err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+      ? err.message
+      : '';
+  const waitSecondsMatch = msg.match(/after\s+(\d+)\s+seconds/i);
+  if (waitSecondsMatch?.[1]) {
+    return `Confirmation email was just sent. Wait ${waitSecondsMatch[1]} seconds before requesting another email, or check your inbox and spam folder.`;
+  }
+  return 'Email confirmation rate limit reached (Supabase default is 2 emails/hour). If you already received a link, check your inbox or spam folder; otherwise wait before retrying or configure Custom SMTP / disable Confirm Email in Supabase Auth settings.';
+}
+
 export function extractAuthRedirectParams(rawUrl: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!rawUrl || typeof rawUrl !== 'string') return out;
@@ -104,6 +130,7 @@ interface SessionState {
     email: string;
     password: string;
   }) => Promise<void>;
+  resendConfirmationEmail: (email: string) => Promise<string>;
   setPairing: (couple: CoupleRecord | null, partner: UserProfile | null) => void;
   updateProfile: (params: {
     displayName: string;
@@ -486,6 +513,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           // the sign-in flow so we do not act as a password oracle / account hijack path.
           throw new Error('An account with this email already exists. Sign in instead.');
         }
+        if (isEmailRateLimitError(error)) {
+          throw new Error(formatEmailRateLimitMessage(error));
+        }
         // Email-confirmation pending, SMTP rate limits, and similar provider errors must
         // surface to the user instead of minting an unauthenticated local account.
         throw new Error(error.message || 'Could not create account.');
@@ -615,6 +645,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       couple: soloFallbackCouple,
       partner: pairing.partner,
     });
+  },
+
+  resendConfirmationEmail: async (rawEmail: string) => {
+    const cleanedEmail = rawEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedEmail)) {
+      throw new Error('Enter your email address first to resend the confirmation link.');
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      return 'Confirmation email is not required in local mode. Sign in directly.';
+    }
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: cleanedEmail,
+      options: {
+        emailRedirectTo: getAuthRedirectUrl(),
+      },
+    });
+    if (error) {
+      if (isEmailRateLimitError(error)) {
+        throw new Error(formatEmailRateLimitMessage(error));
+      }
+      throw new Error(error.message || 'Could not resend confirmation email. Try again in a moment.');
+    }
+    return `Confirmation link sent to ${cleanedEmail}. Check your inbox and spam folder.`;
   },
 
   setPairing: (couple, partner) => {

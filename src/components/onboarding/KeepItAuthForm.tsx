@@ -32,12 +32,15 @@ export function KeepItAuthForm({
   const { colors, radii, isDark } = useKeepItTheme();
   const signUpWithPassword = useSessionStore((s) => s.signUpWithPassword);
   const signInWithPassword = useSessionStore((s) => s.signInWithPassword);
+  const resendConfirmationEmail = useSessionStore((s) => s.resendConfirmationEmail);
   const [mode, setMode] = useState(initialMode);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [canResendConfirmation, setCanResendConfirmation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(initialNotice);
   const submitting = useRef(false);
@@ -93,7 +96,34 @@ export function KeepItAuthForm({
     if (submitting.current) return;
     setError(null);
     setNotice(null);
+    setCanResendConfirmation(false);
     setMode(nextMode);
+  };
+
+  const handleResendConfirmation = async () => {
+    if (submitting.current || resending) return;
+    submitting.current = true;
+    setResending(true);
+    setError(null);
+    setNotice(null);
+    Keyboard.dismiss();
+    try {
+      const message = await resendConfirmationEmail(email);
+      if (mounted.current) {
+        setNotice(message);
+      }
+    } catch (err) {
+      if (mounted.current) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Could not resend confirmation email. Try again in a moment.'
+        );
+      }
+    } finally {
+      submitting.current = false;
+      if (mounted.current) setResending(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -116,8 +146,12 @@ export function KeepItAuthForm({
         if (mode === 'signup' && /Check your inbox to confirm your email/i.test(msg)) {
           setMode('signin');
           setConfirmPassword('');
+          setCanResendConfirmation(true);
           setNotice(msg);
         } else {
+          if (/Confirm your email first|Email confirmation rate limit/i.test(msg)) {
+            setCanResendConfirmation(true);
+          }
           setError(msg);
         }
       }
@@ -247,6 +281,16 @@ export function KeepItAuthForm({
               disabled={loading}
               onPress={() => void handleSubmit()}
             />
+            {canResendConfirmation ? (
+              <KeepItButton
+                label="Resend Confirmation Email"
+                variant="secondary"
+                loading={resending}
+                loadingLabel="Sending Link…"
+                disabled={loading || resending}
+                onPress={() => void handleResendConfirmation()}
+              />
+            ) : null}
             {statusMessage ? (
               <Text accessibilityLiveRegion="polite" style={[styles.status, { color: colors.inkMuted }]}>{statusMessage}</Text>
             ) : null}

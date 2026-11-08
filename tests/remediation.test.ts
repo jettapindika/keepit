@@ -36,7 +36,15 @@ import {
   toggleMomentReaction,
   updateMomentDetails,
 } from '@/api/moments';
-import { createOrRefreshInvite, fetchPairingSnapshot, redeemInviteCode, upsertUserProfile } from '@/api/pairing';
+import {
+  buildInviteDeepLink,
+  buildInviteShareMessage,
+  createOrRefreshInvite,
+  extractInviteCodeFromText,
+  fetchPairingSnapshot,
+  redeemInviteCode,
+  upsertUserProfile,
+} from '@/api/pairing';
 import { applyIncomingCouplePacket } from '@/api/realtimeSync';
 import {
   addFriendByHandleOrCode,
@@ -54,7 +62,9 @@ import { getAuthRedirectUrl } from '@/api/supabase';
 import {
   CURRENT_STORAGE_SCHEMA_EPOCH,
   extractAuthRedirectParams,
+  formatEmailRateLimitMessage,
   isEmailConfirmedUser,
+  isEmailRateLimitError,
   STORAGE_SCHEMA_EPOCH_KEY,
   useSessionStore,
 } from '@/store/sessionStore';
@@ -379,6 +389,19 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
     assert.equal(hostSnapshot.couple?.user_b_id, guest.id);
     assert.equal(hostSnapshot.partner?.id, guest.id);
     await assert.rejects(() => redeemInviteCode('third_account', invite.invite_code), /already has 2 partners/);
+
+    // Also verify redeeming directly from a full shared invite message or keepit:// deep link
+    const host2 = await upsertUserProfile({ userId: 'invite_host_link', displayName: 'Host2' });
+    const guest2 = await upsertUserProfile({ userId: 'invite_guest_link', displayName: 'Guest2' });
+    const invite2 = await createOrRefreshInvite(host2.id);
+    const fullShareText = buildInviteShareMessage(invite2.invite_code);
+    const deepLink = buildInviteDeepLink(invite2.invite_code);
+    assert.equal(extractInviteCodeFromText(fullShareText), invite2.invite_code);
+    assert.equal(extractInviteCodeFromText(deepLink), invite2.invite_code);
+    const joinedViaShareMessage = await redeemInviteCode(guest2.id, fullShareText);
+    assert.equal(joinedViaShareMessage.couple?.id, invite2.id);
+    assert.equal(joinedViaShareMessage.couple?.state, 'active');
+    assert.equal(joinedViaShareMessage.partner?.id, host2.id);
   });
 
   it('rejects expired invites without pairing either account and permits joining a refreshed invite', async () => {
@@ -438,6 +461,15 @@ describe('P0-2: Authentication, Password Security & Session Cleanup', () => {
     assert.equal(
       isEmailConfirmedUser({ id: 'u1', email_confirmed_at: '2026-11-07T12:00:00.000Z' }),
       true
+    );
+    assert.equal(
+      isEmailRateLimitError({ code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' }),
+      true
+    );
+    assert.ok(
+      formatEmailRateLimitMessage({
+        message: 'For security purposes, you can only request this after 42 seconds.',
+      }).includes('42 seconds')
     );
     Platform.OS = 'web';
   });
