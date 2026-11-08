@@ -63,7 +63,7 @@ export const AppTextInput = forwardRef<React.ComponentRef<typeof TextInput>, Tex
       {...props}
       ref={ref}
       placeholderTextColor={placeholderTextColor ?? colors.placeholder}
-      selectionColor={colors.ink}
+      selectionColor={colors.primary}
       onFocus={(event) => {
         setFocused(true);
         onFocus?.(event);
@@ -98,10 +98,10 @@ export const AppTextInput = forwardRef<React.ComponentRef<typeof TextInput>, Tex
 export function AppSwitch({ style, onFocus, onBlur, value = false, disabled = false, ...props }: Omit<SwitchProps, 'thumbColor' | 'trackColor' | 'ios_backgroundColor'>) {
   const { colors } = useKeepItTheme();
   const [focused, setFocused] = useState(false);
-  const thumb = value ? colors.onAccent : colors.ink;
-  const track = { false: colors.controlBorder, true: colors.accent };
+  const thumb = '#FFFFFF';
+  const track = { false: colors.controlBorder, true: colors.primary };
   const browserColors = Platform.OS === 'web'
-    ? { activeThumbColor: colors.onAccent, activeTrackColor: colors.accent }
+    ? { activeThumbColor: '#FFFFFF', activeTrackColor: colors.primary }
     : {};
   const control = (
     <Switch
@@ -156,7 +156,7 @@ export function PageHeader({
           onPress={onBack}
           style={styles.back}
         >
-          <Text style={[styles.backLabel, { color: colors.inkMuted, fontFamily: type.fontSans }]}>
+          <Text style={[styles.backLabel, { color: colors.ink, fontFamily: type.fontSans }]}>
             {backLabel}
           </Text>
         </AppPressable>
@@ -205,7 +205,7 @@ export function EmptyState({ title, message, actionLabel, onAction }: {
 }) {
   const { colors, radii, type } = useKeepItTheme();
   return (
-    <View style={[styles.empty, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+    <View style={[styles.empty, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.ink, fontFamily: type.fontSans }]}>
         {title}
       </Text>
@@ -217,17 +217,17 @@ export function EmptyState({ title, message, actionLabel, onAction }: {
 
 const styles = StyleSheet.create({
   target: { minHeight: APP_LAYOUT.minimumTarget, minWidth: APP_LAYOUT.minimumTarget, borderCurve: 'continuous' },
-  input: { minHeight: 50, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, lineHeight: 22, borderWidth: 1, borderCurve: 'continuous' },
-  header: { gap: 4, paddingBottom: 4 },
+  input: { minHeight: 50, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, lineHeight: 22, borderWidth: 1, borderCurve: 'continuous' },
+  header: { gap: 6, paddingBottom: 4 },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   headingCopy: { flex: 1, minWidth: 160, gap: 6 },
   headerAction: { flexShrink: 1, maxWidth: '100%' },
-  title: { fontSize: 28, lineHeight: 34, fontWeight: '600', letterSpacing: -0.3 },
-  subtitle: { fontSize: 14, lineHeight: 21 },
-  sectionTitle: { fontSize: 18, lineHeight: 24, fontWeight: '600', letterSpacing: -0.2 },
+  title: { fontSize: 24, lineHeight: 28, fontWeight: '600', letterSpacing: 0 },
+  subtitle: { fontSize: 15, lineHeight: 21, letterSpacing: 0 },
+  sectionTitle: { fontSize: 18, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
   back: { alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 16 },
-  backLabel: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
-  empty: { padding: 24, gap: 12 },
+  backLabel: { fontSize: 14, lineHeight: 18, fontWeight: '600', letterSpacing: 0 },
+  empty: { paddingTop: 32, paddingHorizontal: 24, paddingBottom: 28, gap: 16, borderWidth: 1, borderCurve: 'continuous' },
   emptyBody: { fontSize: 15, lineHeight: 22 },
   switchTarget: { minWidth: 56, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   webSwitch: { width: 48, height: 24 },

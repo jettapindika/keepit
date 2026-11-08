@@ -261,7 +261,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   email: null,
   couple: null,
   partner: null,
-  themePreference: 'dark',
+  themePreference: 'light',
   motionEnabled: true,
   motionSpeed: 1,
   pendingInviteCode: null,

@@ -1,27 +1,22 @@
 import * as Haptics from 'expo-haptics';
+import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { formatStatusRemaining } from '@/api/statuses';
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
-import { CoupleEventRecord, StatusRecord } from '@/types/database';
+import { StatusRecord } from '@/types/database';
 
 interface StatusHeaderCardProps {
   partnerName: string;
   partnerStatus: StatusRecord | null;
   myStatus: StatusRecord | null;
   isPartnerPaired?: boolean;
-  latestNudge?: CoupleEventRecord | null;
-  currentUserId?: string;
-  nudging?: boolean;
-  nudgeFeedback?: string | null;
   loading?: boolean;
   statusError?: string | null;
-  nudgeError?: string | null;
   onRetryStatus?: () => void;
-  onRetryNudges?: () => void;
-  onSendNudge?: () => void;
+  onOpenChat: () => void;
   onPressPair?: () => void;
   onOpenStatusSheet: () => void;
 }
@@ -31,16 +26,10 @@ export function StatusHeaderCard({
   partnerStatus,
   myStatus,
   isPartnerPaired = true,
-  latestNudge,
-  currentUserId,
-  nudging = false,
-  nudgeFeedback,
   loading = false,
   statusError,
-  nudgeError,
   onRetryStatus,
-  onRetryNudges,
-  onSendNudge,
+  onOpenChat,
   onPressPair,
   onOpenStatusSheet,
 }: StatusHeaderCardProps) {
@@ -55,9 +44,9 @@ export function StatusHeaderCard({
   const partnerActive =
     partnerStatus && new Date(partnerStatus.expires_at).getTime() > now ? partnerStatus : null;
   const mine = myStatus && new Date(myStatus.expires_at).getTime() > now ? myStatus : null;
-  const incomingNudge =
-    latestNudge && latestNudge.actor_id !== currentUserId ? latestNudge : null;
-
+  const partnerStatusLabel = partnerActive
+    ? `${partnerName}: ${partnerActive.emoji} ${partnerActive.text}`
+    : null;
   const myStatusLabel = loading
     ? 'Loading status…'
     : mine
@@ -90,7 +79,7 @@ export function StatusHeaderCard({
           style={[
             styles.statusDot,
             {
-              backgroundColor: mine ? colors.success : colors.inkMuted,
+              backgroundColor: mine ? colors.primary : colors.placeholder,
             },
           ]}
         />
@@ -132,29 +121,10 @@ export function StatusHeaderCard({
         </AppPressable>
       ) : null}
 
-      {nudgeError && onRetryNudges ? (
-        <AppPressable
-          accessibilityRole="button"
-          accessibilityLabel="Retry loading nudges"
-          onPress={onRetryNudges}
-          style={[
-            styles.secondaryChip,
-            {
-              backgroundColor: colors.dangerSoft,
-              borderColor: colors.danger,
-              borderRadius: radii.pill,
-            },
-          ]}>
-          <Text numberOfLines={1} style={[styles.chipText, { color: colors.danger }]}>
-            Retry nudges
-          </Text>
-        </AppPressable>
-      ) : null}
-
-      {isPartnerPaired && partnerActive ? (
+      {isPartnerPaired && partnerStatusLabel ? (
         <View
           accessible
-          accessibilityLabel={`${partnerName}'s status: ${partnerActive.emoji} ${partnerActive.text}`}
+          accessibilityLabel={`${partnerName}'s status: ${partnerActive?.emoji} ${partnerActive?.text}`}
           style={[
             styles.secondaryChip,
             styles.statusReadout,
@@ -165,49 +135,9 @@ export function StatusHeaderCard({
             },
           ]}>
           <Text numberOfLines={1} style={[styles.chipText, { color: colors.ink }]}>
-            {`${partnerName}: ${partnerActive.emoji} ${partnerActive.text}`}
+            {partnerStatusLabel}
           </Text>
         </View>
-      ) : isPartnerPaired && (nudgeFeedback || incomingNudge) ? (
-        <View
-          accessible
-          style={[
-            styles.secondaryChip,
-            styles.statusReadout,
-            {
-              backgroundColor: colors.surfaceElevated,
-              borderColor: colors.border,
-              borderRadius: radii.pill,
-            },
-          ]}>
-          <Text numberOfLines={1} style={[styles.chipText, { color: colors.inkMuted }]}>
-            {nudgeFeedback ?? `${partnerName} nudged you`}
-          </Text>
-        </View>
-      ) : null}
-
-      {isPartnerPaired && onSendNudge ? (
-        <AppPressable
-          accessibilityRole="button"
-          accessibilityLabel={`Nudge ${partnerName}`}
-          accessibilityState={{ busy: nudging, disabled: nudging }}
-          disabled={nudging}
-          onPress={() => {
-            if (Platform.OS !== 'web') void Haptics.selectionAsync();
-            onSendNudge();
-          }}
-          style={[
-            styles.secondaryChip,
-            {
-              backgroundColor: colors.surfaceElevated,
-              borderColor: colors.controlBorder,
-              borderRadius: radii.pill,
-            },
-          ]}>
-          <Text numberOfLines={1} style={[styles.chipText, { color: colors.ink }]}>
-            {nudging ? 'Nudging…' : 'Nudge'}
-          </Text>
-        </AppPressable>
       ) : null}
 
       {!isPartnerPaired && onPressPair ? (
@@ -228,6 +158,31 @@ export function StatusHeaderCard({
           </Text>
         </AppPressable>
       ) : null}
+
+      <AppPressable
+        accessibilityRole="button"
+        accessibilityLabel="Open Chat"
+        onPress={() => {
+          if (Platform.OS !== 'web') void Haptics.selectionAsync();
+          onOpenChat();
+        }}
+        style={[
+          styles.chatChip,
+          {
+            backgroundColor: colors.surfaceElevated,
+            borderColor: colors.controlBorder,
+            borderRadius: radii.lg,
+          },
+        ]}>
+        <SymbolView
+          name={{ ios: 'bubble.left.and.bubble.right', android: 'chat_bubble', web: 'chat_bubble' }}
+          tintColor={colors.ink}
+          size={16}
+        />
+        <Text numberOfLines={1} style={[styles.chipText, { color: colors.ink }]}>
+          Chat
+        </Text>
+      </AppPressable>
     </View>
   );
 }
@@ -263,14 +218,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   primaryText: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '600',
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   subText: {
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 12,
+    lineHeight: 15,
     fontVariant: ['tabular-nums'],
   },
   secondaryChip: {
@@ -282,13 +237,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderCurve: 'continuous',
   },
+  chatChip: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderCurve: 'continuous',
+  },
   statusReadout: {
     flexShrink: 1,
     maxWidth: 170,
   },
   chipText: {
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 18,
     fontWeight: '600',
+    letterSpacing: 0,
   },
 });

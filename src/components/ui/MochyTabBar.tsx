@@ -26,17 +26,17 @@ export interface MochyTabBarProps {
   };
 }
 
-const tabOrder = ['index', 'map', 'messages', 'profile'] as const;
+const tabOrder = ['index', 'map', 'memories', 'profile'] as const;
 const icons = {
   index: { ios: 'house', android: 'home', web: 'home' },
   map: { ios: 'map', android: 'map', web: 'map' },
-  messages: { ios: 'bubble.left.and.bubble.right', android: 'chat_bubble', web: 'chat_bubble' },
+  memories: { ios: 'calendar', android: 'calendar_month', web: 'calendar_month' },
   profile: { ios: 'person.crop.circle', android: 'person', web: 'person' },
 } as const;
 
 export function MochyTabBar({ state, descriptors, emitter, navigateToTab, navigation }: MochyTabBarProps) {
   const router = useRouter();
-  const { colors } = useKeepItTheme();
+  const { colors, radii } = useKeepItTheme();
   const insets = useSafeAreaInsets();
   const { width, fontScale } = useWindowDimensions();
   const compactLabels = fontScale > 1.3 || width < 320;
@@ -78,7 +78,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
         pointerEvents="auto"
         accessibilityRole="tablist"
         accessibilityLabel="Main navigation"
-        style={[styles.dock, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        style={[styles.dock, { backgroundColor: colors.sheetSurface, borderColor: colors.border, borderRadius: radii.xl }]}
       >
         {routes.map((route, index) => {
           const focused = activeName === route.name;
@@ -94,7 +94,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                   accessibilityLargeContentTitle="Capture"
                   accessibilityHint="Capture a new Moment"
                   onPress={() => router.push('/camera')}
-                  style={[styles.capture, { backgroundColor: colors.accent }]}
+                  style={[styles.capture, { backgroundColor: colors.accent, borderRadius: radii.lg }]}
                 >
                   <SymbolView name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }} tintColor={colors.onAccent} size={22} />
                   {!compactLabels ? <Text style={[styles.label, { color: colors.onAccent }]}>Capture</Text> : null}
@@ -115,11 +115,21 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                   else if (navigation?.navigate) navigation.navigate(route.name, route.params);
                   else router.navigate(route.name === 'index' ? '/(tabs)' : `/(tabs)/${route.name}` as never);
                 }}
-                style={[styles.tab, { backgroundColor: focused ? colors.accentSoft : 'transparent' }]}
+                style={[
+                  styles.tab,
+                  {
+                    backgroundColor: focused ? colors.surface : 'transparent',
+                    borderRadius: radii.navItem,
+                  },
+                ]}
               >
                 <View pointerEvents="none" style={styles.tabContent}>
                   <SymbolView name={icons[route.name as keyof typeof icons]} tintColor={focused ? colors.ink : colors.inkMuted} size={21} />
-                  {!compactLabels ? <Text style={[styles.label, { color: focused ? colors.ink : colors.inkMuted, fontWeight: focused ? '700' : '500' }]}>{label}</Text> : null}
+                  {!compactLabels ? (
+                    <Text style={[styles.label, { color: focused ? colors.ink : colors.inkMuted, fontWeight: '600' }]}>
+                      {label}
+                    </Text>
+                  ) : null}
                 </View>
               </AppPressable>
             </React.Fragment>
@@ -132,9 +142,9 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
 
 const styles = StyleSheet.create({
   wrapper: { position: 'absolute', bottom: 0, left: 12, right: 12, alignItems: 'center', zIndex: 20 },
-  dock: { width: '100%', maxWidth: 600, minHeight: 76, borderWidth: 1, borderRadius: 22, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6 },
-  tab: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  tabContent: { alignItems: 'center', justifyContent: 'center', gap: 5 },
-  capture: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 10, alignItems: 'center', justifyContent: 'center', gap: 5 },
-  label: { fontSize: 12, lineHeight: 16, fontWeight: '600', textAlign: 'center' },
+  dock: { width: '100%', maxWidth: 600, minHeight: 72, borderWidth: 1, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6 },
+  tab: { flex: 1, minWidth: 0, minHeight: 56, paddingHorizontal: 8, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
+  tabContent: { alignItems: 'center', justifyContent: 'center', gap: 4 },
+  capture: { flex: 1, minWidth: 0, minHeight: 56, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  label: { fontSize: 13, lineHeight: 16, fontWeight: '600', letterSpacing: 0, textAlign: 'center' },
 });

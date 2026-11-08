@@ -19,9 +19,8 @@ export interface SharedPulseCardProps {
   myName: string;
   partnerName: string;
   isPartnerPaired: boolean;
-  nudging?: boolean;
   onCaptureMine?: () => void;
-  onNudgePartner?: () => void;
+  onOpenChat?: () => void;
   onOpenMemories?: () => void;
   onPressPair?: () => void;
 }
@@ -33,9 +32,8 @@ export function SharedPulseCard({
   myName,
   partnerName,
   isPartnerPaired,
-  nudging = false,
   onCaptureMine,
-  onNudgePartner,
+  onOpenChat,
   onOpenMemories,
   onPressPair,
 }: SharedPulseCardProps) {
@@ -267,13 +265,11 @@ export function SharedPulseCard({
                 }
                 onPress={onCaptureMine}
               />
-            ) : myPosted && !partnerPosted && isPartnerPaired && onNudgePartner ? (
+            ) : myPosted && !partnerPosted && isPartnerPaired && onOpenChat ? (
               <KeepItButton
-                label={`Nudge ${partnerName} for Day ${currentCount + 1}`}
-                loading={nudging}
-                loadingLabel="Sending nudge…"
+                label={`Chat with ${partnerName}`}
                 variant="secondary"
-                onPress={onNudgePartner}
+                onPress={onOpenChat}
               />
             ) : bothPosted && onOpenMemories ? (
               <KeepItButton

@@ -34,7 +34,7 @@ import { DirectMessageRecord } from '@/types/database';
 
 const DM_REACTION_EMOJIS = ['❤️', '🔥', '🥹', '😂', '👍'] as const;
 
-const QUICK_NUDGE_CHIPS = [
+const QUICK_REPLY_CHIPS = [
   'Miss you',
   'Post your #KeepIt',
   'Where are you?',
@@ -380,9 +380,11 @@ export default function MessagesScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}>
         {/* Header */}
         <RevealOnAppear revealKey="dm-header">
-          <View style={[styles.headerWrap, { paddingHorizontal: spacing.lg }]}> 
+          <View style={[styles.headerWrap, { paddingHorizontal: spacing.lg }]}>
             <PageHeader
-              title="Messages"
+              title="Chat"
+              onBack={() => router.navigate('/(tabs)')}
+              backLabel="Back to Home"
               subtitle={
                 activePeer
                   ? `Chat and 15s Snaps with ${activePeer.displayName}`
@@ -838,12 +840,12 @@ export default function MessagesScreen() {
                 alignSelf: 'center',
               },
             ]}>
-            {/* Quick Emoji / Nudge Chips */}
+            {/* Quick Chat Reply Chips */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.nudgeChipsScroll}>
-              {QUICK_NUDGE_CHIPS.map((chip) => (
+              {QUICK_REPLY_CHIPS.map((chip) => (
                 <AppPressable
                   key={chip}
                   accessibilityRole="button"
@@ -915,10 +917,10 @@ export default function MessagesScreen() {
                 style={[
                   styles.textInput,
                   {
-                    backgroundColor: colors.surface,
+                    backgroundColor: colors.surfaceElevated,
                     borderColor: colors.controlBorder,
                     color: colors.ink,
-                    borderRadius: 10,
+                    borderRadius: radii.input,
                   },
                 ]}
               />
@@ -931,8 +933,10 @@ export default function MessagesScreen() {
                 style={[
                   styles.sendBtn,
                   {
-                    backgroundColor: draftText.trim() ? colors.ink : colors.surfaceElevated,
-                    borderRadius: 10,
+                    backgroundColor: draftText.trim() ? colors.ink : colors.surface,
+                    borderColor: colors.border,
+                    borderWidth: draftText.trim() ? 0 : 1,
+                    borderRadius: radii.button,
                     opacity: !draftText.trim() || sending ? 0.5 : 1,
                   },
                 ]}>

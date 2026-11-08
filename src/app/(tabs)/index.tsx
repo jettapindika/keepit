@@ -5,7 +5,6 @@ import React, { useEffect, useState } from 'react';
 import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { fetchRecentNudges, sendPartnerNudge } from '@/api/extras';
 import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
@@ -48,8 +47,6 @@ export default function HomeScreen() {
 
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const [actionError, setActionError] = useState<string | null>(null);
-  const [nudging, setNudging] = useState(false);
-  const [nudgeFeedback, setNudgeFeedback] = useState<string | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const partnerName = partner?.display_name ?? 'Partner';
   const bundleQuery = useQuery({
@@ -73,11 +70,6 @@ export default function HomeScreen() {
     refetchInterval: 30_000,
   });
 
-  const nudgesQuery = useQuery({
-    queryKey: ['couple-nudges', couple?.id],
-    enabled: Boolean(couple?.id),
-    queryFn: () => fetchRecentNudges({ coupleId: couple!.id }),
-  });
 
   useEffect(() => {
     const client = supabase;
@@ -108,18 +100,6 @@ export default function HomeScreen() {
         },
         () => {
           void queryClient.invalidateQueries({ queryKey: ['couple-statuses', couple.id] });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'couple_events',
-          filter: `couple_id=eq.${couple.id}`,
-        },
-        () => {
-          void queryClient.invalidateQueries({ queryKey: ['couple-nudges', couple.id] });
         }
       )
       .subscribe();
@@ -190,7 +170,6 @@ export default function HomeScreen() {
       await Promise.all([
         bundleQuery.refetch(),
         statusQuery.refetch(),
-        nudgesQuery.refetch(),
         queryClient.invalidateQueries({ queryKey: ['friends-list'] }),
         queryClient.invalidateQueries({ queryKey: ['user-posts'] }),
       ]);
@@ -235,24 +214,6 @@ export default function HomeScreen() {
     }
   };
 
-  const handleSendNudge = async () => {
-    if (!couple || !user || nudging || !isPartnerPaired) return;
-    setNudging(true);
-    setNudgeFeedback(null);
-    try {
-      await sendPartnerNudge({
-        coupleId: couple.id,
-        userId: user.id,
-        note: `Thinking of you, ${partnerName}`,
-      });
-      setNudgeFeedback(`Nudged ${partnerName}`);
-      await queryClient.invalidateQueries({ queryKey: ['couple-nudges', couple.id] });
-    } catch (err) {
-      setNudgeFeedback(err instanceof Error ? err.message : 'Could not send nudge.');
-    } finally {
-      setNudging(false);
-    }
-  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
@@ -273,8 +234,8 @@ export default function HomeScreen() {
         contentContainerStyle={[
           styles.content,
           {
-            paddingHorizontal: 12,
-            paddingTop: 8,
+            paddingHorizontal: APP_LAYOUT.pageInset,
+            paddingTop: 12,
             paddingBottom: APP_LAYOUT.tabBarClearance,
           },
         ]}>
@@ -283,20 +244,14 @@ export default function HomeScreen() {
           partnerStatus={statusQuery.data?.partner ?? null}
           myStatus={statusQuery.data?.mine ?? null}
           isPartnerPaired={isPartnerPaired}
-          latestNudge={nudgesQuery.data?.[0] ?? null}
-          currentUserId={user?.id}
-          nudging={nudging}
-          nudgeFeedback={nudgeFeedback}
           loading={statusQuery.isLoading}
           statusError={
             statusQuery.isError
               ? 'Could not refresh statuses.'
               : null
           }
-          nudgeError={nudgesQuery.isError ? 'Could not load nudges.' : null}
           onRetryStatus={() => void statusQuery.refetch()}
-          onRetryNudges={() => void nudgesQuery.refetch()}
-          onSendNudge={isPartnerPaired ? () => void handleSendNudge() : undefined}
+          onOpenChat={() => router.navigate('/(tabs)/messages')}
           onPressPair={() => router.navigate('/(auth)/pair')}
           onOpenStatusSheet={() => router.push('/status-sheet')}
         />
@@ -436,7 +391,9 @@ export default function HomeScreen() {
                 backgroundColor: colors.surface,
                 borderColor: colors.border,
                 borderRadius: radii.group,
-                padding: spacing.xl,
+                paddingTop: APP_LAYOUT.cardPaddingTop,
+                paddingHorizontal: APP_LAYOUT.cardPadding,
+                paddingBottom: APP_LAYOUT.cardPaddingBottom,
               },
             ]}>
             <DualFrameMark size={48} />
@@ -475,10 +432,10 @@ const styles = StyleSheet.create({
     maxWidth: APP_LAYOUT.maxContentWidth,
     width: '100%',
     alignSelf: 'center',
-    gap: 10,
+    gap: 16,
   },
   feedStack: {
-    gap: 14,
+    gap: 16,
   },
   emptyCard: {
     alignItems: 'center',

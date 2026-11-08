@@ -155,7 +155,7 @@ export function MochyCard({
         styles.cardBase,
         {
           backgroundColor: colors.surface,
-          borderColor: focused ? colors.accent : colors.border,
+          borderColor: focused ? colors.focusRing : colors.border,
           borderRadius: radii.card,
         },
         animatedStyle,
@@ -178,7 +178,7 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
 }
 
-/** The monochrome action shape follows the approved 10px reference radius. */
+/** The monochrome action shape follows the approved 18px rounded button radius. */
 export function KeepItButton({
   label,
   onPress,
@@ -193,6 +193,7 @@ export function KeepItButton({
   const { enabled: motionEnabled, speed: motionSpeed } = useAppMotion();
   const scale = useSharedValue(1);
   const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const isDisabled = disabled || loading;
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -221,7 +222,7 @@ export function KeepItButton({
   };
 
   const bgByVariant = {
-    primary: colors.accent,
+    primary: hovered && !isDisabled ? colors.primary : colors.accent,
     secondary: colors.surfaceElevated,
     danger: colors.dangerSoft,
     ghost: 'transparent',
@@ -231,17 +232,16 @@ export function KeepItButton({
     primary: colors.onAccent,
     secondary: colors.ink,
     danger: colors.danger,
-    ghost: colors.inkMuted,
+    ghost: colors.ink,
   }[variant];
 
   const borderColor = focused
-    ? colors.ink
+    ? colors.focusRing
     : variant === 'secondary'
       ? colors.controlBorder
       : variant === 'danger'
         ? colors.danger
         : 'transparent';
-
   return (
     <AnimatedPressable
       accessibilityRole="button"
@@ -250,6 +250,8 @@ export function KeepItButton({
       disabled={isDisabled}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       onPress={handlePress}
@@ -257,7 +259,7 @@ export function KeepItButton({
         styles.buttonBase,
         {
           backgroundColor: bgByVariant,
-          borderRadius: radii.input,
+          borderRadius: variant === 'ghost' ? radii.none : radii.button,
           borderColor,
           borderWidth: variant === 'secondary' || variant === 'danger' ? 1 : 0,
           opacity: disabled && !loading ? 0.42 : 1,
@@ -286,7 +288,7 @@ export function InlineNotice({
   const palette = {
     error: { bg: colors.dangerSoft, border: colors.danger, fg: colors.danger },
     info: { bg: colors.surface, border: colors.border, fg: colors.inkMuted },
-    success: { bg: colors.accentSoft, border: colors.border, fg: colors.ink },
+    success: { bg: colors.surface, border: colors.primary, fg: colors.ink },
   }[tone];
 
   return (
@@ -479,7 +481,7 @@ const styles = StyleSheet.create({
   },
   buttonBase: {
     minHeight: 54,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
@@ -489,23 +491,23 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '600',
     letterSpacing: 0,
-    lineHeight: 22,
+    lineHeight: 20,
     textAlign: 'center',
     flexShrink: 1,
   },
   notice: {
     borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderCurve: 'continuous',
   },
   noticeText: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 21,
     fontWeight: '600',
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   skeletonBase: {
     width: '100%',

@@ -187,13 +187,13 @@ export function KeepItAuthForm({
             disabled={loading}
             onPress={handleBack}
             style={styles.backButton}>
-            <Text style={[styles.modeText, { color: colors.inkMuted }]}>Back to intro</Text>
+            <Text style={[styles.modeText, { color: colors.ink }]}>Back to intro</Text>
           </AppPressable>
           <PageHeader
             title={mode === 'signup' ? 'Create your account' : 'Welcome back'}
             subtitle="Keep every moment, together."
           />
-          <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group }]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group }]}>
             {mode === 'signup' ? (
               <AuthField
                 key="input-first-name"
@@ -266,9 +266,9 @@ export function KeepItAuthForm({
             {notice ? <InlineNotice message={notice} tone="success" /> : null}
             {error ? <InlineNotice message={error} tone="error" /> : null}
             <KeepItButton
-              label={mode === 'signup' ? 'Create Account' : 'Sign In'}
+              label={mode === 'signup' ? 'Create account' : 'Sign in'}
               loading={loading}
-              loadingLabel={mode === 'signup' ? 'Creating Account…' : 'Signing In…'}
+              loadingLabel={mode === 'signup' ? 'Creating account…' : 'Signing in…'}
               disabled={loading}
               onPress={() => void handleSubmit()}
             />
@@ -316,10 +316,10 @@ const styles = StyleSheet.create({
     gap: 28,
   },
   backButton: { alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 16 },
-  card: { padding: APP_LAYOUT.cardPadding, gap: 20, borderCurve: 'continuous' },
-  modeText: { fontSize: 15, lineHeight: 22, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
+  card: { paddingTop: 32, paddingHorizontal: 24, paddingBottom: 28, gap: 20, borderWidth: 1, borderCurve: 'continuous' },
+  modeText: { fontSize: 14, lineHeight: 18, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
   fieldGroup: { gap: 8 },
-  label: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
-  input: { minHeight: 52, fontSize: 16, lineHeight: 22 },
+  label: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
+  input: { minHeight: 50, fontSize: 16, lineHeight: 22 },
   status: { fontSize: 13, lineHeight: 20, textAlign: 'center' },
 });

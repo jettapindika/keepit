@@ -7,15 +7,15 @@ export type WalletArtSlide = 'access' | 'secure' | 'smart';
 const artwork = {
   access: {
     source: require('../../../assets/images/onboarding/access.svg'),
-    description: 'A golden camera, two photo prints, and a white hand presenting a daily moment',
+    description: 'A camera, two photo prints, and a hand presenting a daily moment',
   },
   secure: {
     source: require('../../../assets/images/onboarding/secure.svg'),
-    description: 'Two white hands sharing a pair of golden photo prints',
+    description: 'Two hands sharing a pair of daily moment photo prints',
   },
   smart: {
     source: require('../../../assets/images/onboarding/smart.svg'),
-    description: 'A calendar, saved photo memories, and a status balloon held by a white hand',
+    description: 'A calendar, saved photo memories, and a status balloon held by a hand',
   },
 };
 

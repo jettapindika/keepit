@@ -44,10 +44,10 @@ import { MomentRecord } from '@/types/database';
 import { pickProfileImage } from '@/utils/imageUpload';
 
 const BANNER_COLOR_SWATCHES = [
-  '#1C1C1E',
-  '#282830',
-  '#3A3A3C',
-  '#D95D39',
+  '#000000',
+  '#1876F2',
+  '#262626',
+  '#595959',
 ] as const;
 
 const PRONOUN_PRESETS = ['she/her', 'he/him', 'they/them'] as const;
@@ -65,24 +65,24 @@ function makeAvatarSvgDataUri(bgHex: string, glyph: string, label: string): stri
 
 const AVATAR_PRESETS = [
   {
-    id: 'sunset_cam',
-    label: 'Sunset',
-    uri: makeAvatarSvgDataUri('#D95D39', 'K', 'KEEPIT'),
+    id: 'threads_blue',
+    label: 'Blue',
+    uri: makeAvatarSvgDataUri('#1876F2', 'K', 'KEEPIT'),
   },
   {
     id: 'obsidian_dual',
-    label: 'Obsidian',
-    uri: makeAvatarSvgDataUri('#1C1C1E', 'II', 'DUAL'),
+    label: 'Black',
+    uri: makeAvatarSvgDataUri('#000000', 'II', 'DUAL'),
   },
   {
     id: 'slate_vinyl',
     label: 'Slate',
-    uri: makeAvatarSvgDataUri('#282830', 'M', 'MOMENT'),
+    uri: makeAvatarSvgDataUri('#262626', 'M', 'MOMENT'),
   },
   {
     id: 'graphite_film',
     label: '35mm',
-    uri: makeAvatarSvgDataUri('#3A3A3C', '35', 'FILM'),
+    uri: makeAvatarSvgDataUri('#595959', '35', 'FILM'),
   },
 ] as const;
 
@@ -116,7 +116,7 @@ export default function ProfileScreen() {
   const [draftBio, setDraftBio] = useState('');
   const [draftPronouns, setDraftPronouns] = useState('');
   const [draftMoodSong, setDraftMoodSong] = useState('');
-  const [draftBannerColor, setDraftBannerColor] = useState<string>('#1C1C1E');
+  const [draftBannerColor, setDraftBannerColor] = useState<string>('#000000');
   const [draftBannerUri, setDraftBannerUri] = useState('');
   const [draftWebsite, setDraftWebsite] = useState('');
   const [draftAvatarUri, setDraftAvatarUri] = useState('');
@@ -194,7 +194,7 @@ export default function ProfileScreen() {
   const displayName = user?.display_name ?? 'KeepIt Creator';
   const username = user?.username || buildDefaultUsername(displayName, userId);
   const friendCode = user?.friend_code || buildFriendCode(userId, displayName);
-  const bannerColor = user?.banner_color ?? '#1C1C1E';
+  const bannerColor = user?.banner_color ?? '#000000';
   const bannerPath = user?.banner_path ?? null;
   const pronouns = user?.pronouns ?? '';
   const bio = user?.bio ?? '';
@@ -525,17 +525,17 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
-      <View style={[styles.pageHeaderWrap, { paddingHorizontal: spacing.xl }]}>
+      <View style={[styles.pageHeaderWrap, { paddingHorizontal: 16 }]}>
         <PageHeader
           title="Profile"
           action={
             <View style={styles.headerActionGroup}>
               <AppPressable
                 accessibilityRole="button"
-                accessibilityLabel="Open Memories Calendar"
+                accessibilityLabel="Open Chat"
                 onPress={() => {
                   triggerHaptic();
-                  router.navigate('/(tabs)/memories');
+                  router.navigate('/(tabs)/messages');
                 }}
                 style={[
                   styles.iconHeaderBtn,
@@ -546,7 +546,11 @@ export default function ProfileScreen() {
                   },
                 ]}>
                 <SymbolView
-                  name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }}
+                  name={{
+                    ios: 'bubble.left.and.bubble.right',
+                    android: 'chat_bubble',
+                    web: 'chat_bubble',
+                  }}
                   tintColor={colors.ink}
                   size={18}
                 />
@@ -604,7 +608,7 @@ export default function ProfileScreen() {
                   style={StyleSheet.absoluteFill}
                 />
               ) : null}
-              <View style={[styles.bannerOverlayRow, { paddingHorizontal: spacing.xl }]}>
+              <View style={[styles.bannerOverlayRow, { paddingHorizontal: 16 }]}>
                 <View style={styles.topQuickButtons}>
                   {bannerPath ? (
                     <AppPressable
@@ -642,7 +646,7 @@ export default function ProfileScreen() {
           </RevealOnAppear>
 
           {/* Avatar + Identity Card */}
-          <View style={{ paddingHorizontal: spacing.xl }}>
+          <View style={{ paddingHorizontal: 16 }}>
             <View style={styles.avatarHeaderRow}>
               <AppPressable
                 accessibilityRole="button"
@@ -739,7 +743,7 @@ export default function ProfileScreen() {
             </View>
 
             {/* Identity Details */}
-            <View style={{ gap: 6, marginTop: spacing.sm }}>
+            <View style={{ gap: 6, marginTop: 12 }}>
               <View style={styles.nameAndPronounsRow}>
                 <Text style={[styles.displayNameText, { color: colors.ink }]}>{displayName}</Text>
                 {pronouns ? (
@@ -857,9 +861,9 @@ export default function ProfileScreen() {
                     backgroundColor: colors.surface,
                     borderColor: colors.border,
                     borderRadius: radii.card,
-                    marginTop: spacing.lg,
-                    paddingVertical: spacing.md,
-                    paddingHorizontal: spacing.sm,
+                    marginTop: 16,
+                    paddingVertical: 16,
+                    paddingHorizontal: 12,
                   },
                 ]}>
                 <View
@@ -948,7 +952,7 @@ export default function ProfileScreen() {
             ) : null}
 
             {/* Profile Sub-Tabs Switcher + Inline Action */}
-            <View style={[styles.subTabsBarRow, { marginTop: spacing.lg }]}>
+            <View style={[styles.subTabsBarRow, { marginTop: 20 }]}>
               <View
                 style={[
                   styles.subTabsTrack,
@@ -2128,7 +2132,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 18,
   },
   modalBackdrop: {
     flex: 1,
@@ -2306,12 +2310,12 @@ const styles = StyleSheet.create({
   handleText: {
     fontSize: 14,
     fontWeight: '600',
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   bioText: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '400',
     marginTop: 2,
   },
   badgesWrapRow: {
@@ -2350,17 +2354,17 @@ const styles = StyleSheet.create({
   },
   statValue: {
     fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: -0.3,
+    fontWeight: '600',
+    letterSpacing: 0,
   },
   statLabel: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '400',
   },
   statPartnerValue: {
     fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: -0.25,
+    fontWeight: '600',
+    letterSpacing: 0,
   },
   statDivider: {
     width: 1,
@@ -2387,9 +2391,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   subTabText: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: -0.2,
+    fontSize: 14,
+    fontWeight: '600',
+    letterSpacing: 0,
   },
   newPostIconBtn: {
     width: 48,

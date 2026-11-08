@@ -355,14 +355,14 @@ export default function PairScreen() {
           contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
             <AppPressable accessibilityRole="button" accessibilityLabel="Back" accessibilityState={{ disabled: navigationBusy }} disabled={navigationBusy} onPress={leavePairing} style={styles.back}>
-              <Text style={[styles.actionText, { color: colors.inkMuted, fontFamily: type.fontSans }]}>Back</Text>
+              <Text style={[styles.actionText, { color: colors.ink, fontFamily: type.fontSans }]}>Back</Text>
             </AppPressable>
             <PageHeader title="Pair with your partner" subtitle="Share your invite, or enter the code your partner sent you." />
           </View>
           {savingPairing ? <InlineNotice message="Saving your pairing…" tone="info" /> : null}
-          <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
             <SectionHeader title="Share an invite" subtitle="Send this code to your partner to connect your accounts." />
-            <View style={[styles.codeBox, { backgroundColor: colors.canvas, borderRadius: radii.input }]}>
+            <View style={[styles.codeBox, { backgroundColor: colors.canvas, borderColor: colors.border, borderRadius: radii.input }]}>
               {loadingInvite || operation === 'refresh' ? (
                 <View accessibilityLiveRegion="polite" style={styles.loadingRow}>
                   <ActivityIndicator color={colors.ink} />
@@ -394,7 +394,7 @@ export default function PairScreen() {
             )}
             {inviteError && inviteRecord && !inviteExpired ? <KeepItButton label="Retry Invite" variant="ghost" disabled={busy} onPress={() => void loadInvite()} /> : null}
           </View>
-          <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
             <SectionHeader title="Join with a code" subtitle="Already received an invite? Enter your partner’s 6-character code." />
             <Text style={[styles.actionText, { color: colors.ink }]}>Partner’s invite code</Text>
             <AppTextInput
@@ -440,9 +440,9 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
   body: { fontSize: 15, lineHeight: 22 },
   secondary: { fontSize: 13, lineHeight: 20, fontVariant: ['tabular-nums'] },
-  card: { padding: APP_LAYOUT.cardPadding, gap: 16, borderCurve: 'continuous' },
-  codeBox: { minHeight: 100, padding: 16, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  codeDisplay: { fontSize: 28, lineHeight: 36, fontWeight: '600', letterSpacing: 3, fontVariant: ['tabular-nums'], textAlign: 'center' },
+  card: { paddingTop: 32, paddingHorizontal: 24, paddingBottom: 28, gap: 16, borderWidth: 1, borderCurve: 'continuous' },
+  codeBox: { minHeight: 100, padding: 16, alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1 },
+  codeDisplay: { fontSize: 28, lineHeight: 36, fontWeight: '600', letterSpacing: 0, fontVariant: ['tabular-nums'], textAlign: 'center' },
   loadingRow: { gap: 10, alignItems: 'center' },
   secondaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   secondaryButton: { flexGrow: 1, flexBasis: 120 },

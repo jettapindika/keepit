@@ -22,8 +22,8 @@ import { ANIMATION_SPEEDS, formatAnimationSpeedLabel } from '@/theme/motion';
 import { APP_LAYOUT, ThemeMode, useKeepItTheme } from '@/theme/tokens';
 
 const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
-  { label: 'Dark', value: 'dark' },
   { label: 'Light', value: 'light' },
+  { label: 'Dark', value: 'dark' },
   { label: 'System', value: 'system' },
 ];
 
@@ -167,7 +167,7 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.content, { paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: spacing.lg, paddingBottom: APP_LAYOUT.tabBarClearance + insets.bottom }]}>
         <PageHeader title="Settings" subtitle="Account, couple space, and how KeepIt feels." onBack={busy ? undefined : () => router.navigate('/(tabs)')} backLabel="Back to Home" />
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.sm }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
           <SectionHeader title="Couple space" subtitle="Your shared archive and pairing status." />
           <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans }]}>You: {user?.display_name ?? 'Unknown'}</Text>
           {email ? <Text style={[styles.muted, { color: colors.inkMuted }]}>{email}</Text> : null}
@@ -176,13 +176,13 @@ export default function SettingsScreen() {
           {!isPartnerPaired ? <KeepItButton label="Pair with Partner" variant="secondary" disabled={busy !== null} onPress={() => router.navigate('/(auth)/pair')} /> : null}
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.lg }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
           <SectionHeader title="Appearance" subtitle="Use a light, dark, or device-matched palette." />
           <View accessibilityRole="radiogroup" accessibilityLabel="Theme" style={[styles.radioGroup, { backgroundColor: colors.canvas, borderColor: colors.controlBorder, borderRadius: radii.input }]}>
             {THEME_OPTIONS.map((option) => {
               const selected = themePreference === option.value;
-              return <AppPressable key={option.value} accessibilityRole="radio" accessibilityLabel={`${option.label} theme`} accessibilityState={{ checked: selected, disabled: preferenceSaving, busy: preferenceSaving }} disabled={preferenceSaving} onPress={() => void updatePreference(() => setThemePreference(option.value))} style={[styles.radioOption, { backgroundColor: selected ? colors.surfaceElevated : 'transparent', borderRadius: radii.input - 2 }]}>
-                <View style={[styles.radioDot, { borderColor: selected ? colors.ink : colors.controlBorder }]}>{selected ? <View style={[styles.radioDotInner, { backgroundColor: colors.ink }]} /> : null}</View>
+              return <AppPressable key={option.value} accessibilityRole="radio" accessibilityLabel={`${option.label} theme`} accessibilityState={{ checked: selected, disabled: preferenceSaving, busy: preferenceSaving }} disabled={preferenceSaving} onPress={() => void updatePreference(() => setThemePreference(option.value))} style={[styles.radioOption, { backgroundColor: selected ? colors.surface : 'transparent', borderRadius: radii.input - 4 }]}>
+                <View style={[styles.radioDot, { borderColor: selected ? colors.primary : colors.controlBorder }]}>{selected ? <View style={[styles.radioDotInner, { backgroundColor: colors.primary }]} /> : null}</View>
                 <Text style={[styles.radioText, { color: selected ? colors.ink : colors.inkMuted, fontFamily: type.fontSans }]}>{option.label}</Text>
               </AppPressable>;
             })}
@@ -208,12 +208,12 @@ export default function SettingsScreen() {
           ) : null}
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
           <SectionHeader title="Session" subtitle="Signing out keeps your account. You can sign in again later." />
           <KeepItButton label="Sign Out" loadingLabel="Signing out…" variant="secondary" disabled={busy !== null || confirmAction !== null} loading={busy === 'signout'} onPress={() => void executeSignOut()} />
         </View>
 
-        <View style={[styles.card, styles.dangerCard, { backgroundColor: colors.surface, borderColor: colors.danger, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
+        <View style={[styles.card, styles.dangerCard, { backgroundColor: colors.surface, borderColor: colors.danger, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
           <SectionHeader title="Danger zone" subtitle="Unpairing removes shared Moments and streaks for both partners. Deleting your account permanently removes your profile, pairing, Moment photos, statuses, and location history." />
           {error ? <InlineNotice message={error} tone="error" /> : null}
           {confirmAction ? (
@@ -238,7 +238,7 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: { flexGrow: 1, width: '100%', maxWidth: 640, alignSelf: 'center', gap: 20 },
-  card: {},
+  card: { borderWidth: 1, borderCurve: 'continuous' },
   dangerCard: { borderWidth: 1 },
   section: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
   body: { fontSize: 15, lineHeight: 22 },

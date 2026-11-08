@@ -2685,7 +2685,7 @@ const styles = StyleSheet.create({
     maxWidth: '62%',
   },
   photoMusicBadge: {
-    backgroundColor: '#0A0708',
+    backgroundColor: '#000000',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,

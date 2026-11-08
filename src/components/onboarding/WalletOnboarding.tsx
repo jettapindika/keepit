@@ -1,4 +1,3 @@
-import { useFonts } from 'expo-font';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -68,9 +67,6 @@ export function WalletOnboarding({
   const insets = useSafeAreaInsets();
   const { reduced: reducedMotion } = useAppMotion();
   const { colors, isDark } = useKeepItTheme();
-  const [fontsLoaded] = useFonts({
-    'SpaceMono-Bold': require('../../../assets/fonts/SpaceMono-Bold.ttf'),
-  });
   const [activeIndex, setActiveIndex] = useState(() => Math.max(0, Math.min(slides.length - 1, initialSlideIndex)));
   const [outgoingIndex, setOutgoingIndex] = useState<number | null>(null);
   const [direction, setDirection] = useState(1);
@@ -88,7 +84,7 @@ export function WalletOnboarding({
   const sheetWidth = Math.min(layout.contentWidth + layout.contentInset * 2, width - layout.viewportInset * 2);
   const artScale = Math.min(1, (width - layout.viewportInset * 2) / layout.artWidth, (heroHeight - 56) / layout.artHeight);
   const artTop = heroHeight - layout.artTopGap - layout.artHeight / 2 - (layout.artHeight * artScale) / 2;
-  const monoFamily = fontsLoaded ? 'SpaceMono-Bold' : type.monoFamily;
+  const sansFamily = type.sansFamily;
 
   const changeSlide = useCallback(
     (index: number) => {
@@ -245,7 +241,7 @@ export function WalletOnboarding({
 
           <View
             testID="onboarding-sheet"
-            style={[styles.sheet, { width: sheetWidth, backgroundColor: colors.surface }, adaptive ? styles.adaptiveSheet : styles.fixedSheet]}
+            style={[styles.sheet, { width: sheetWidth, backgroundColor: colors.surface, borderColor: colors.border }, adaptive ? styles.adaptiveSheet : styles.fixedSheet]}
           >
             <View style={[styles.copyViewport, !adaptive && styles.copyClipping]}>
               {visibleSlides.map((index) => (
@@ -288,17 +284,17 @@ export function WalletOnboarding({
 
             <View style={styles.primaryGap}>
               <OnboardingButton
-                label="CREATE ACCOUNT"
+                label="Create account"
                 primary
-                monoFamily={monoFamily}
+                sansFamily={sansFamily}
                 reducedMotion={reducedMotion}
                 onPress={onCreateAccount}
               />
             </View>
             <View style={styles.secondaryGap}>
               <OnboardingButton
-                label="I ALREADY HAVE AN ACCOUNT"
-                monoFamily={monoFamily}
+                label="I already have an account"
+                sansFamily={sansFamily}
                 reducedMotion={reducedMotion}
                 onPress={onSignIn}
               />
@@ -328,11 +324,11 @@ function PaginationIndicator({ active, reducedMotion }: { active: boolean; reduc
     <Animated.View
       style={[
         {
-          backgroundColor: colors.ink,
-          width: value.interpolate({ inputRange: [0, 1], outputRange: [4, 6] }),
-          height: value.interpolate({ inputRange: [0, 1], outputRange: [10, 16] }),
-          borderRadius: value.interpolate({ inputRange: [0, 1], outputRange: [2, 3] }),
-          opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
+          backgroundColor: active ? colors.primary : colors.ink,
+          width: value.interpolate({ inputRange: [0, 1], outputRange: [6, 20] }),
+          height: 6,
+          borderRadius: 3,
+          opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.22, 1] }),
         },
       ]}
     />
@@ -343,33 +339,34 @@ function OnboardingButton({
   label,
   primary = false,
   disabled = false,
-  monoFamily,
+  sansFamily,
   reducedMotion,
   onPress,
 }: {
   label: string;
   primary?: boolean;
   disabled?: boolean;
-  monoFamily: string;
+  sansFamily?: string;
   reducedMotion: boolean;
   onPress: () => void;
 }) {
   const { colors } = useKeepItTheme();
   const [pressed, setPressed] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [scale] = useState(() => new Animated.Value(1));
-  const [opacity] = useState(() => new Animated.Value(primary ? 1 : 0.9));
+  const [opacity] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
     const animation = Animated.parallel([
       Animated.timing(scale, {
-        toValue: primary && pressed && !reducedMotion ? 0.98 : 1,
+        toValue: pressed && !reducedMotion ? 0.985 : 1,
         duration: reducedMotion ? 0 : pressed ? motion.pressIn : motion.pressOut,
         easing: fadeEasing,
         useNativeDriver: nativeDriver,
       }),
       Animated.timing(opacity, {
-        toValue: disabled ? (primary ? 0.42 : 0.3) : pressed ? (primary ? 0.88 : 0.64) : primary ? 1 : 0.9,
+        toValue: disabled ? 0.42 : pressed ? 0.88 : 1,
         duration: reducedMotion ? 0 : pressed ? motion.pressIn : motion.pressOut,
         easing: fadeEasing,
         useNativeDriver: nativeDriver,
@@ -377,7 +374,7 @@ function OnboardingButton({
     ]);
     animation.start();
     return () => animation.stop();
-  }, [disabled, opacity, pressed, primary, reducedMotion, scale]);
+  }, [disabled, opacity, pressed, reducedMotion, scale]);
 
   return (
     <Animated.View style={{ opacity, transform: [{ scale }] }}>
@@ -388,19 +385,23 @@ function OnboardingButton({
         disabled={disabled}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
         onPress={onPress}
         style={[
           styles.button,
-          primary ? [styles.primaryButton, { backgroundColor: colors.ink }] : styles.secondaryButton,
+          primary
+            ? [styles.primaryButton, { backgroundColor: hovered ? colors.primary : colors.accent }]
+            : [styles.secondaryButton, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }],
           focused && [styles.focusRing, { outlineColor: colors.focusRing }],
         ]}
       >
         <Text style={[
           styles.buttonLabel,
           primary ? styles.primaryLabel : styles.secondaryLabel,
-          { fontFamily: monoFamily, color: primary ? colors.canvas : colors.ink },
+          { fontFamily: sansFamily, color: primary ? colors.onAccent : colors.ink },
         ]}>
           {label}
         </Text>
@@ -418,46 +419,48 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     minHeight: layout.sheetHeight,
     paddingHorizontal: layout.contentInset,
-    paddingTop: 34,
-    paddingBottom: 96,
+    paddingTop: 32,
+    paddingBottom: 28,
     borderRadius: layout.sheetRadius,
+    borderWidth: 1,
     borderCurve: 'continuous',
   },
-  fixedSheet: { height: layout.sheetHeight },
-  adaptiveSheet: { paddingBottom: 32 },
-  copyViewport: { minHeight: 120 },
+  fixedSheet: { minHeight: layout.sheetHeight },
+  adaptiveSheet: { paddingBottom: 28 },
+  copyViewport: { minHeight: 124 },
   copyClipping: { overflow: 'hidden' },
   outgoingCopy: { position: 'absolute', top: 0, left: 0, right: 0 },
   title: {
-    minHeight: 68,
+    minHeight: 70,
     fontFamily: type.sansFamily,
     fontSize: type.titleSize,
     fontWeight: '600',
     lineHeight: type.titleLineHeight,
-    letterSpacing: -0.3,
+    letterSpacing: 0,
     textAlign: 'center',
     includeFontPadding: false,
   },
   subtitle: {
-    minHeight: 40,
+    minHeight: 44,
     marginTop: 12,
     fontFamily: type.sansFamily,
     fontSize: type.bodySize,
     fontWeight: '400',
     lineHeight: type.bodyLineHeight,
+    letterSpacing: 0,
     textAlign: 'center',
     includeFontPadding: false,
   },
-  pagination: { height: 24, marginTop: 22, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' },
+  pagination: { height: 24, marginTop: 20, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center' },
   paginationDotBtn: { minHeight: 24, paddingHorizontal: 4, justifyContent: 'center', alignItems: 'center' },
-  primaryGap: { marginTop: 23 },
-  secondaryGap: { marginTop: 13 },
-  button: { width: '100%', paddingVertical: 10, paddingHorizontal: 4, justifyContent: 'center', alignItems: 'center', borderCurve: 'continuous' },
+  primaryGap: { marginTop: 24 },
+  secondaryGap: { marginTop: 12 },
+  button: { width: '100%', paddingVertical: 14, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', borderCurve: 'continuous' },
   primaryButton: { minHeight: layout.primaryButtonHeight, borderRadius: layout.buttonRadius },
-  secondaryButton: { minHeight: layout.secondaryButtonHeight },
-  buttonLabel: { lineHeight: 20, fontWeight: '700', textAlign: 'center', includeFontPadding: false, flexShrink: 1 },
-  primaryLabel: { fontSize: type.primarySize, letterSpacing: 0.8 },
-  secondaryLabel: { fontSize: type.secondarySize, letterSpacing: 1 },
-  focusRing: { outlineWidth: 2, outlineStyle: 'solid', outlineOffset: 4 },
+  secondaryButton: { minHeight: layout.secondaryButtonHeight, borderRadius: layout.buttonRadius, borderWidth: 1 },
+  buttonLabel: { lineHeight: 20, fontWeight: '600', textAlign: 'center', includeFontPadding: false, flexShrink: 1 },
+  primaryLabel: { fontSize: type.primarySize, letterSpacing: 0 },
+  secondaryLabel: { fontSize: type.secondarySize, letterSpacing: 0 },
+  focusRing: { outlineWidth: 2, outlineStyle: 'solid', outlineOffset: 3 },
   heroFocusRing: { outlineWidth: 2, outlineStyle: 'solid', outlineOffset: -4 },
 });

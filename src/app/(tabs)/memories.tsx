@@ -216,8 +216,6 @@ export default function MemoriesScreen() {
         <PageHeader
           title="Memories"
           subtitle={isPartnerPaired ? `${myName} & ${partnerName}` : myName}
-          onBack={() => router.navigate('/(tabs)')}
-          backLabel="Back to Home"
           action={
             <View style={styles.headerBadges}>
               <View
@@ -459,7 +457,7 @@ export default function MemoriesScreen() {
                         style={[
                           styles.cell,
                           styles.day,
-                          { backgroundColor: colors.canvas, borderRadius: radii.input },
+                          { backgroundColor: colors.canvas, borderColor: colors.border, borderRadius: 12 },
                         ]}>
                         <View style={styles.dateBadge}>
                           <Text style={[styles.dateNumber, { color: colors.inkMuted }]}>
@@ -486,7 +484,7 @@ export default function MemoriesScreen() {
                         {
                           backgroundColor: selected ? colors.ink : colors.surfaceElevated,
                           borderColor: selected ? colors.focusRing : colors.controlBorder,
-                          borderRadius: radii.input,
+                          borderRadius: 12,
                         },
                       ]}>
                       {thumbnail ? (
@@ -760,7 +758,7 @@ const styles = StyleSheet.create({
   day: {
     minWidth: 0,
     minHeight: 52,
-    borderWidth: 1.5,
+    borderWidth: 1,
     overflow: 'hidden',
   },
   thumbnail: { ...StyleSheet.absoluteFill },
