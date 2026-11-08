@@ -192,7 +192,9 @@ export async function syncDirectoryPresence(params: {
         };
         effectiveCouple =
           Object.values(parsed?.couples ?? {}).find(
-            (c) => c.user_a_id === params.profile.id && c.state === 'pending'
+            (c) =>
+              (c.user_a_id === params.profile.id || c.user_b_id === params.profile.id) &&
+              (c.state === 'active' || c.state === 'pending')
           ) ?? null;
       } catch {
         effectiveCouple = null;
@@ -202,8 +204,7 @@ export async function syncDirectoryPresence(params: {
   await activeDirectoryChannel
     .track({
       profile: params.profile,
-      couple:
-        effectiveCouple && effectiveCouple.state === 'pending' ? effectiveCouple : undefined,
+      couple: effectiveCouple && !effectiveCouple.id.startsWith('solo_') ? effectiveCouple : undefined,
     })
     .catch(() => {});
 }
