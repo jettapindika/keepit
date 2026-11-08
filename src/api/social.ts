@@ -16,6 +16,7 @@ import {
   buildDirectMessageSyncChannelTopic,
   buildUserDirectoryChannelTopic,
   getActiveDirectoryChannel,
+  subscribeDirectoryUserAnnounce,
 } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
@@ -386,14 +387,33 @@ async function tryResolveUserViaRealtimeDirectory(params: {
     waiter.resolve(found);
   };
 
-  const timer = setTimeout(() => finish(undefined), 2800);
+  const timer = setTimeout(() => finish(undefined), 3500);
 
-  const dirChannel =
+  const unsubAnnounce = subscribeDirectoryUserAnnounce((candidate) => {
+    if (
+      candidate &&
+      candidate.id !== params.userId &&
+      matchesUserByQuery(candidate, params.cleanedQuery)
+    ) {
+      finish(candidate);
+    }
+  });
+
+  const existingDir =
     activeDir ??
+    client
+      .getChannels()
+      .find(
+        (c) =>
+          c.topic === `realtime:${buildUserDirectoryChannelTopic()}` ||
+          c.topic === buildUserDirectoryChannelTopic()
+      );
+  const ownsDirChannel = !existingDir;
+  const dirChannel =
+    existingDir ??
     client.channel(buildUserDirectoryChannelTopic(), {
       config: { broadcast: { ack: true, self: false }, presence: { key: `lookup_${params.userId}` } },
     });
-  const ownsDirChannel = !activeDir;
 
   const onAnnounce = (msg: { payload?: unknown }) => {
     const candidate = extractProfileFromEntry(msg.payload);
@@ -440,7 +460,7 @@ async function tryResolveUserViaRealtimeDirectory(params: {
         }
       });
   } else {
-    dirChannel.on('broadcast', { event: 'UserAnnounce' }, onAnnounce);
+    checkPresence();
     void dirChannel
       .send({
         type: 'broadcast',
@@ -454,6 +474,7 @@ async function tryResolveUserViaRealtimeDirectory(params: {
     return await waiter.promise;
   } finally {
     clearTimeout(timer);
+    unsubAnnounce();
     if (ownsDirChannel) {
       void client.removeChannel(dirChannel);
     }

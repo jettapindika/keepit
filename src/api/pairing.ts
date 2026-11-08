@@ -3,6 +3,8 @@ import {
   buildUserDirectoryChannelTopic,
   broadcastCoupleSync,
   getActiveDirectoryChannel,
+  subscribeDirectoryInviteAnnounce,
+  syncDirectoryPresence,
 } from '@/api/realtimeSync';
 import { buildDefaultUsername, buildFriendCode } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
@@ -201,6 +203,9 @@ export async function saveCompletedPairingLocally(params: {
 
   db.couples[params.couple.id] = params.couple;
   await writeLocalDb(db);
+  if (params.selfProfile) {
+    void syncDirectoryPresence({ profile: params.selfProfile, couple: params.couple });
+  }
 }
 
 /**
@@ -441,9 +446,19 @@ async function tryRedeemViaRealtimeRoom(params: {
       });
   };
 
+  const unsubDirAnnounce = subscribeDirectoryInviteAnnounce((payload) => {
+    handleHostAnnounce({ payload });
+  });
+
   const activeDir = getActiveDirectoryChannel();
   if (activeDir) {
-    activeDir.on('broadcast', { event: 'invite_host_announce' }, handleHostAnnounce);
+    void activeDir
+      .send({
+        type: 'broadcast',
+        event: 'WhoHasInvite',
+        payload: { code: params.cleanedCode, joiner: params.joinerProfile },
+      })
+      .catch(() => {});
   }
 
   room
@@ -484,6 +499,7 @@ async function tryRedeemViaRealtimeRoom(params: {
     return result;
   } finally {
     clearTimeout(timer);
+    unsubDirAnnounce();
     void client.removeChannel(room);
   }
 }
@@ -602,10 +618,7 @@ export async function upsertUserProfile(params: {
     kind: 'profile_upsert',
     profile,
   });
-  const activeDir = getActiveDirectoryChannel();
-  if (activeDir) {
-    void activeDir.track({ profile }).catch(() => {});
-  }
+  void syncDirectoryPresence({ profile });
 
   if (isSupabaseConfigured && supabase) {
     void supabase.auth
@@ -752,9 +765,8 @@ export async function createOrRefreshInvite(
       db.couples[existing.id] = existing;
       await writeLocalDb(db);
     }
-    const dirCh = getActiveDirectoryChannel();
-    if (dirCh && db.users[userId]) {
-      void dirCh.track({ profile: db.users[userId], couple: existing }).catch(() => {});
+    if (db.users[userId]) {
+      void syncDirectoryPresence({ profile: db.users[userId], couple: existing });
     }
     return existing;
   }
@@ -771,9 +783,8 @@ export async function createOrRefreshInvite(
   };
   db.couples[created.id] = created;
   await writeLocalDb(db);
-  const dirCh = getActiveDirectoryChannel();
-  if (dirCh && db.users[userId]) {
-    void dirCh.track({ profile: db.users[userId], couple: created }).catch(() => {});
+  if (db.users[userId]) {
+    void syncDirectoryPresence({ profile: db.users[userId], couple: created });
   }
   return created;
 }
@@ -836,15 +847,28 @@ export async function redeemInviteCode(
   }
 
   // Try cross-device Supabase Realtime room discovery (when partner generated the code on another device!)
-  const joinerProfile: UserProfile = db.users[userId] ?? {
-    id: userId,
-    display_name: 'Partner',
-    avatar_path: null,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
-    push_token: null,
-    created_at: new Date().toISOString(),
-  };
-
+  let sessionProfile: UserProfile | null = null;
+  try {
+    const rawSession = await safeGetStorageItem('keepit.session.v1');
+    if (rawSession) {
+      const parsedSession = JSON.parse(rawSession) as { user?: UserProfile | null };
+      if (parsedSession?.user?.id === userId) {
+        sessionProfile = parsedSession.user;
+      }
+    }
+  } catch {
+    // Ignore malformed session slice
+  }
+  const joinerProfile: UserProfile =
+    db.users[userId] ??
+    sessionProfile ?? {
+      id: userId,
+      display_name: 'Partner',
+      avatar_path: null,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+      push_token: null,
+      created_at: new Date().toISOString(),
+    };
   const realtimeResult = await tryRedeemViaRealtimeRoom({
     cleanedCode: cleaned,
     joinerProfile,
@@ -882,6 +906,9 @@ export async function unpairCurrentCouple(userId: string): Promise<void> {
     }
   }
   await writeLocalDb(db);
+  if (db.users[userId]) {
+    void syncDirectoryPresence({ profile: db.users[userId], couple: null });
+  }
   for (const cId of removedCoupleIds) {
     void broadcastCoupleSync(cId, { kind: 'unpair', actorId: userId });
   }

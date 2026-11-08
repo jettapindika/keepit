@@ -82,6 +82,64 @@ let activeCoupleChannel: RealtimeChannel | null = null;
 let activeCoupleChannelId: string | null = null;
 let activeDirectoryChannel: RealtimeChannel | null = null;
 
+export type DirectoryUserAnnounceListener = (profile: UserProfile) => void;
+export type DirectoryInviteAnnounceListener = (payload: {
+  couple: {
+    id: string;
+    user_a_id: string;
+    user_b_id: string | null;
+    invite_code: string;
+    invite_expires_at: string;
+    state: 'pending' | 'active';
+    paired_at: string | null;
+    created_at: string;
+  };
+  hostProfile: UserProfile;
+}) => void;
+
+const userAnnounceListeners = new Set<DirectoryUserAnnounceListener>();
+const inviteAnnounceListeners = new Set<DirectoryInviteAnnounceListener>();
+
+export function subscribeDirectoryUserAnnounce(
+  listener: DirectoryUserAnnounceListener
+): () => void {
+  userAnnounceListeners.add(listener);
+  return () => {
+    userAnnounceListeners.delete(listener);
+  };
+}
+
+export function emitDirectoryUserAnnounce(profile: UserProfile): void {
+  for (const listener of userAnnounceListeners) {
+    try {
+      listener(profile);
+    } catch {
+      // Ignore individual listener error
+    }
+  }
+}
+
+export function subscribeDirectoryInviteAnnounce(
+  listener: DirectoryInviteAnnounceListener
+): () => void {
+  inviteAnnounceListeners.add(listener);
+  return () => {
+    inviteAnnounceListeners.delete(listener);
+  };
+}
+
+export function emitDirectoryInviteAnnounce(
+  payload: Parameters<DirectoryInviteAnnounceListener>[0]
+): void {
+  for (const listener of inviteAnnounceListeners) {
+    try {
+      listener(payload);
+    } catch {
+      // Ignore individual listener error
+    }
+  }
+}
+
 export function registerActiveCoupleChannel(
   coupleId: string | null,
   channel: RealtimeChannel | null
@@ -98,6 +156,57 @@ export function getActiveDirectoryChannel(): RealtimeChannel | null {
   return activeDirectoryChannel;
 }
 
+export async function syncDirectoryPresence(params: {
+  profile: UserProfile;
+  couple?: {
+    id: string;
+    user_a_id: string;
+    user_b_id: string | null;
+    invite_code: string;
+    invite_expires_at: string;
+    state: 'pending' | 'active';
+    paired_at: string | null;
+    created_at: string;
+  } | null;
+}): Promise<void> {
+  if (!activeDirectoryChannel || !params.profile?.id) return;
+  let effectiveCouple = params.couple;
+  if (effectiveCouple === undefined) {
+    const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
+    if (rawDb) {
+      try {
+        const parsed = JSON.parse(rawDb) as {
+          couples?: Record<
+            string,
+            {
+              id: string;
+              user_a_id: string;
+              user_b_id: string | null;
+              invite_code: string;
+              invite_expires_at: string;
+              state: 'pending' | 'active';
+              paired_at: string | null;
+              created_at: string;
+            }
+          >;
+        };
+        effectiveCouple =
+          Object.values(parsed?.couples ?? {}).find(
+            (c) => c.user_a_id === params.profile.id && c.state === 'pending'
+          ) ?? null;
+      } catch {
+        effectiveCouple = null;
+      }
+    }
+  }
+  await activeDirectoryChannel
+    .track({
+      profile: params.profile,
+      couple:
+        effectiveCouple && effectiveCouple.state === 'pending' ? effectiveCouple : undefined,
+    })
+    .catch(() => {});
+}
 export async function broadcastCoupleSync(
   coupleId: string,
   packet: CoupleSyncPacket
@@ -115,16 +224,58 @@ export async function broadcastCoupleSync(
     return;
   }
 
-  const client = supabase;
   const tempTopic = coupleId.startsWith('keepit:')
     ? coupleId
     : buildCoupleSyncChannelTopic(coupleId);
-  const ch = client.channel(tempTopic, {
-    config: { broadcast: { ack: true, self: false } },
-  });
+
+  if (activeDirectoryChannel && tempTopic === buildUserDirectoryChannelTopic()) {
+    await activeDirectoryChannel
+      .send({
+        type: 'broadcast',
+        event: 'couple_packet',
+        payload: packet,
+      })
+      .catch(() => {});
+    return;
+  }
+
+  const client = supabase;
+  const existingChannel = client
+    .getChannels()
+    .find((c) => c.topic === `realtime:${tempTopic}` || c.topic === tempTopic);
+
+  if (existingChannel && existingChannel.state === 'joined') {
+    await existingChannel
+      .send({
+        type: 'broadcast',
+        event: 'couple_packet',
+        payload: packet,
+      })
+      .catch(() => {});
+    return;
+  }
+
+  const ownsChannel = !existingChannel;
+  const ch =
+    existingChannel ??
+    client.channel(tempTopic, {
+      config: { broadcast: { ack: true, self: false } },
+    });
+
+  if (!ownsChannel) {
+    // Channel already exists and is joining; send once joined without removing it!
+    await ch
+      .send({
+        type: 'broadcast',
+        event: 'couple_packet',
+        payload: packet,
+      })
+      .catch(() => {});
+    return;
+  }
 
   const { promise, resolve } = Promise.withResolvers<void>();
-  const timeout = setTimeout(resolve, 1200);
+  const timeout = setTimeout(resolve, 1500);
   ch.subscribe((status) => {
     if (status === 'SUBSCRIBED') {
       void ch
@@ -137,6 +288,9 @@ export async function broadcastCoupleSync(
           clearTimeout(timeout);
           resolve();
         });
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+      clearTimeout(timeout);
+      resolve();
     }
   });
   await promise;

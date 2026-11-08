@@ -51,6 +51,10 @@ import {
   buildDirectMessageSyncChannelTopic,
   buildInviteChannelTopic,
   buildUserDirectoryChannelTopic,
+  emitDirectoryInviteAnnounce,
+  emitDirectoryUserAnnounce,
+  subscribeDirectoryInviteAnnounce,
+  subscribeDirectoryUserAnnounce,
 } from '@/api/realtimeSync';
 import {
   addFriendByHandleOrCode,
@@ -598,6 +602,35 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
     });
     assert.equal(addedRemote.friend_id, 'user_remote_peer');
     assert.equal(addedRemote.friend_profile.display_name, 'Remote Peer');
+
+    // Verify directory announce buses deliver user & invite announcements to active listeners
+    let announcedProfileId = '';
+    const unsubUser = subscribeDirectoryUserAnnounce((p) => {
+      announcedProfileId = p.id;
+    });
+    emitDirectoryUserAnnounce(remotePeerProfile);
+    unsubUser();
+    assert.equal(announcedProfileId, 'user_remote_peer');
+
+    let announcedInviteCode = '';
+    const unsubInvite = subscribeDirectoryInviteAnnounce((payload) => {
+      announcedInviteCode = payload.couple.invite_code;
+    });
+    emitDirectoryInviteAnnounce({
+      couple: {
+        id: 'c_bus_test',
+        user_a_id: 'u_a',
+        user_b_id: null,
+        invite_code: 'BUS999',
+        invite_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        state: 'pending',
+        paired_at: null,
+        created_at: new Date().toISOString(),
+      },
+      hostProfile: remotePeerProfile,
+    });
+    unsubInvite();
+    assert.equal(announcedInviteCode, 'BUS999');
 
     // Verify Realtime channel topics use standard unblocked topics (not private- gated)
     assert.equal(buildInviteChannelTopic('ABCDEF'), 'keepit:invite:ABCDEF');

@@ -13,8 +13,11 @@ import {
   buildCoupleSyncChannelTopic,
   buildUserDirectoryChannelTopic,
   CoupleSyncPacket,
+  emitDirectoryInviteAnnounce,
+  emitDirectoryUserAnnounce,
   registerActiveCoupleChannel,
   registerActiveDirectoryChannel,
+  syncDirectoryPresence,
 } from '@/api/realtimeSync';
 import { matchesUserByQuery } from '@/api/social';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
@@ -59,24 +62,25 @@ export function useRealtimePairing() {
   // Cross-device User Directory & Pending Invite responder channel
   useEffect(() => {
     const client = supabase;
-    if (!user || !isSupabaseConfigured || !client) return;
+    if (!userId || !isSupabaseConfigured || !client) return;
 
     const directoryChannel = client.channel(buildUserDirectoryChannelTopic(), {
       config: {
         broadcast: { ack: true, self: false },
-        presence: { key: user.id },
+        presence: { key: userId },
       },
     });
 
     const syncDirectoryPresenceToLocalDb = async () => {
       const state = directoryChannel.presenceState();
       for (const [key, entries] of Object.entries(state)) {
-        if (key === user.id) continue;
+        if (key === userId) continue;
         for (const rawEntry of entries as unknown[]) {
           if (rawEntry && typeof rawEntry === 'object' && 'profile' in rawEntry) {
             const candidate = rawEntry.profile as UserProfile | undefined;
-            if (candidate?.id && candidate.id !== user.id) {
+            if (candidate?.id && candidate.id !== userId) {
               await applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
+              emitDirectoryUserAnnounce(candidate);
             }
           }
         }
@@ -89,9 +93,9 @@ export function useRealtimePairing() {
       })
       .on('broadcast', { event: 'WhoIsUser' }, (msg) => {
         const payload = msg.payload as { query?: string; requesterId?: string } | undefined;
-        if (!payload?.query || payload.requesterId === user.id) return;
-        const currentUser = useSessionStore.getState().user ?? user;
-        if (matchesUserByQuery(currentUser, payload.query)) {
+        if (!payload?.query || payload.requesterId === userId) return;
+        const currentUser = useSessionStore.getState().user;
+        if (currentUser && matchesUserByQuery(currentUser, payload.query)) {
           void directoryChannel
             .send({
               type: 'broadcast',
@@ -101,11 +105,20 @@ export function useRealtimePairing() {
             .catch(() => {});
         }
       })
+      .on('broadcast', { event: 'UserAnnounce' }, (msg) => {
+        const payload = msg.payload as { profile?: UserProfile } | undefined;
+        const candidate = payload?.profile;
+        if (candidate?.id && candidate.id !== userId) {
+          void applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
+          emitDirectoryUserAnnounce(candidate);
+        }
+      })
       .on('broadcast', { event: 'WhoHasInvite' }, (msg) => {
         const payload = msg.payload as { code?: string; joiner?: UserProfile } | undefined;
         if (!payload?.code) return;
         const requestedCode = normalizeInviteCode(payload.code);
-        const currentUser = useSessionStore.getState().user ?? user;
+        const currentUser = useSessionStore.getState().user;
+        if (!currentUser) return;
         void fetchPairingSnapshot(currentUser.id).then((snap) => {
           if (
             snap.couple &&
@@ -128,17 +141,24 @@ export function useRealtimePairing() {
           }
         });
       })
+      .on('broadcast', { event: 'invite_host_announce' }, (msg) => {
+        const payload = msg.payload as RealtimeInvitePresence | undefined;
+        if (payload?.couple && payload?.hostProfile) {
+          emitDirectoryInviteAnnounce(payload);
+        }
+      })
       .on('broadcast', { event: 'invite_redeemed' }, (msg) => {
         const payload = msg.payload as RealtimeRedeemPayload | undefined;
         if (!payload?.couple || !payload?.joinerProfile) return;
-        const currentUser = useSessionStore.getState().user ?? user;
-        if (payload.couple.user_a_id !== currentUser.id) return;
+        const currentUser = useSessionStore.getState().user;
+        if (!currentUser || payload.couple.user_a_id !== currentUser.id) return;
         void saveCompletedPairingLocally({
           couple: payload.couple,
           partner: payload.joinerProfile,
           selfProfile: currentUser,
         }).then(() => {
           setPairing(payload.couple, payload.joinerProfile);
+          void syncDirectoryPresence({ profile: currentUser, couple: payload.couple });
           void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
           void queryClient.invalidateQueries({ queryKey: ['couple-statuses'] });
           void queryClient.invalidateQueries({ queryKey: ['couple-locations'] });
@@ -151,21 +171,23 @@ export function useRealtimePairing() {
           if (packet.kind === 'friend_added') {
             void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
             void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
+          } else if (packet.kind === 'profile_upsert') {
+            emitDirectoryUserAnnounce(packet.profile);
           }
         });
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           registerActiveDirectoryChannel(directoryChannel);
-          void fetchPairingSnapshot(user.id).then((snap) => {
-            void directoryChannel
-              .track({
-                profile: user,
-                couple:
-                  snap.couple && snap.couple.state === 'pending' ? snap.couple : undefined,
-              })
-              .catch(() => {});
-          });
+          const currentUser = useSessionStore.getState().user;
+          if (currentUser) {
+            void fetchPairingSnapshot(currentUser.id).then((snap) => {
+              void syncDirectoryPresence({
+                profile: currentUser,
+                couple: snap.couple,
+              });
+            });
+          }
         }
       });
 
@@ -173,7 +195,7 @@ export function useRealtimePairing() {
       registerActiveDirectoryChannel(null);
       void client.removeChannel(directoryChannel);
     };
-  }, [user, setPairing, queryClient]);
+  }, [userId, setPairing, queryClient]);
 
   // Cross-device Realtime Broadcast + Presence sync channel for active couples
   useEffect(() => {

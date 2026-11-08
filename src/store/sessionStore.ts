@@ -16,7 +16,7 @@ import {
 const SESSION_STORAGE_KEY = 'keepit.session.v1';
 const LEGACY_LOCAL_ACCOUNTS_KEY = 'keepit.local_accounts.v1';
 export const STORAGE_SCHEMA_EPOCH_KEY = 'keepit.storage_epoch.v1';
-export const CURRENT_STORAGE_SCHEMA_EPOCH = '0.4.2-reset-1';
+export const CURRENT_STORAGE_SCHEMA_EPOCH = '0.4.4-reset-1';
 function buildSoloFallbackCouple(userId: string, createdAt?: string): CoupleRecord {
   return {
     id: `solo_${userId}`,
