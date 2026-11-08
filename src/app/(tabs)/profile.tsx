@@ -433,8 +433,8 @@ export default function ProfileScreen() {
     if (!friendInput.trim() || addingFriend) return;
     setProfileError(null);
     setAddingFriend(true);
+    Keyboard.dismiss();
     triggerHaptic();
-
     try {
       const added = await addFriendByHandleOrCode({
         userId,
@@ -1157,10 +1157,14 @@ export default function ProfileScreen() {
                     <AppTextInput
                       accessibilityLabel="Friend @username, name, or Friend Code"
                       value={friendInput}
-                      onChangeText={setFriendInput}
+                      onChangeText={(val) => {
+                        if (profileError) setProfileError(null);
+                        setFriendInput(val);
+                      }}
                       placeholder="@username or code"
                       placeholderTextColor={colors.placeholder}
                       autoCapitalize="none"
+                      autoCorrect={false}
                       returnKeyType="done"
                       onSubmitEditing={() => void handleAddFriend()}
                       style={[

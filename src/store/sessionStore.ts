@@ -47,6 +47,35 @@ export function isEmailConfirmedUser(user: SupabaseAuthUserLike | null | undefin
   return typeof confirmedAt === 'string' && confirmedAt.trim().length > 0;
 }
 
+interface UserMetadataProfileHints {
+  username?: string;
+  bio?: string;
+  pronouns?: string;
+  moodSong?: string;
+  bannerColor?: string;
+  website?: string;
+  isPrivate?: boolean;
+  dumpMode?: boolean;
+}
+
+function extractUserMetadataProfileHints(
+  metadata: Record<string, unknown> | null | undefined
+): UserMetadataProfileHints {
+  if (!metadata || typeof metadata !== 'object') return {};
+  return {
+    username:
+      typeof metadata.username === 'string' && metadata.username.trim().length >= 2
+        ? metadata.username.trim()
+        : undefined,
+    bio: typeof metadata.bio === 'string' ? metadata.bio : undefined,
+    pronouns: typeof metadata.pronouns === 'string' ? metadata.pronouns : undefined,
+    moodSong: typeof metadata.mood_song === 'string' ? metadata.mood_song : undefined,
+    bannerColor: typeof metadata.banner_color === 'string' ? metadata.banner_color : undefined,
+    website: typeof metadata.website === 'string' ? metadata.website : undefined,
+    isPrivate: typeof metadata.is_private === 'boolean' ? metadata.is_private : undefined,
+    dumpMode: typeof metadata.dump_mode === 'boolean' ? metadata.dump_mode : undefined,
+  };
+}
 export function extractAuthRedirectParams(rawUrl: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!rawUrl || typeof rawUrl !== 'string') return out;
@@ -260,16 +289,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             session.user.email?.split('@')[0] ??
             'KeepIt User';
 
+          const metaHints = extractUserMetadataProfileHints(session.user.user_metadata);
           const effectiveProfile: UserProfile =
             !profileErr && profile
               ? (profile as UserProfile)
               : saved?.user?.id === session.user.id
-                ? saved.user
+                ? await upsertUserProfile({
+                    userId: session.user.id,
+                    displayName: saved.user.display_name || fallbackDisplayName,
+                    username: saved.user.username ?? metaHints.username,
+                    bio: saved.user.bio ?? metaHints.bio,
+                    pronouns: saved.user.pronouns ?? metaHints.pronouns,
+                    moodSong: saved.user.mood_song ?? metaHints.moodSong,
+                    bannerColor: saved.user.banner_color ?? metaHints.bannerColor,
+                    bannerPath: saved.user.banner_path,
+                    website: saved.user.website ?? metaHints.website,
+                    avatarPath: saved.user.avatar_path,
+                    isPrivate: saved.user.is_private ?? metaHints.isPrivate,
+                    dumpMode: saved.user.dump_mode ?? metaHints.dumpMode,
+                  })
                 : await upsertUserProfile({
                     userId: session.user.id,
                     displayName: fallbackDisplayName,
+                    ...metaHints,
                   });
-
           const pairing = await fetchPairingSnapshot(effectiveProfile.id);
           const soloFallbackCouple: CoupleRecord =
             pairing.couple ??
@@ -425,9 +468,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await clearAccountSpecificCacheKeys();
     }
 
+    const metaHints = extractUserMetadataProfileHints(sessionUser.user_metadata);
     const profile = await upsertUserProfile({
       userId: sessionUser.id,
       displayName,
+      ...metaHints,
     });
     const pairing = await fetchPairingSnapshot(sessionUser.id);
     const soloFallbackCouple: CoupleRecord =
@@ -586,16 +631,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       userId = buildDeterministicEmailUserId(cleanedEmail);
     }
 
-
     if (prevUserId && prevUserId !== userId) {
       await clearAccountSpecificCacheKeys();
     } else {
       await safeRemoveStorageItem(LEGACY_LOCAL_ACCOUNTS_KEY);
     }
 
+    let metaHints: UserMetadataProfileHints = {};
+    if (isSupabaseConfigured && supabase) {
+      const { data: sessionData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+      metaHints = extractUserMetadataProfileHints(sessionData?.user?.user_metadata);
+    }
+
     const profile = await upsertUserProfile({
       userId,
       displayName,
+      ...metaHints,
     });
     const pairing = await fetchPairingSnapshot(userId);
     const soloFallbackCouple: CoupleRecord =
@@ -618,7 +669,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setPairing: (couple, partner) => {
-    set({ couple, partner });
+    const currentUser = get().user;
+    const effectiveCouple =
+      couple ??
+      (currentUser ? buildSoloFallbackCouple(currentUser.id, currentUser.created_at) : null);
+    set({ couple: effectiveCouple, partner });
   },
   updateProfile: async (params) => {
     const currentUser = get().user;

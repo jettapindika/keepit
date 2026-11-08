@@ -164,7 +164,7 @@ export default function PairScreen() {
     }
   }, [leavePairing]);
 
-  // The invite room remains private and uses the existing pairing protocol.
+  // Host Realtime invite room so a partner on another device can discover & redeem this code live.
   useEffect(() => {
     const client = supabase;
     if (!isSupabaseConfigured || !client || !user || !inviteRecord?.invite_code || inviteRecord.state === 'active') return;
@@ -172,7 +172,7 @@ export default function PairScreen() {
     const code = normalizeInviteCode(inviteRecord.invite_code);
     const presencePayload: RealtimeInvitePresence = { couple: inviteRecord, hostProfile: user };
     const room = client.channel(buildInviteChannelTopic(code), {
-      config: { private: true, broadcast: { ack: true, self: false }, presence: { key: `host_${user.id}` } },
+      config: { broadcast: { ack: true, self: false }, presence: { key: `host_${user.id}` } },
     });
     room
       .on('broadcast', { event: 'WhoHasInvite' }, () => {
@@ -187,6 +187,7 @@ export default function PairScreen() {
           .then(() => {
             if (!active || !mounted.current) return;
             if (Platform.OS !== 'web') void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            setInviteRecord(payload.couple);
             setPairing(payload.couple, payload.joinerProfile);
             router.navigate('/(tabs)');
           })

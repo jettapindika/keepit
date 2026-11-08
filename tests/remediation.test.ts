@@ -37,13 +37,20 @@ import {
   updateMomentDetails,
 } from '@/api/moments';
 import { createOrRefreshInvite, fetchPairingSnapshot, redeemInviteCode, upsertUserProfile } from '@/api/pairing';
-import { applyIncomingCouplePacket } from '@/api/realtimeSync';
+import {
+  applyIncomingCouplePacket,
+  buildCoupleSyncChannelTopic,
+  buildDirectMessageSyncChannelTopic,
+  buildInviteChannelTopic,
+  buildUserDirectoryChannelTopic,
+} from '@/api/realtimeSync';
 import {
   addFriendByHandleOrCode,
   CURATED_MUSIC_TRACKS,
   fetchConversationMessages,
   fetchFriendsCircle,
   markSnapDirectMessageViewed,
+  matchesUserByQuery,
   removeFriend,
   sendDirectMessage,
   toggleDirectMessageReaction,
@@ -519,7 +526,55 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
     const listAfterDup = await fetchFriendsCircle({ userId });
     assert.equal(listAfterDup.length, 1);
 
+    // Also matches Friend Code without hyphen or with mixed case, and default generated username
+    const compactCode = registeredMaya.friend_code!.replace(/-/g, '').toLowerCase();
+    assert.equal(matchesUserByQuery(registeredMaya, compactCode), true);
+    assert.equal(matchesUserByQuery(registeredMaya, '@MAYA.SNAPS'), true);
+
+    // Prevents adding self by @username or Friend Code
+    const selfUser = await upsertUserProfile({
+      userId,
+      displayName: 'Circle Owner',
+      username: 'circle.owner',
+    });
+    useSessionStore.setState({ user: selfUser });
+    await assert.rejects(
+      () => addFriendByHandleOrCode({ userId, query: '@circle.owner' }),
+      /cannot add yourself/
+    );
+    await assert.rejects(
+      () => addFriendByHandleOrCode({ userId, query: selfUser.friend_code! }),
+      /cannot add yourself/
+    );
+
+    // Incoming Realtime profile_upsert + friend_added packets populate local DB and Friends Circle
+    const remotePeerProfile = {
+      id: 'user_remote_peer',
+      display_name: 'Remote Peer',
+      username: 'remote.peer',
+      friend_code: 'REM-777',
+      avatar_path: null,
+      timezone: 'UTC',
+      push_token: null,
+      created_at: new Date().toISOString(),
+    };
+    await applyIncomingCouplePacket({ kind: 'profile_upsert', profile: remotePeerProfile });
+    const addedRemote = await addFriendByHandleOrCode({
+      userId,
+      query: 'remote.peer',
+      relationship: 'friend',
+    });
+    assert.equal(addedRemote.friend_id, 'user_remote_peer');
+    assert.equal(addedRemote.friend_profile.display_name, 'Remote Peer');
+
+    // Verify Realtime channel topics use standard unblocked topics (not private- gated)
+    assert.equal(buildInviteChannelTopic('ABCDEF'), 'keepit:invite:ABCDEF');
+    assert.equal(buildCoupleSyncChannelTopic('c_1'), 'keepit:couple_sync:c_1');
+    assert.equal(buildDirectMessageSyncChannelTopic('a::b'), 'keepit:dm_sync:a::b');
+    assert.equal(buildUserDirectoryChannelTopic(), 'keepit:user_directory');
+
     await removeFriend({ userId, friendRecordId: maya.id });
+    await removeFriend({ userId, friendRecordId: addedRemote.id });
     const afterRemoveAll = await fetchFriendsCircle({ userId });
     assert.equal(afterRemoveAll.length, 0, 'Removed friends must stay removed');
   });

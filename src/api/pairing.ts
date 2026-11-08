@@ -1,4 +1,9 @@
-import { buildInviteChannelTopic, broadcastCoupleSync } from '@/api/realtimeSync';
+import {
+  buildInviteChannelTopic,
+  buildUserDirectoryChannelTopic,
+  broadcastCoupleSync,
+  getActiveDirectoryChannel,
+} from '@/api/realtimeSync';
 import { buildDefaultUsername, buildFriendCode } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
 import {
@@ -167,7 +172,6 @@ async function tryRedeemViaRealtimeRoom(params: {
   const channelName = buildInviteChannelTopic(params.cleanedCode);
   const room = client.channel(channelName, {
     config: {
-      private: true,
       broadcast: { ack: true, self: false },
       presence: { key: `joiner_${params.joinerProfile.id}` },
     },
@@ -184,7 +188,7 @@ async function tryRedeemViaRealtimeRoom(params: {
 
   const timer = setTimeout(() => {
     finish(null);
-  }, 2400);
+  }, 3600);
 
   const tryExtractHostFromPresence = async () => {
     const state = room.presenceState();
@@ -205,6 +209,16 @@ async function tryRedeemViaRealtimeRoom(params: {
                 'SELF_INVITE_FORBIDDEN',
                 KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN
               );
+            }
+            if (entry.couple.state === 'active' || entry.couple.user_b_id !== null) {
+              clearTimeout(timer);
+              void client.removeChannel(room);
+              throw new PairingError('COUPLE_FULL', KNOWN_ERROR_MESSAGES.COUPLE_FULL);
+            }
+            if (new Date(entry.couple.invite_expires_at).getTime() <= Date.now()) {
+              clearTimeout(timer);
+              void client.removeChannel(room);
+              throw new PairingError('CODE_EXPIRED', KNOWN_ERROR_MESSAGES.CODE_EXPIRED);
             }
             const activeCouple: CoupleRecord = {
               ...entry.couple,
@@ -236,6 +250,158 @@ async function tryRedeemViaRealtimeRoom(params: {
     }
   };
 
+  const extractFromDirectoryPresence = (): boolean => {
+    const dirCh = getActiveDirectoryChannel();
+    if (!dirCh) return false;
+    const state = dirCh.presenceState();
+    for (const entries of Object.values(state)) {
+      for (const rawEntry of entries as unknown[]) {
+        if (rawEntry && typeof rawEntry === 'object') {
+          const record = rawEntry as {
+            profile?: UserProfile;
+            couple?: CoupleRecord;
+          };
+          if (
+            record.couple?.invite_code === params.cleanedCode &&
+            record.profile?.id
+          ) {
+            if (record.couple.user_a_id === params.joinerProfile.id) {
+              clearTimeout(timer);
+              throw new PairingError(
+                'SELF_INVITE_FORBIDDEN',
+                KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN
+              );
+            }
+            if (record.couple.state === 'active' || record.couple.user_b_id !== null) {
+              clearTimeout(timer);
+              throw new PairingError('COUPLE_FULL', KNOWN_ERROR_MESSAGES.COUPLE_FULL);
+            }
+            if (new Date(record.couple.invite_expires_at).getTime() <= Date.now()) {
+              clearTimeout(timer);
+              throw new PairingError('CODE_EXPIRED', KNOWN_ERROR_MESSAGES.CODE_EXPIRED);
+            }
+            const activeCouple: CoupleRecord = {
+              ...record.couple,
+              user_b_id: params.joinerProfile.id,
+              state: 'active',
+              paired_at: new Date().toISOString(),
+            };
+            const redeemPayload: RealtimeRedeemPayload = {
+              couple: activeCouple,
+              hostProfile: record.profile,
+              joinerProfile: params.joinerProfile,
+            };
+            void dirCh
+              .send({
+                type: 'broadcast',
+                event: 'invite_redeemed',
+                payload: redeemPayload,
+              })
+              .catch(() => {});
+            void room
+              .send({
+                type: 'broadcast',
+                event: 'invite_redeemed',
+                payload: redeemPayload,
+              })
+              .catch(() => {});
+            finish({
+              couple: activeCouple,
+              partner: record.profile,
+            });
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  try {
+    if (extractFromDirectoryPresence()) {
+      clearTimeout(timer);
+      void client.removeChannel(room);
+      return await waiter.promise;
+    }
+  } catch (err) {
+    clearTimeout(timer);
+    void client.removeChannel(room);
+    throw err;
+  }
+
+  const handleHostAnnounce = (msg: { payload?: unknown }) => {
+    const payload = msg.payload as RealtimeInvitePresence | undefined;
+    if (!payload?.couple || !payload?.hostProfile) return;
+    if (normalizeInviteCode(payload.couple.invite_code) !== params.cleanedCode) return;
+    if (payload.couple.user_a_id === params.joinerProfile.id) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        waiter.reject(
+          new PairingError(
+            'SELF_INVITE_FORBIDDEN',
+            KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN
+          )
+        );
+      }
+      return;
+    }
+    if (payload.couple.state === 'active' || payload.couple.user_b_id !== null) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        waiter.reject(new PairingError('COUPLE_FULL', KNOWN_ERROR_MESSAGES.COUPLE_FULL));
+      }
+      return;
+    }
+    if (new Date(payload.couple.invite_expires_at).getTime() <= Date.now()) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        waiter.reject(new PairingError('CODE_EXPIRED', KNOWN_ERROR_MESSAGES.CODE_EXPIRED));
+      }
+      return;
+    }
+    const activeCouple: CoupleRecord = {
+      ...payload.couple,
+      user_b_id: params.joinerProfile.id,
+      state: 'active',
+      paired_at: new Date().toISOString(),
+    };
+    const redeemPayload: RealtimeRedeemPayload = {
+      couple: activeCouple,
+      hostProfile: payload.hostProfile,
+      joinerProfile: params.joinerProfile,
+    };
+    const dirCh = getActiveDirectoryChannel();
+    if (dirCh) {
+      void dirCh
+        .send({
+          type: 'broadcast',
+          event: 'invite_redeemed',
+          payload: redeemPayload,
+        })
+        .catch(() => {});
+    }
+    void room
+      .send({
+        type: 'broadcast',
+        event: 'invite_redeemed',
+        payload: redeemPayload,
+      })
+      .finally(() => {
+        finish({
+          couple: activeCouple,
+          partner: payload.hostProfile,
+        });
+      });
+  };
+
+  const activeDir = getActiveDirectoryChannel();
+  if (activeDir) {
+    activeDir.on('broadcast', { event: 'invite_host_announce' }, handleHostAnnounce);
+  }
+
   room
     .on('presence', { event: 'sync' }, () => {
       void tryExtractHostFromPresence().catch((err) => {
@@ -246,46 +412,7 @@ async function tryRedeemViaRealtimeRoom(params: {
         }
       });
     })
-    .on('broadcast', { event: 'invite_host_announce' }, (msg) => {
-      const payload = msg.payload as RealtimeInvitePresence | undefined;
-      if (!payload?.couple || !payload?.hostProfile) return;
-      if (payload.couple.user_a_id === params.joinerProfile.id) {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          waiter.reject(
-            new PairingError(
-              'SELF_INVITE_FORBIDDEN',
-              KNOWN_ERROR_MESSAGES.SELF_INVITE_FORBIDDEN
-            )
-          );
-        }
-        return;
-      }
-      const activeCouple: CoupleRecord = {
-        ...payload.couple,
-        user_b_id: params.joinerProfile.id,
-        state: 'active',
-        paired_at: new Date().toISOString(),
-      };
-      const redeemPayload: RealtimeRedeemPayload = {
-        couple: activeCouple,
-        hostProfile: payload.hostProfile,
-        joinerProfile: params.joinerProfile,
-      };
-      void room
-        .send({
-          type: 'broadcast',
-          event: 'invite_redeemed',
-          payload: redeemPayload,
-        })
-        .finally(() => {
-          finish({
-            couple: activeCouple,
-            partner: payload.hostProfile,
-          });
-        });
-    })
+    .on('broadcast', { event: 'invite_host_announce' }, handleHostAnnounce)
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         void room
@@ -295,6 +422,16 @@ async function tryRedeemViaRealtimeRoom(params: {
             payload: { code: params.cleanedCode, joiner: params.joinerProfile },
           })
           .catch(() => {});
+        const dirCh = getActiveDirectoryChannel();
+        if (dirCh) {
+          void dirCh
+            .send({
+              type: 'broadcast',
+              event: 'WhoHasInvite',
+              payload: { code: params.cleanedCode, joiner: params.joinerProfile },
+            })
+            .catch(() => {});
+        }
       }
     });
 
@@ -417,8 +554,33 @@ export async function upsertUserProfile(params: {
   if (params.coupleId) {
     void broadcastCoupleSync(params.coupleId, { kind: 'profile_upsert', profile });
   }
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), {
+    kind: 'profile_upsert',
+    profile,
+  });
+  const activeDir = getActiveDirectoryChannel();
+  if (activeDir) {
+    void activeDir.track({ profile }).catch(() => {});
+  }
 
   if (isSupabaseConfigured && supabase) {
+    void supabase.auth
+      .updateUser({
+        data: {
+          display_name: profile.display_name,
+          username: profile.username,
+          friend_code: profile.friend_code,
+          bio: profile.bio,
+          pronouns: profile.pronouns,
+          mood_song: profile.mood_song,
+          banner_color: profile.banner_color,
+          website: profile.website,
+          is_private: profile.is_private,
+          dump_mode: profile.dump_mode,
+          timezone: profile.timezone,
+        },
+      })
+      .catch(() => {});
     try {
       const { data: upsertedRow, error: fullUpsertErr } = await supabase
         .from('users')
@@ -546,6 +708,10 @@ export async function createOrRefreshInvite(
       db.couples[existing.id] = existing;
       await writeLocalDb(db);
     }
+    const dirCh = getActiveDirectoryChannel();
+    if (dirCh && db.users[userId]) {
+      void dirCh.track({ profile: db.users[userId], couple: existing }).catch(() => {});
+    }
     return existing;
   }
 
@@ -561,6 +727,10 @@ export async function createOrRefreshInvite(
   };
   db.couples[created.id] = created;
   await writeLocalDb(db);
+  const dirCh = getActiveDirectoryChannel();
+  if (dirCh && db.users[userId]) {
+    void dirCh.track({ profile: db.users[userId], couple: created }).catch(() => {});
+  }
   return created;
 }
 
@@ -660,10 +830,15 @@ export async function unpairCurrentCouple(userId: string): Promise<void> {
   }
 
   const db = await readLocalDb();
+  const removedCoupleIds: string[] = [];
   for (const [coupleId, record] of Object.entries(db.couples)) {
     if (record.user_a_id === userId || record.user_b_id === userId) {
+      removedCoupleIds.push(coupleId);
       delete db.couples[coupleId];
     }
   }
   await writeLocalDb(db);
+  for (const cId of removedCoupleIds) {
+    void broadcastCoupleSync(cId, { kind: 'unpair', actorId: userId });
+  }
 }

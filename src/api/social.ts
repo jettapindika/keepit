@@ -14,8 +14,11 @@ import {
 import {
   broadcastCoupleSync,
   buildDirectMessageSyncChannelTopic,
+  buildUserDirectoryChannelTopic,
+  getActiveDirectoryChannel,
 } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { useSessionStore } from '@/store/sessionStore';
 import {
   DirectMessageRecord,
   FriendRecord,
@@ -292,6 +295,171 @@ export async function fetchFriendsCircle(params: {
   return stored.filter((f) => f.user_id === params.userId);
 }
 
+function normalizeFriendCodeCompact(raw: string | undefined | null): string {
+  if (!raw) return '';
+  return raw.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+export function matchesUserByQuery(user: UserProfile, rawQuery: string): boolean {
+  const cleaned = rawQuery.trim().replace(/^@/, '');
+  if (!cleaned) return false;
+  const normalizedLower = cleaned.toLowerCase();
+  const normalizedHandle = normalizedLower.replace(/[^a-z0-9._]/g, '');
+  const compactQuery = normalizeFriendCodeCompact(cleaned);
+
+  const effectiveUsername = (
+    user.username || buildDefaultUsername(user.display_name || 'keepit', user.id)
+  ).toLowerCase();
+  const effectiveFriendCode = (
+    user.friend_code || buildFriendCode(user.id, user.display_name || 'keepit')
+  ).toLowerCase();
+  const compactUserCode = normalizeFriendCodeCompact(effectiveFriendCode);
+  const displayLower = (user.display_name || '').trim().toLowerCase();
+
+  return (
+    effectiveUsername === normalizedLower ||
+    (normalizedHandle.length >= 2 && effectiveUsername === normalizedHandle) ||
+    displayLower === normalizedLower ||
+    effectiveFriendCode === normalizedLower ||
+    (compactQuery.length >= 5 && compactUserCode === compactQuery)
+  );
+}
+
+async function saveDiscoveredUserToLocalDb(profile: UserProfile): Promise<void> {
+  if (!profile?.id) return;
+  const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
+  const db = rawDb
+    ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
+    : { users: {}, couples: {} };
+  db.users = db.users ?? {};
+  db.users[profile.id] = {
+    ...(db.users[profile.id] ?? {}),
+    ...profile,
+    username:
+      profile.username || buildDefaultUsername(profile.display_name || 'keepit', profile.id),
+    friend_code:
+      profile.friend_code || buildFriendCode(profile.id, profile.display_name || 'keepit'),
+  };
+  await safeSetStorageItem(LOCAL_DB_KEY, JSON.stringify(db));
+}
+
+function extractProfileFromEntry(rawEntry: unknown): UserProfile | undefined {
+  if (!rawEntry || typeof rawEntry !== 'object' || !('profile' in rawEntry)) {
+    return undefined;
+  }
+  const profile = rawEntry.profile;
+  if (!profile || typeof profile !== 'object' || !('id' in profile) || typeof profile.id !== 'string') {
+    return undefined;
+  }
+  return profile as UserProfile;
+}
+
+async function tryResolveUserViaRealtimeDirectory(params: {
+  userId: string;
+  cleanedQuery: string;
+}): Promise<UserProfile | undefined> {
+  if (!isSupabaseConfigured || !supabase) return undefined;
+
+  const activeDir = getActiveDirectoryChannel();
+  if (activeDir) {
+    const state = activeDir.presenceState();
+    for (const entries of Object.values(state)) {
+      for (const rawEntry of entries as unknown[]) {
+        const candidate = extractProfileFromEntry(rawEntry);
+        if (
+          candidate &&
+          candidate.id !== params.userId &&
+          matchesUserByQuery(candidate, params.cleanedQuery)
+        ) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  const client = supabase;
+  const waiter = Promise.withResolvers<UserProfile | undefined>();
+  let settled = false;
+  const finish = (found: UserProfile | undefined) => {
+    if (settled) return;
+    settled = true;
+    waiter.resolve(found);
+  };
+
+  const timer = setTimeout(() => finish(undefined), 2800);
+
+  const dirChannel =
+    activeDir ??
+    client.channel(buildUserDirectoryChannelTopic(), {
+      config: { broadcast: { ack: true, self: false }, presence: { key: `lookup_${params.userId}` } },
+    });
+  const ownsDirChannel = !activeDir;
+
+  const onAnnounce = (msg: { payload?: unknown }) => {
+    const candidate = extractProfileFromEntry(msg.payload);
+    if (
+      candidate &&
+      candidate.id !== params.userId &&
+      matchesUserByQuery(candidate, params.cleanedQuery)
+    ) {
+      finish(candidate);
+    }
+  };
+
+  const checkPresence = () => {
+    const state = dirChannel.presenceState();
+    for (const entries of Object.values(state)) {
+      for (const rawEntry of entries as unknown[]) {
+        const candidate = extractProfileFromEntry(rawEntry);
+        if (
+          candidate &&
+          candidate.id !== params.userId &&
+          matchesUserByQuery(candidate, params.cleanedQuery)
+        ) {
+          finish(candidate);
+          return;
+        }
+      }
+    }
+  };
+
+  if (ownsDirChannel) {
+    dirChannel
+      .on('presence', { event: 'sync' }, checkPresence)
+      .on('broadcast', { event: 'UserAnnounce' }, onAnnounce)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          checkPresence();
+          void dirChannel
+            .send({
+              type: 'broadcast',
+              event: 'WhoIsUser',
+              payload: { query: params.cleanedQuery, requesterId: params.userId },
+            })
+            .catch(() => {});
+        }
+      });
+  } else {
+    dirChannel.on('broadcast', { event: 'UserAnnounce' }, onAnnounce);
+    void dirChannel
+      .send({
+        type: 'broadcast',
+        event: 'WhoIsUser',
+        payload: { query: params.cleanedQuery, requesterId: params.userId },
+      })
+      .catch(() => {});
+  }
+
+  try {
+    return await waiter.promise;
+  } finally {
+    clearTimeout(timer);
+    if (ownsDirChannel) {
+      void client.removeChannel(dirChannel);
+    }
+  }
+}
+
 export async function addFriendByHandleOrCode(params: {
   userId: string;
   coupleId?: string | null;
@@ -303,16 +471,22 @@ export async function addFriendByHandleOrCode(params: {
     throw new Error('Enter a friend’s @username, display name, or Friend Code.');
   }
 
+  const sessionState = useSessionStore.getState();
+  const selfProfile =
+    sessionState.user?.id === params.userId ? sessionState.user : undefined;
+  if (selfProfile && matchesUserByQuery(selfProfile, cleaned)) {
+    throw new Error('You cannot add yourself to your Friends Circle.');
+  }
+
   const existing = await readLocalFriends();
-  const normalizedLower = cleaned.toLowerCase();
   const dbUsers = await readLocalDbUsers();
+  if (dbUsers[params.userId] && matchesUserByQuery(dbUsers[params.userId], cleaned)) {
+    throw new Error('You cannot add yourself to your Friends Circle.');
+  }
+
   // Check existing friends first so searching an already-added friend's code/handle returns existing
   const alreadyByQuery = existing.find(
-    (f) =>
-      f.user_id === params.userId &&
-      (f.friend_profile.username?.toLowerCase() === normalizedLower ||
-        f.friend_profile.display_name.toLowerCase() === normalizedLower ||
-        f.friend_profile.friend_code?.toLowerCase() === normalizedLower)
+    (f) => f.user_id === params.userId && matchesUserByQuery(f.friend_profile, cleaned)
   );
   if (alreadyByQuery) {
     if (params.relationship && alreadyByQuery.relationship !== params.relationship) {
@@ -323,29 +497,51 @@ export async function addFriendByHandleOrCode(params: {
   }
 
   let matchedUser: UserProfile | undefined = Object.values(dbUsers).find(
-    (u) =>
-      u.id !== params.userId &&
-      (u.username?.toLowerCase() === normalizedLower ||
-        u.display_name.toLowerCase() === normalizedLower ||
-        u.friend_code?.toLowerCase() === normalizedLower)
+    (u) => u && u.id !== params.userId && matchesUserByQuery(u, cleaned)
   );
+
+  // Also check if the current paired partner matches the query
+  if (
+    !matchedUser &&
+    sessionState.partner?.id &&
+    sessionState.partner.id !== params.userId &&
+    matchesUserByQuery(sessionState.partner, cleaned)
+  ) {
+    matchedUser = sessionState.partner;
+  }
 
   if (!matchedUser && isSupabaseConfigured && supabase) {
     try {
+      const normalizedHandle = cleaned.toLowerCase().replace(/[^a-z0-9._]/g, '');
+      const orClauses = [
+        `username.ilike.${cleaned}`,
+        `friend_code.ilike.${cleaned}`,
+        `display_name.ilike.${cleaned}`,
+      ];
+      if (normalizedHandle.length >= 2 && normalizedHandle !== cleaned.toLowerCase()) {
+        orClauses.push(`username.ilike.${normalizedHandle}`);
+      }
       const { data: remoteMatches } = await supabase
         .from('users')
         .select('*')
-        .or(
-          `username.ilike.${cleaned},friend_code.ilike.${cleaned},display_name.ilike.${cleaned}`
-        )
+        .or(orClauses.join(','))
         .neq('id', params.userId)
-        .limit(1);
+        .limit(5);
       if (Array.isArray(remoteMatches) && remoteMatches.length > 0) {
-        matchedUser = remoteMatches[0] as UserProfile;
+        matchedUser =
+          (remoteMatches as UserProfile[]).find((u) => matchesUserByQuery(u, cleaned)) ??
+          (remoteMatches[0] as UserProfile);
       }
     } catch {
-      // Ignore remote lookup failure when offline
+      // Ignore remote lookup failure when offline or table unmigrated
     }
+  }
+
+  if (!matchedUser && isSupabaseConfigured && supabase) {
+    matchedUser = await tryResolveUserViaRealtimeDirectory({
+      userId: params.userId,
+      cleanedQuery: cleaned,
+    });
   }
 
   if (!matchedUser) {
@@ -358,19 +554,34 @@ export async function addFriendByHandleOrCode(params: {
     throw new Error('You cannot add yourself to your Friends Circle.');
   }
 
+  const hydratedMatch: UserProfile = {
+    ...matchedUser,
+    username:
+      matchedUser.username ||
+      buildDefaultUsername(matchedUser.display_name || 'keepit', matchedUser.id),
+    friend_code:
+      matchedUser.friend_code ||
+      buildFriendCode(matchedUser.id, matchedUser.display_name || 'keepit'),
+  };
+  await saveDiscoveredUserToLocalDb(hydratedMatch);
+
   const already = existing.find(
-    (f) => f.user_id === params.userId && f.friend_id === matchedUser!.id
+    (f) => f.user_id === params.userId && f.friend_id === hydratedMatch.id
   );
   if (already) {
+    if (params.relationship && already.relationship !== params.relationship) {
+      already.relationship = params.relationship;
+      await writeLocalFriends(existing);
+    }
     return already;
   }
 
   const nowIso = new Date().toISOString();
   const record: FriendRecord = {
-    id: `fr_${params.userId}_${matchedUser.id}_${Date.now().toString(36)}`,
+    id: `fr_${params.userId}_${hydratedMatch.id}_${Date.now().toString(36)}`,
     user_id: params.userId,
-    friend_id: matchedUser.id,
-    friend_profile: matchedUser,
+    friend_id: hydratedMatch.id,
+    friend_profile: hydratedMatch,
     relationship: params.relationship ?? 'friend',
     created_at: nowIso,
   };
@@ -383,7 +594,7 @@ export async function addFriendByHandleOrCode(params: {
       await supabase.from('friendships').upsert(
         {
           user_id: params.userId,
-          friend_id: matchedUser.id,
+          friend_id: hydratedMatch.id,
           relationship: record.relationship,
         },
         { onConflict: 'user_id,friend_id' }
@@ -395,6 +606,20 @@ export async function addFriendByHandleOrCode(params: {
 
   if (params.coupleId) {
     void broadcastCoupleSync(params.coupleId, { kind: 'friend_added', friend: record });
+  }
+  if (selfProfile) {
+    const reciprocalRecord: FriendRecord = {
+      id: `fr_${hydratedMatch.id}_${params.userId}_${Date.now().toString(36)}`,
+      user_id: hydratedMatch.id,
+      friend_id: params.userId,
+      friend_profile: selfProfile,
+      relationship: record.relationship,
+      created_at: nowIso,
+    };
+    void broadcastCoupleSync(buildUserDirectoryChannelTopic(), {
+      kind: 'friend_added',
+      friend: reciprocalRecord,
+    });
   }
   return record;
 }

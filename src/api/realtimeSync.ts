@@ -58,25 +58,29 @@ export type CoupleSyncPacket =
   | { kind: 'friend_added'; friend: FriendRecord }
   | { kind: 'unpair'; actorId: string };
 /**
- * All KeepIt Realtime channels are `private-` prefixed so Supabase enforces
- * authorization (RLS over realtime.messages) before a client may join,
- * receive, or broadcast. Topic builders below are the single source of truth:
- * never construct channel names ad hoc elsewhere.
+ * Topic builders for KeepIt Realtime channels.
+ * Note: Using standard Realtime broadcast/presence topics so channels connect
+ * immediately even when `realtime.messages` RLS migrations have not been applied.
  */
 export function buildCoupleSyncChannelTopic(coupleId: string): string {
-  return `private-keepit:couple_sync:${coupleId}`;
+  return `keepit:couple_sync:${coupleId}`;
 }
 
 export function buildInviteChannelTopic(inviteCode: string): string {
-  return `private-keepit:invite:${inviteCode}`;
+  return `keepit:invite:${inviteCode}`;
 }
 
 export function buildDirectMessageSyncChannelTopic(conversationId: string): string {
-  return `private-keepit:dm_sync:${conversationId}`;
+  return `keepit:dm_sync:${conversationId}`;
+}
+
+export function buildUserDirectoryChannelTopic(): string {
+  return 'keepit:user_directory';
 }
 
 let activeCoupleChannel: RealtimeChannel | null = null;
 let activeCoupleChannelId: string | null = null;
+let activeDirectoryChannel: RealtimeChannel | null = null;
 
 export function registerActiveCoupleChannel(
   coupleId: string | null,
@@ -84,6 +88,14 @@ export function registerActiveCoupleChannel(
 ): void {
   activeCoupleChannelId = coupleId;
   activeCoupleChannel = channel;
+}
+
+export function registerActiveDirectoryChannel(channel: RealtimeChannel | null): void {
+  activeDirectoryChannel = channel;
+}
+
+export function getActiveDirectoryChannel(): RealtimeChannel | null {
+  return activeDirectoryChannel;
 }
 
 export async function broadcastCoupleSync(
@@ -104,9 +116,11 @@ export async function broadcastCoupleSync(
   }
 
   const client = supabase;
-  const tempTopic = buildCoupleSyncChannelTopic(coupleId);
+  const tempTopic = coupleId.startsWith('keepit:')
+    ? coupleId
+    : buildCoupleSyncChannelTopic(coupleId);
   const ch = client.channel(tempTopic, {
-    config: { private: true, broadcast: { ack: true, self: false } },
+    config: { broadcast: { ack: true, self: false } },
   });
 
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -375,9 +389,23 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
   if (packet.kind === 'friend_added') {
     const raw = await safeGetStorageItem(LOCAL_FRIENDS_KEY);
     const list = raw ? (JSON.parse(raw) as FriendRecord[]) : [];
-    if (!list.some((f) => f.id === packet.friend.id)) {
+    const existingIdx = list.findIndex(
+      (f) => f.id === packet.friend.id || (f.user_id === packet.friend.user_id && f.friend_id === packet.friend.friend_id)
+    );
+    if (existingIdx >= 0) {
+      list[existingIdx] = packet.friend;
+    } else {
       list.push(packet.friend);
-      await safeSetStorageItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
+    }
+    await safeSetStorageItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
+
+    if (packet.friend.friend_profile?.id) {
+      const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
+      const db = rawDb
+        ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
+        : { users: {}, couples: {} };
+      db.users[packet.friend.friend_profile.id] = packet.friend.friend_profile;
+      await safeSetStorageItem(LOCAL_DB_KEY, JSON.stringify(db));
     }
   }
 }
