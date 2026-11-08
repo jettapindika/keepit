@@ -65,6 +65,50 @@ export function buildInviteDeepLink(code: string): string {
   return `keepit://pair?code=${normalizeInviteCode(code)}`;
 }
 
+export function buildInviteShareMessage(code: string): string {
+  const clean = normalizeInviteCode(code);
+  const link = buildInviteDeepLink(clean);
+  const formatted = formatInviteCodeDisplay(clean);
+  return `Join me on KeepIt so we can share our daily Moment together.\nInvite code: ${formatted}\nLink: ${link}`;
+}
+
+/**
+ * Extracts a 6-character KeepIt invite code from:
+ * - a deep link (`keepit://pair?code=AB2-CD3`, `https://.../pair?code=AB2CD3`)
+ * - a shared multi-line invite message (`Invite code: AB2-CD3`)
+ * - or a raw 6-character code (`AB2-CD3` / `AB2CD3`)
+ */
+export function extractInviteCodeFromText(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  const urlCodeMatch = trimmed.match(/[?&]code=([A-Za-z0-9-]{3,10})/i);
+  if (urlCodeMatch?.[1]) {
+    const cleanedUrlCode = normalizeInviteCode(urlCodeMatch[1]);
+    if (cleanedUrlCode.length === 6) return cleanedUrlCode;
+  }
+
+  const labeledCodeMatch = trimmed.match(
+    /invite\s*code\s*[:=-]?\s*([A-Za-z0-9]{3}[-\s]?[A-Za-z0-9]{3})/i
+  );
+  if (labeledCodeMatch?.[1]) {
+    const cleanedLabeled = normalizeInviteCode(labeledCodeMatch[1]);
+    if (cleanedLabeled.length === 6) return cleanedLabeled;
+  }
+
+  const hyphenatedMatch = trimmed.match(/\b([A-Za-z0-9]{3})-([A-Za-z0-9]{3})\b/);
+  if (hyphenatedMatch?.[1] && hyphenatedMatch?.[2]) {
+    const cleanedHyphenated = normalizeInviteCode(`${hyphenatedMatch[1]}${hyphenatedMatch[2]}`);
+    if (cleanedHyphenated.length === 6) return cleanedHyphenated;
+  }
+
+  const cleaned = normalizeInviteCode(trimmed);
+  if (cleaned.length === 6) return cleaned;
+
+  return '';
+}
+
 function mapRpcError(err: unknown): PairingError {
   const rawMessage = err instanceof Error ? err.message : String(err);
   const matchedCode = (Object.keys(KNOWN_ERROR_MESSAGES) as PairingErrorCode[]).find((code) =>
@@ -742,7 +786,7 @@ export async function redeemInviteCode(
     throw new PairingError('UNAUTHENTICATED', KNOWN_ERROR_MESSAGES.UNAUTHENTICATED);
   }
 
-  const cleaned = normalizeInviteCode(rawCode);
+  const cleaned = extractInviteCodeFromText(rawCode) || normalizeInviteCode(rawCode);
   if (cleaned.length !== 6) {
     throw new PairingError('INVALID_CODE_FORMAT', KNOWN_ERROR_MESSAGES.INVALID_CODE_FORMAT);
   }

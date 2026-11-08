@@ -16,7 +16,7 @@ import React, { useEffect } from 'react';
 import { Platform, Text, View } from 'react-native';
 
 import { fetchTodayMomentBundle } from '@/api/moments';
-import { normalizeInviteCode } from '@/api/pairing';
+import { extractInviteCodeFromText, normalizeInviteCode } from '@/api/pairing';
 import { fetchCoupleStatuses } from '@/api/statuses';
 import { useRealtimePairing } from '@/hooks/useRealtimePairing';
 import { KeepItButton } from '@/components/ui/Primitives';
@@ -137,7 +137,9 @@ function NavigationGuard() {
     const authLeaf = segmentList[1];
 
     const rawIncomingCode =
-      typeof globalParams.code === 'string' ? normalizeInviteCode(globalParams.code) : '';
+      typeof globalParams.code === 'string'
+        ? extractInviteCodeFromText(globalParams.code) || normalizeInviteCode(globalParams.code)
+        : '';
     const incomingCode = rawIncomingCode.length === 6 ? rawIncomingCode : null;
 
     if (!user && incomingCode && incomingCode !== pendingInviteCode) {
@@ -185,6 +187,7 @@ function NavigationGuard() {
 export default function RootLayout() {
   const hydrate = useSessionStore((s) => s.hydrate);
   const consumeAuthRedirectUrl = useSessionStore((s) => s.consumeAuthRedirectUrl);
+  const setPendingInviteCode = useSessionStore((s) => s.setPendingInviteCode);
   const hydrated = useSessionStore((s) => s.hydrated);
   const { colors, isDark } = useKeepItTheme();
   const { reduced } = useAppMotion();
@@ -213,6 +216,14 @@ export default function RootLayout() {
         ) {
           window.history.replaceState(null, '', window.location.pathname);
         }
+        return;
+      }
+
+      if (url.includes('pair') || /[?&]code=/i.test(url)) {
+        const inviteCode = extractInviteCodeFromText(url);
+        if (inviteCode.length === 6) {
+          setPendingInviteCode(inviteCode);
+        }
       }
     };
 
@@ -230,7 +241,7 @@ export default function RootLayout() {
       void handleIncomingUrl(url);
     });
     return () => subscription.remove();
-  }, [hydrate, consumeAuthRedirectUrl]);
+  }, [hydrate, consumeAuthRedirectUrl, setPendingInviteCode]);
   const navTheme = isDark
     ? {
         ...DarkTheme,
