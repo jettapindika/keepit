@@ -44,6 +44,8 @@ export default function SettingsScreen() {
   const setMotionEnabled = useSessionStore((s) => s.setMotionEnabled);
   const widgetLayout = useSessionStore((s) => s.widgetLayout);
   const setWidgetLayout = useSessionStore((s) => s.setWidgetLayout);
+  const mirrorFrontCamera = useSessionStore((s) => s.mirrorFrontCamera);
+  const setMirrorFrontCamera = useSessionStore((s) => s.setMirrorFrontCamera);
   const setPairing = useSessionStore((s) => s.setPairing);
   const signOut = useSessionStore((s) => s.signOut);
 
@@ -214,6 +216,10 @@ export default function SettingsScreen() {
           <View style={styles.switchRow}>
             <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Motion</Text>
             <AppSwitch accessibilityLabel="Enable motion animations" accessibilityState={{ checked: motionEnabled, disabled: preferenceSaving }} disabled={preferenceSaving} value={motionEnabled} onValueChange={(value) => void updatePreference(() => setMotionEnabled(value))} />
+          </View>
+          <View style={styles.switchRow}>
+            <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Mirror front camera</Text>
+            <AppSwitch accessibilityLabel="Mirror front camera photos" accessibilityState={{ checked: mirrorFrontCamera, disabled: preferenceSaving }} disabled={preferenceSaving} value={mirrorFrontCamera} onValueChange={(value) => void updatePreference(() => setMirrorFrontCamera(value))} />
           </View>
           <View style={styles.switchRow}>
             <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Side-by-side widget photos</Text>

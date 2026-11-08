@@ -91,6 +91,8 @@ export default function CameraModalScreen() {
   const user = useSessionStore((s) => s.user);
   const partner = useSessionStore((s) => s.partner);
   const couple = useSessionStore((s) => s.couple);
+  const mirrorFrontCamera = useSessionStore((s) => s.mirrorFrontCamera);
+  const setMirrorFrontCamera = useSessionStore((s) => s.setMirrorFrontCamera);
   const { enabled: motionEnabled, speed: motionSpeed } = useAppMotion();
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -293,17 +295,20 @@ export default function CameraModalScreen() {
         if (!isMountedRef.current || !cameraRef.current) return;
 
         setStage('capturing_first');
-        const pictureOptions =
-          Platform.OS === 'web'
-            ? { quality: 0.55, base64: true }
-            : { quality: 0.55 };
+        const getPictureOptionsForLens = (lens: 'back' | 'front') => {
+          const shouldMirror = lens === 'front' && Boolean(mirrorFrontCamera);
+          return Platform.OS === 'web'
+            ? { quality: 0.55, base64: true, isImageMirror: shouldMirror }
+            : { quality: 0.55, mirror: shouldMirror };
+        };
+        const firstPictureOptions = getPictureOptionsForLens(firstLens);
         let firstShot = await cameraRef.current
-          .takePictureAsync(pictureOptions)
+          .takePictureAsync(firstPictureOptions)
           .catch(() => null);
         if (!firstShot?.uri && isMountedRef.current && cameraRef.current) {
           await waitMs(450);
           firstShot = await cameraRef.current
-            .takePictureAsync(pictureOptions)
+            .takePictureAsync(firstPictureOptions)
             .catch(() => null);
         }
         if (!isMountedRef.current) return;
@@ -322,15 +327,16 @@ export default function CameraModalScreen() {
         if (!isMountedRef.current || !cameraRef.current) return;
 
         setStage('capturing_second');
+        const secondPictureOptions = getPictureOptionsForLens(secondLens);
         let secondShot = await cameraRef.current
-          .takePictureAsync(pictureOptions)
+          .takePictureAsync(secondPictureOptions)
           .catch(() => null);
 
         // Retry once if the opposite camera HAL was still settling
         if (!secondShot?.uri && isMountedRef.current && cameraRef.current) {
           await waitMs(550);
           secondShot = await cameraRef.current
-            .takePictureAsync(pictureOptions)
+            .takePictureAsync(secondPictureOptions)
             .catch(() => null);
         }
         if (!isMountedRef.current) return;
@@ -857,45 +863,85 @@ export default function CameraModalScreen() {
                 </View>
               </View>
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Toggle flash, currently ${flash}`}
-                accessibilityState={{ checked: flash === 'on' }}
-                disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    void Haptics.selectionAsync();
-                  }
-                  setFlash((prev) => (prev === 'off' ? 'on' : 'off'));
-                }}
-                style={[
-                  styles.iconCircleBtn,
-                  {
-                    backgroundColor:
-                      flash === 'on' ? colors.accent : colors.surface,
-                    borderColor:
-                      flash === 'on' ? colors.accent : colors.border,
-                  },
-                ]}>
-                <SymbolView
-                  name={
-                    flash === 'on'
-                      ? { ios: 'bolt.fill', android: 'flash_on', web: 'flash_on' }
-                      : { ios: 'bolt.slash.fill', android: 'flash_off', web: 'flash_off' }
-                  }
-                  tintColor={flash === 'on' ? colors.onAccent : colors.ink}
-                  size={20}
-                  fallback={
-                    <Text
-                      style={[
-                        styles.iconFallbackText,
-                        { color: flash === 'on' ? colors.onAccent : colors.ink },
-                      ]}>
-                      ⚡
-                    </Text>
-                  }
-                />
-              </Pressable>
+              <View style={styles.topRightActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Toggle front camera mirror, currently ${mirrorFrontCamera ? 'mirrored' : 'unmirrored'}`}
+                  accessibilityState={{ checked: mirrorFrontCamera }}
+                  disabled={stage !== 'ready'}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      void Haptics.selectionAsync();
+                    }
+                    void setMirrorFrontCamera(!mirrorFrontCamera);
+                  }}
+                  style={[
+                    styles.iconCircleBtn,
+                    {
+                      backgroundColor: mirrorFrontCamera ? colors.accent : colors.surface,
+                      borderColor: mirrorFrontCamera ? colors.accent : colors.border,
+                    },
+                  ]}>
+                  <SymbolView
+                    name={{
+                      ios: 'arrow.left.and.right.righttriangle.left.righttriangle.right',
+                      android: 'flip',
+                      web: 'flip',
+                    }}
+                    tintColor={mirrorFrontCamera ? colors.onAccent : colors.ink}
+                    size={19}
+                    fallback={
+                      <Text
+                        style={[
+                          styles.iconFallbackText,
+                          { color: mirrorFrontCamera ? colors.onAccent : colors.ink },
+                        ]}>
+                        ⇄
+                      </Text>
+                    }
+                  />
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Toggle flash, currently ${flash}`}
+                  accessibilityState={{ checked: flash === 'on' }}
+                  disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
+                  onPress={() => {
+                    if (Platform.OS !== 'web') {
+                      void Haptics.selectionAsync();
+                    }
+                    setFlash((prev) => (prev === 'off' ? 'on' : 'off'));
+                  }}
+                  style={[
+                    styles.iconCircleBtn,
+                    {
+                      backgroundColor:
+                        flash === 'on' ? colors.accent : colors.surface,
+                      borderColor:
+                        flash === 'on' ? colors.accent : colors.border,
+                    },
+                  ]}>
+                  <SymbolView
+                    name={
+                      flash === 'on'
+                        ? { ios: 'bolt.fill', android: 'flash_on', web: 'flash_on' }
+                        : { ios: 'bolt.slash.fill', android: 'flash_off', web: 'flash_off' }
+                    }
+                    tintColor={flash === 'on' ? colors.onAccent : colors.ink}
+                    size={20}
+                    fallback={
+                      <Text
+                        style={[
+                          styles.iconFallbackText,
+                          { color: flash === 'on' ? colors.onAccent : colors.ink },
+                        ]}>
+                        ⚡
+                      </Text>
+                    }
+                  />
+                </Pressable>
+              </View>
             </View>
 
             {bundleQuery.isError ? (
@@ -926,8 +972,14 @@ export default function CameraModalScreen() {
                 {permission?.granted ? (
                   <CameraView
                     ref={cameraRef}
-                    style={styles.full}
+                    style={[
+                      styles.full,
+                      Platform.OS === 'web' && facing === 'front' && !mirrorFrontCamera
+                        ? { transform: [{ scaleX: -1 }] }
+                        : null,
+                    ]}
                     facing={facing}
+                    mirror={facing === 'front' ? mirrorFrontCamera : false}
                     flash={facing === 'front' ? 'off' : flash}
                     mute={!micPermission?.granted}
                     mode={mediaType === 'video' ? 'video' : 'picture'}
@@ -2485,6 +2537,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
+  },
+  topRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   iconCircleBtn: {
     width: 44,

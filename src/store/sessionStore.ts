@@ -197,6 +197,7 @@ interface PersistedSessionSlice {
   motionEnabled: boolean;
   motionSpeed: AnimationSpeed;
   widgetLayout?: WidgetLayoutMode;
+  mirrorFrontCamera?: boolean;
 }
 
 interface SessionState {
@@ -209,6 +210,7 @@ interface SessionState {
   motionEnabled: boolean;
   motionSpeed: AnimationSpeed;
   widgetLayout: WidgetLayoutMode;
+  mirrorFrontCamera: boolean;
   pendingInviteCode: string | null;
   hydrate: () => Promise<void>;
   consumeAuthRedirectUrl: (url: string) => Promise<boolean>;
@@ -242,6 +244,7 @@ interface SessionState {
   setMotionEnabled: (enabled: boolean) => Promise<void>;
   setMotionSpeed: (speed: AnimationSpeed) => Promise<void>;
   setWidgetLayout: (layout: WidgetLayoutMode) => Promise<void>;
+  setMirrorFrontCamera: (mirror: boolean) => Promise<void>;
   setPendingInviteCode: (code: string | null) => void;
   signOut: () => Promise<void>;
   wipeLocalAccount: () => Promise<void>;
@@ -330,6 +333,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   motionEnabled: true,
   motionSpeed: 1,
   widgetLayout: 'side_by_side',
+  mirrorFrontCamera: false,
   pendingInviteCode: null,
 
   hydrate: async () => {
@@ -361,6 +365,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       if (saved?.widgetLayout === 'partner_only' || saved?.widgetLayout === 'side_by_side') {
         set({ widgetLayout: saved.widgetLayout });
+      }
+      if (typeof saved?.mirrorFrontCamera === 'boolean') {
+        set({ mirrorFrontCamera: saved.mirrorFrontCamera });
       }
 
       if (isSupabaseConfigured && supabase) {
@@ -899,6 +906,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       motionEnabled: get().motionEnabled,
       motionSpeed: get().motionSpeed,
       widgetLayout: layout,
+      mirrorFrontCamera: get().mirrorFrontCamera,
+    });
+  },
+
+  setMirrorFrontCamera: async (mirror: boolean) => {
+    set({ mirrorFrontCamera: mirror });
+    await persistSessionSlice({
+      user: get().user,
+      email: get().email,
+      themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
+      widgetLayout: get().widgetLayout,
+      mirrorFrontCamera: mirror,
     });
   },
 
