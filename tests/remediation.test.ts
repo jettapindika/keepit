@@ -20,11 +20,12 @@ import { fetchMonthMemories } from '@/api/extras';
 import { fetchCoupleLocations, updateMyLocationShare } from '@/api/locations';
 import {
   addMomentComment,
+  buildSimulatedDualPhotos,
+  computeDeterministicPromptTriggerIso,
   deleteMomentComment,
   deleteMomentPost,
   ensureCrossDeviceShareableUri,
   fetchTodayMomentBundle,
-  computeDeterministicPromptTriggerIso,
   formatLateDuration,
   isMomentPromptCheckIn,
   simulateSandboxPromptState,
@@ -51,6 +52,7 @@ import {
   buildDirectMessageSyncChannelTopic,
   buildInviteChannelTopic,
   buildUserDirectoryChannelTopic,
+  createFreshRealtimeChannel,
   emitDirectoryInviteAnnounce,
   emitDirectoryUserAnnounce,
   requestRealtimeCatchUpSync,
@@ -1481,5 +1483,189 @@ describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Ch
       bundle.friendMomentsToday?.[0].front_photo_url,
       'data:image/jpeg;base64,FRIEND_REMOTE_FRONT'
     );
+  });
+
+  it('prevents duplicate watermarks in simulated photos & composites and detaches stale Realtime channels before adding presence callbacks', () => {
+    const sim = buildSimulatedDualPhotos({
+      authorLabel: 'Jetta',
+      sceneLabel: 'Morning espresso',
+    });
+    const decodedSimBack = decodeSvgDataUriToXml(sim.backUri);
+    const decodedSimFront = decodeSvgDataUriToXml(sim.frontUri);
+    assert.ok(
+      !decodedSimBack.includes(KEEPIT_WATERMARK_SVG_PATH_D),
+      'Simulated back photo must not pre-bake #keepit watermark path (preventing duplicate overlay on card & composite)'
+    );
+    assert.ok(
+      !decodedSimFront.includes(KEEPIT_WATERMARK_SVG_PATH_D),
+      'Simulated front photo must not pre-bake #keepit watermark path'
+    );
+
+    const compositeFromSim = decodeSvgDataUriToXml(
+      buildMomentCompositeSvgDataUri({
+        backUri: sim.backUri,
+        frontUri: sim.frontUri,
+        authorName: 'Jetta',
+        timestampLabel: 'Nov 8 · 11:00 AM',
+        aspect: '3:4',
+      })
+    );
+    const watermarkOccurrences = compositeFromSim.split(KEEPIT_WATERMARK_SVG_PATH_D).length - 1;
+    assert.equal(
+      watermarkOccurrences,
+      1,
+      'Composite 3:4 SVG must contain exactly one #keepit watermark path'
+    );
+
+    // Simulate a Supabase client where `realtime:keepit:user_directory` was already subscribed
+    // (e.g. from an earlier broadcastCoupleSync or fast re-mount) and verify createFreshRealtimeChannel
+    // detaches the subscribed instance so `.on('presence', ...)` never throws.
+    class MockChannel {
+      topic: string;
+      subscribed = false;
+      unsubscribed = false;
+      tornDown = false;
+      constructor(topic: string) {
+        this.topic = topic;
+      }
+      subscribe() {
+        this.subscribed = true;
+        return this;
+      }
+      on(type: string) {
+        if (this.subscribed && type === 'presence') {
+          throw new Error(
+            `cannot add \`${type}\` callbacks for ${this.topic} after \`subscribe()\`.`
+          );
+        }
+        return this;
+      }
+      async unsubscribe() {
+        this.unsubscribed = true;
+        return 'ok';
+      }
+      teardown() {
+        this.tornDown = true;
+      }
+    }
+
+    const channels: MockChannel[] = [];
+    const mockClient = {
+      getChannels: () => channels,
+      realtime: {
+        _remove: (ch: MockChannel) => {
+          const idx = channels.indexOf(ch);
+          if (idx !== -1) channels.splice(idx, 1);
+        },
+      },
+      channel: (topic: string) => {
+        const realtimeTopic = `realtime:${topic}`;
+        const existing = channels.find((c) => c.topic === realtimeTopic);
+        if (existing) return existing;
+        const created = new MockChannel(realtimeTopic);
+        channels.push(created);
+        return created;
+      },
+    };
+
+    const topic = buildUserDirectoryChannelTopic();
+    const stale = mockClient.channel(topic).subscribe();
+    assert.throws(
+      () => mockClient.channel(topic).on('presence'),
+      /cannot add `presence` callbacks for realtime:keepit:user_directory after `subscribe\(\)`/
+    );
+
+    const fresh = createFreshRealtimeChannel(mockClient as never, topic);
+    assert.notEqual(fresh, stale, 'Must return a fresh channel instance instead of the subscribed stale one');
+    assert.equal(stale.unsubscribed, true);
+    assert.equal(stale.tornDown, true);
+    assert.doesNotThrow(() => {
+      fresh.on('presence', { event: 'sync' }, () => {});
+    });
+  });
+
+  it('restores solo user memories when prompts cache is empty and keeps profile edits & friend removals persistent', async () => {
+    const userId = 'user_solo_restore';
+    const coupleId = `solo_${userId}`;
+    const today = todayLocalDateString();
+
+    const edited = await upsertUserProfile({
+      userId,
+      displayName: 'Jetta Edited',
+      username: 'jetta.edited',
+      bio: 'Updated bio persists',
+      pronouns: 'they/them',
+      moodSong: 'Midnight City',
+      bannerColor: '#D95D39',
+      website: 'https://keepit.app',
+      isPrivate: true,
+      dumpMode: true,
+    });
+    assert.equal(edited.display_name, 'Jetta Edited');
+    assert.equal(edited.bio, 'Updated bio persists');
+    assert.equal(edited.is_private, true);
+
+    const peer = await upsertUserProfile({
+      userId: 'user_friend_remove_check',
+      displayName: 'Removable Friend',
+      username: 'removable.friend',
+    });
+    const added = await addFriendByHandleOrCode({
+      userId,
+      query: '@removable.friend',
+      relationship: 'bestie',
+    });
+    assert.equal((await fetchFriendsCircle({ userId })).length, 1);
+
+    await removeFriend({ userId, friendRecordId: added.id });
+    assert.equal((await fetchFriendsCircle({ userId })).length, 0);
+
+    await applyIncomingCouplePacket({
+      kind: 'friend_added',
+      friend: added,
+    });
+    assert.equal((await fetchFriendsCircle({ userId })).length, 1);
+    await applyIncomingCouplePacket({
+      kind: 'friend_removed',
+      userId,
+      friendId: peer.id,
+    });
+    assert.equal(
+      (await fetchFriendsCircle({ userId })).length,
+      0,
+      'friend_removed packet must remove friend from local cache'
+    );
+
+    // Submit a solo moment, then wipe `prompts` in AsyncStorage to simulate a fresh login / device
+    // where moments were hydrated without pre-seeded prompt rows.
+    const posted = await submitDailyMoment({
+      coupleId,
+      promptId: `prompt_${coupleId}_${today}`,
+      userId,
+      authorName: 'Jetta Edited',
+      backUri: 'data:image/jpeg;base64,SOLO_MEM_BACK',
+      frontUri: 'data:image/jpeg;base64,SOLO_MEM_FRONT',
+      caption: 'Solo memory after login',
+    });
+    const rawMoments = await AsyncStorage.getItem('keepit.local_moments.v1');
+    assert.ok(rawMoments);
+    const parsedMoments = JSON.parse(rawMoments) as {
+      prompts: Record<string, unknown>;
+      moments: Record<string, unknown>;
+      streaks: Record<string, unknown>;
+    };
+    parsedMoments.prompts = {};
+    await AsyncStorage.setItem('keepit.local_moments.v1', JSON.stringify(parsedMoments));
+
+    const [yearStr, monthStr] = today.split('-');
+    const memories = await fetchMonthMemories({
+      coupleId,
+      userId,
+      year: Number(yearStr),
+      month: Number(monthStr),
+    });
+    assert.equal(memories.days.length, 1);
+    assert.equal(memories.days[0].mine?.id, posted.id);
+    assert.equal(memories.days[0].mine?.caption, 'Solo memory after login');
   });
 });

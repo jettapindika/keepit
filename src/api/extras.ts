@@ -1,6 +1,8 @@
 import {
   buildSimulatedDualPhotos,
+  computeDeterministicPromptTriggerIso,
   DEFAULT_WARM_BLURHASH,
+  hydrateRemoteMomentsIntoLocalState,
   readLocalMoments,
   todayLocalDateString,
   writeLocalMoments,
@@ -230,8 +232,42 @@ export async function fetchMonthMemories(params: {
   }
 
   const state = await readLocalMoments();
+  const hydrated = await hydrateRemoteMomentsIntoLocalState({
+    userId: params.userId,
+    coupleId: params.coupleId,
+    state,
+  });
+  let stateMutated = hydrated.mutated;
   const monthPrefix = `${String(params.year).padStart(4, '0')}-${String(params.month).padStart(2, '0')}-`;
   const todayLocal = todayLocalDateString();
+
+  const sessionPartnerId = useSessionStore.getState().partner?.id;
+  for (const rec of Object.values(state.moments)) {
+    if (!rec?.id || rec.snap_once) continue;
+    const mDate = (rec.posted_at || rec.captured_at || '').slice(0, 10);
+    if (!mDate.startsWith(monthPrefix)) continue;
+    const belongsToSpace =
+      rec.couple_id === params.coupleId ||
+      rec.user_id === params.userId ||
+      (sessionPartnerId && rec.user_id === sessionPartnerId);
+    if (!belongsToSpace) continue;
+
+    const promptKey = `${params.coupleId}:${mDate}`;
+    if (!state.prompts[promptKey]) {
+      const triggerIso = computeDeterministicPromptTriggerIso(params.coupleId, mDate);
+      state.prompts[promptKey] = {
+        id: rec.prompt_id || `prompt_${params.coupleId}_${mDate}`,
+        couple_id: params.coupleId,
+        prompt_date: mDate,
+        trigger_at: triggerIso,
+        notified_at: triggerIso,
+      };
+      stateMutated = true;
+    }
+  }
+  if (stateMutated) {
+    await writeLocalMoments(state);
+  }
 
   const promptsInMonth = Object.values(state.prompts).filter(
     (p) => p.couple_id === params.coupleId && p.prompt_date.startsWith(monthPrefix)
@@ -257,7 +293,10 @@ export async function fetchMonthMemories(params: {
       const mDate = (m.posted_at || m.captured_at || '').slice(0, 10);
       return (
         m.prompt_id === prompt.id ||
-        (m.couple_id === params.coupleId && mDate === prompt.prompt_date)
+        ((m.couple_id === params.coupleId ||
+          m.user_id === params.userId ||
+          (sessionPartnerId && m.user_id === sessionPartnerId)) &&
+          mDate === prompt.prompt_date)
       );
     });
     if (promptMoments.length === 0) continue;

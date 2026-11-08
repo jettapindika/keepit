@@ -52,7 +52,6 @@ import {
   TaggedPerson,
 } from '@/types/database';
 import {
-  embedKeepItWatermarkOnImageUri,
   exportAndShareCompositeMoment,
   formatMomentWatermarkTimestamp,
 } from '@/utils/momentExport';
@@ -356,13 +355,8 @@ export default function CameraModalScreen() {
 
         const rawBack = firstLens === 'back' ? firstUri : secondShotUri;
         const rawFront = firstLens === 'front' ? firstUri : secondShotUri;
-        const captureLabel = formatMomentWatermarkTimestamp(captureTimestamp);
-        const [resolvedBack, resolvedFront] = await Promise.all([
-          embedKeepItWatermarkOnImageUri(rawBack, captureLabel),
-          embedKeepItWatermarkOnImageUri(rawFront, captureLabel),
-        ]);
-        setBackUri(resolvedBack);
-        setFrontUri(resolvedFront);
+        setBackUri(rawBack);
+        setFrontUri(rawFront);
         setCapturedAtIso(captureTimestamp);
         setPipSwapped(false);
         if (motionEnabled) {
@@ -424,23 +418,17 @@ export default function CameraModalScreen() {
 
     try {
       const primaryLens = recordingOriginRef.current;
-      const captureLabel = formatMomentWatermarkTimestamp(capturedAtIso);
       const extractedFrames = await extractVideoDualFramesJpeg(recordedHardwareUri);
 
       const rawStartFrame = extractedFrames?.startUri ?? vlogPipUri ?? recordedHardwareUri;
       const rawEndFrame = extractedFrames?.endUri ?? vlogPipUri ?? rawStartFrame;
 
-      const [watermarkedStart, watermarkedEnd] = await Promise.all([
-        embedKeepItWatermarkOnImageUri(rawStartFrame, captureLabel),
-        embedKeepItWatermarkOnImageUri(rawEndFrame, captureLabel),
-      ]);
-
       if (primaryLens === 'front') {
-        setFrontUri(watermarkedEnd);
-        setBackUri(vlogPipUri ?? watermarkedStart);
+        setFrontUri(rawEndFrame);
+        setBackUri(vlogPipUri ?? rawStartFrame);
       } else {
-        setBackUri(watermarkedEnd);
-        setFrontUri(vlogPipUri ?? watermarkedStart);
+        setBackUri(rawEndFrame);
+        setFrontUri(vlogPipUri ?? rawStartFrame);
       }
 
       setVideoDurationSec(finalDuration);

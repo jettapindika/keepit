@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { fetchPairingSnapshot, upsertUserProfile } from '@/api/pairing';
+import { syncDirectoryPresence } from '@/api/realtimeSync';
 import { getAuthRedirectUrl, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { AnimationSpeed } from '@/theme/motion';
 import { ThemeMode } from '@/theme/tokens';
@@ -48,7 +49,9 @@ export function isEmailConfirmedUser(user: SupabaseAuthUserLike | null | undefin
 }
 
 interface UserMetadataProfileHints {
+  displayName?: string;
   username?: string;
+  friendCode?: string;
   bio?: string;
   pronouns?: string;
   moodSong?: string;
@@ -65,19 +68,74 @@ function extractUserMetadataProfileHints(
 ): UserMetadataProfileHints {
   if (!metadata || typeof metadata !== 'object') return {};
   return {
+    displayName:
+      typeof metadata.display_name === 'string' && metadata.display_name.trim().length > 0
+        ? metadata.display_name.trim()
+        : undefined,
     username:
       typeof metadata.username === 'string' && metadata.username.trim().length >= 2
         ? metadata.username.trim()
+        : undefined,
+    friendCode:
+      typeof metadata.friend_code === 'string' && metadata.friend_code.trim().length > 0
+        ? metadata.friend_code.trim()
         : undefined,
     bio: typeof metadata.bio === 'string' ? metadata.bio : undefined,
     pronouns: typeof metadata.pronouns === 'string' ? metadata.pronouns : undefined,
     moodSong: typeof metadata.mood_song === 'string' ? metadata.mood_song : undefined,
     bannerColor: typeof metadata.banner_color === 'string' ? metadata.banner_color : undefined,
-    bannerPath: typeof metadata.banner_path === 'string' ? metadata.banner_path : undefined,
-    avatarPath: typeof metadata.avatar_path === 'string' ? metadata.avatar_path : undefined,
+    bannerPath:
+      metadata.banner_path === null
+        ? null
+        : typeof metadata.banner_path === 'string'
+          ? metadata.banner_path
+          : undefined,
+    avatarPath:
+      metadata.avatar_path === null
+        ? null
+        : typeof metadata.avatar_path === 'string'
+          ? metadata.avatar_path
+          : undefined,
     website: typeof metadata.website === 'string' ? metadata.website : undefined,
     isPrivate: typeof metadata.is_private === 'boolean' ? metadata.is_private : undefined,
     dumpMode: typeof metadata.dump_mode === 'boolean' ? metadata.dump_mode : undefined,
+  };
+}
+
+function mergeRemoteProfileWithMetadataHints(
+  remote: UserProfile,
+  metaHints: UserMetadataProfileHints,
+  fallbackDisplayName: string
+): UserProfile {
+  return {
+    ...remote,
+    display_name: metaHints.displayName ?? (remote.display_name || fallbackDisplayName),
+    username: metaHints.username ?? remote.username,
+    friend_code: metaHints.friendCode ?? remote.friend_code,
+    bio: metaHints.bio !== undefined ? metaHints.bio : (remote.bio ?? ''),
+    pronouns: metaHints.pronouns !== undefined ? metaHints.pronouns : (remote.pronouns ?? ''),
+    mood_song: metaHints.moodSong !== undefined ? metaHints.moodSong : (remote.mood_song ?? ''),
+    banner_color:
+      metaHints.bannerColor !== undefined
+        ? metaHints.bannerColor
+        : (remote.banner_color || '#1C1C1E'),
+    banner_path:
+      remote.banner_path !== undefined && remote.banner_path !== null
+        ? (metaHints.bannerPath === null ? null : remote.banner_path)
+        : (metaHints.bannerPath ?? null),
+    avatar_path:
+      remote.avatar_path !== undefined && remote.avatar_path !== null
+        ? (metaHints.avatarPath === null ? null : remote.avatar_path)
+        : (metaHints.avatarPath ?? null),
+    website: metaHints.website !== undefined ? metaHints.website : (remote.website ?? ''),
+    is_private:
+      metaHints.isPrivate !== undefined
+        ? metaHints.isPrivate
+        : (remote.is_private ?? false),
+    dump_mode:
+      metaHints.dumpMode !== undefined
+        ? metaHints.dumpMode
+        : (remote.dump_mode ?? false),
   };
 }
 export function isEmailRateLimitError(err: unknown): boolean {
@@ -327,29 +385,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             'KeepIt User';
 
           const metaHints = extractUserMetadataProfileHints(session.user.user_metadata);
-          const effectiveProfile: UserProfile =
-            !profileErr && profile
-              ? (profile as UserProfile)
-              : saved?.user?.id === session.user.id
-                ? await upsertUserProfile({
-                    userId: session.user.id,
-                    displayName: saved.user.display_name || fallbackDisplayName,
-                    username: saved.user.username ?? metaHints.username,
-                    bio: saved.user.bio ?? metaHints.bio,
-                    pronouns: saved.user.pronouns ?? metaHints.pronouns,
-                    moodSong: saved.user.mood_song ?? metaHints.moodSong,
-                    bannerColor: saved.user.banner_color ?? metaHints.bannerColor,
-                    bannerPath: saved.user.banner_path,
-                    website: saved.user.website ?? metaHints.website,
-                    avatarPath: saved.user.avatar_path,
-                    isPrivate: saved.user.is_private ?? metaHints.isPrivate,
-                    dumpMode: saved.user.dump_mode ?? metaHints.dumpMode,
-                  })
-                : await upsertUserProfile({
-                    userId: session.user.id,
-                    displayName: fallbackDisplayName,
-                    ...metaHints,
-                  });
+          const remoteProfile = !profileErr && profile ? (profile as UserProfile) : null;
+          const effectiveProfile: UserProfile = remoteProfile
+            ? mergeRemoteProfileWithMetadataHints(remoteProfile, metaHints, fallbackDisplayName)
+            : saved?.user?.id === session.user.id
+              ? await upsertUserProfile({
+                  userId: session.user.id,
+                  displayName: saved.user.display_name || fallbackDisplayName,
+                  username: saved.user.username ?? metaHints.username,
+                  bio: saved.user.bio ?? metaHints.bio,
+                  pronouns: saved.user.pronouns ?? metaHints.pronouns,
+                  moodSong: saved.user.mood_song ?? metaHints.moodSong,
+                  bannerColor: saved.user.banner_color ?? metaHints.bannerColor,
+                  bannerPath: saved.user.banner_path,
+                  website: saved.user.website ?? metaHints.website,
+                  avatarPath: saved.user.avatar_path,
+                  isPrivate: saved.user.is_private ?? metaHints.isPrivate,
+                  dumpMode: saved.user.dump_mode ?? metaHints.dumpMode,
+                })
+              : await upsertUserProfile({
+                  userId: session.user.id,
+                  displayName: fallbackDisplayName,
+                  ...metaHints,
+                });
           const pairing = await fetchPairingSnapshot(effectiveProfile.id);
           const soloFallbackCouple: CoupleRecord =
             pairing.couple ??
@@ -696,13 +754,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     }
 
-    const profile =
-      existingRemoteProfile ??
-      (await upsertUserProfile({
-        userId,
-        displayName,
-        ...metaHints,
-      }));
+    const profile: UserProfile = existingRemoteProfile
+      ? mergeRemoteProfileWithMetadataHints(existingRemoteProfile, metaHints, displayName)
+      : await upsertUserProfile({
+          userId,
+          displayName,
+          ...metaHints,
+        });
     const pairing = await fetchPairingSnapshot(userId);
     const soloFallbackCouple: CoupleRecord =
       pairing.couple ?? buildSoloFallbackCouple(userId, profile.created_at);
@@ -786,6 +844,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       motionSpeed: get().motionSpeed,
     });
     set({ user: updated });
+    void syncDirectoryPresence({ profile: updated, couple: get().couple });
     return updated;
   },
 

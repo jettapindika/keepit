@@ -18,6 +18,7 @@ import {
   buildCoupleSyncChannelTopic,
   buildUserDirectoryChannelTopic,
   CoupleSyncPacket,
+  createFreshRealtimeChannel,
   emitDirectoryInviteAnnounce,
   emitDirectoryUserAnnounce,
   registerActiveCoupleChannel,
@@ -75,7 +76,7 @@ export function useRealtimePairing() {
     const client = supabase;
     if (!userId || !isSupabaseConfigured || !client) return;
 
-    const directoryChannel = client.channel(buildUserDirectoryChannelTopic(), {
+    const directoryChannel = createFreshRealtimeChannel(client, buildUserDirectoryChannelTopic(), {
       config: {
         broadcast: { ack: true, self: false },
         presence: { key: userId },
@@ -89,21 +90,8 @@ export function useRealtimePairing() {
           if (rawEntry && typeof rawEntry === 'object' && 'profile' in rawEntry) {
             const candidate = rawEntry.profile as UserProfile | undefined;
             if (candidate?.id) {
-              await applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
-              if (candidate.id === userId) {
-                const cur = useSessionStore.getState().user;
-                const merged: UserProfile = {
-                  ...(cur ?? candidate),
-                  ...candidate,
-                  bio: candidate.bio || cur?.bio || '',
-                  pronouns: candidate.pronouns || cur?.pronouns || '',
-                  mood_song: candidate.mood_song || cur?.mood_song || '',
-                  website: candidate.website || cur?.website || '',
-                  avatar_path: candidate.avatar_path ?? cur?.avatar_path ?? null,
-                  banner_path: candidate.banner_path ?? cur?.banner_path ?? null,
-                };
-                useSessionStore.setState({ user: merged });
-              } else {
+              if (candidate.id !== userId) {
+                await applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
                 emitDirectoryUserAnnounce(candidate);
               }
             }
@@ -328,12 +316,15 @@ export function useRealtimePairing() {
         const packet = msg.payload as CoupleSyncPacket | undefined;
         if (!packet) return;
         void applyIncomingCouplePacket(packet).then(() => {
-          if (packet.kind === 'friend_added') {
+          if (packet.kind === 'friend_added' || packet.kind === 'friend_removed') {
             void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
             void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
           } else if (packet.kind === 'profile_upsert') {
             if (packet.profile.id === userId) {
-              useSessionStore.setState({ user: packet.profile });
+              const cur = useSessionStore.getState().user;
+              if (!cur) {
+                useSessionStore.setState({ user: packet.profile });
+              }
             } else {
               emitDirectoryUserAnnounce(packet.profile);
             }
@@ -346,6 +337,7 @@ export function useRealtimePairing() {
             packet.kind === 'moment_snap_viewed'
           ) {
             void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
+            void queryClient.invalidateQueries({ queryKey: ['month-memories'] });
             void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
           } else if (
             packet.kind === 'dm_upsert' ||
@@ -390,7 +382,7 @@ export function useRealtimePairing() {
       return;
     }
 
-    const syncChannel = client.channel(buildCoupleSyncChannelTopic(coupleId), {
+    const syncChannel = createFreshRealtimeChannel(client, buildCoupleSyncChannelTopic(coupleId), {
       config: {
         broadcast: { ack: false, self: false },
         presence: { key: user.id },

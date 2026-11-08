@@ -2,9 +2,13 @@
 // Cross-device Supabase Realtime Broadcast + Presence sync bus for paired couples & friends.
 // Reuses the active subscribed couple channel so broadcastCoupleSync never unsubscribes the listener!
 
-import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { RealtimeChannel, RealtimeChannelOptions, SupabaseClient } from '@supabase/supabase-js';
 
-import { readLocalMoments, writeLocalMoments } from '@/api/moments';
+import {
+  computeDeterministicPromptTriggerIso,
+  readLocalMoments,
+  writeLocalMoments,
+} from '@/api/moments';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
 import { safeGetStorageItem, safeSetStorageItem } from '@/utils/safeAsyncStorage';
@@ -56,6 +60,7 @@ export type CoupleSyncPacket =
     }
   | { kind: 'profile_upsert'; profile: UserProfile }
   | { kind: 'friend_added'; friend: FriendRecord }
+  | { kind: 'friend_removed'; userId: string; friendId: string }
   | { kind: 'unpair'; actorId: string };
 /**
  * Topic builders for KeepIt Realtime channels.
@@ -154,6 +159,48 @@ export function registerActiveDirectoryChannel(channel: RealtimeChannel | null):
 
 export function getActiveDirectoryChannel(): RealtimeChannel | null {
   return activeDirectoryChannel;
+}
+
+/**
+ * Detaches any pre-existing channel for `topic` from the Supabase client before creating a new
+ * channel instance. Supabase's `client.channel(topic)` reuses an existing `RealtimeChannel`
+ * when one is still in `client.getChannels()` (for example while an earlier `removeChannel()`
+ * or `broadcastCoupleSync()` is still in `joined` / `joining` / `leaving`), and calling
+ * `.on('presence', ...)` on a reused channel after `subscribe()` throws:
+ * `cannot add 'presence' callbacks for realtime:<topic> after 'subscribe()'`.
+ */
+export function createFreshRealtimeChannel(
+  client: SupabaseClient,
+  topic: string,
+  params: RealtimeChannelOptions = { config: {} }
+): RealtimeChannel {
+  const realtimeTopic = topic.startsWith('realtime:') ? topic : `realtime:${topic}`;
+  const staleChannels = client
+    .getChannels()
+    .filter((c) => c.topic === realtimeTopic || c.topic === topic);
+
+  for (const stale of staleChannels) {
+    if (activeDirectoryChannel === stale) {
+      activeDirectoryChannel = null;
+    }
+    if (activeCoupleChannel === stale) {
+      activeCoupleChannel = null;
+      activeCoupleChannelId = null;
+    }
+    try {
+      (client.realtime as unknown as { _remove?: (ch: RealtimeChannel) => void })._remove?.(stale);
+    } catch {
+      // Ignore internal list cleanup error
+    }
+    void stale.unsubscribe().catch(() => {});
+    try {
+      stale.teardown();
+    } catch {
+      // Ignore teardown error
+    }
+  }
+
+  return client.channel(topic, params);
 }
 
 export async function syncDirectoryPresence(params: {
@@ -291,7 +338,7 @@ export async function broadcastCoupleSync(
     .getChannels()
     .find((c) => c.topic === `realtime:${tempTopic}` || c.topic === tempTopic);
 
-  if (existingChannel && existingChannel.state === 'joined') {
+  if (existingChannel) {
     await existingChannel
       .send({
         type: 'broadcast',
@@ -302,46 +349,32 @@ export async function broadcastCoupleSync(
     return;
   }
 
-  const ownsChannel = !existingChannel;
-  const ch =
-    existingChannel ??
-    client.channel(tempTopic, {
-      config: { broadcast: { ack: true, self: false } },
-    });
-
-  if (!ownsChannel) {
-    // Channel already exists and is joining; send once joined without removing it!
-    await ch
-      .send({
-        type: 'broadcast',
-        event: 'couple_packet',
-        payload: packet,
-      })
-      .catch(() => {});
-    return;
-  }
-
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const timeout = setTimeout(resolve, 1500);
-  ch.subscribe((status) => {
-    if (status === 'SUBSCRIBED') {
-      void ch
+  // When no active channel is mounted for this topic yet, deliver via REST / one-shot channel
+  // without calling `.subscribe()` so any subsequent hook mounting `topic` never collides with
+  // a joining/joined channel in `client.getChannels()`.
+  const ch = client.channel(tempTopic, {
+    config: { broadcast: { ack: true, self: false } },
+  });
+  try {
+    if (typeof (ch as { httpSend?: (event: string, payload: unknown) => Promise<unknown> }).httpSend === 'function') {
+      await ch.httpSend('couple_packet', packet).catch(() => {});
+    } else {
+      await ch
         .send({
           type: 'broadcast',
           event: 'couple_packet',
           payload: packet,
         })
-        .finally(() => {
-          clearTimeout(timeout);
-          resolve();
-        });
-    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-      clearTimeout(timeout);
-      resolve();
+        .catch(() => {});
     }
-  });
-  await promise;
-  void client.removeChannel(ch);
+  } finally {
+    try {
+      (client.realtime as unknown as { _remove?: (c: RealtimeChannel) => void })._remove?.(ch);
+    } catch {
+      // Ignore
+    }
+    void client.removeChannel(ch).catch(() => {});
+  }
 }
 
 export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promise<void> {
@@ -369,9 +402,28 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
           front_photo_url: m.front_photo_url || m.front_photo_path,
         };
     state.moments[m.id] = mergedMoment;
+    const mDate = (mergedMoment.captured_at || mergedMoment.posted_at || new Date().toISOString()).slice(0, 10);
+    const effectiveCoupleId =
+      mergedMoment.couple_id || `solo_${mergedMoment.user_id}`;
+    const effectivePromptId =
+      mergedMoment.prompt_id || `prompt_${effectiveCoupleId}_${mDate}`;
+    mergedMoment.couple_id = effectiveCoupleId;
+    mergedMoment.prompt_id = effectivePromptId;
+    state.moments[m.id] = mergedMoment;
     // Also maintain legacy key if needed so both lookups succeed
-    state.moments[`${m.prompt_id}:${m.user_id}`] = mergedMoment;
+    state.moments[`${effectivePromptId}:${m.user_id}`] = mergedMoment;
 
+    const promptKey = `${effectiveCoupleId}:${mDate}`;
+    if (!state.prompts[promptKey]) {
+      const triggerIso = computeDeterministicPromptTriggerIso(effectiveCoupleId, mDate);
+      state.prompts[promptKey] = {
+        id: effectivePromptId,
+        couple_id: effectiveCoupleId,
+        prompt_date: mDate,
+        trigger_at: triggerIso,
+        notified_at: triggerIso,
+      };
+    }
     const promptMoments = Object.values(state.moments).filter(
       (item) => item.prompt_id === m.prompt_id && !item.user_id.startsWith('friend_')
     );
@@ -626,5 +678,13 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
       db.users[packet.friend.friend_profile.id] = packet.friend.friend_profile;
       await safeSetStorageItem(LOCAL_DB_KEY, JSON.stringify(db));
     }
+  }
+  if (packet.kind === 'friend_removed') {
+    const raw = await safeGetStorageItem(LOCAL_FRIENDS_KEY);
+    const list = raw ? (JSON.parse(raw) as FriendRecord[]) : [];
+    const next = list.filter(
+      (f) => !(f.user_id === packet.userId && f.friend_id === packet.friendId)
+    );
+    await safeSetStorageItem(LOCAL_FRIENDS_KEY, JSON.stringify(next));
   }
 }
