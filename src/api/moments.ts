@@ -7,7 +7,7 @@ import {
 } from '@/api/realtimeSync';
 import { fetchFriendsCircle, getFilterPresetMeta } from '@/api/social';
 import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
-import { formatMomentWatermarkTimestamp, KEEPIT_WATERMARK_SVG_PATH_D } from '@/utils/momentExport';
+import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 import { compressImageForCrossDeviceShare } from '../../modules/keepit-widget-bridge';
 import {
   MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
@@ -113,11 +113,7 @@ export function buildSimulatedDualPhotos(params: {
       <text x="96" y="582" font-family="system-ui, sans-serif" font-size="25" font-weight="600" fill="#F4F4F5">
         ${safeAuthor} · ${modeLabel} · ${filterMeta.label} · ${timeStamp}
       </text>
-      <g transform="translate(42, 1084) scale(3.52)">
-        <title>#keepit</title>
-        <path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="#FFFFFF"/>
-      </g>
-      <text x="42" y="1154" text-anchor="start" font-family="system-ui, sans-serif" font-size="22" font-weight="700" fill="#FFFFFF" opacity="0.92">${timeStamp}</text>
+      <rect y="940" width="900" height="260" fill="#1E1B18" opacity="0.28"/>
     </svg>
   `;
 
@@ -132,11 +128,7 @@ export function buildSimulatedDualPhotos(params: {
       <text x="300" y="728" text-anchor="middle" font-family="system-ui, sans-serif" font-size="28" font-weight="700" fill="#FAF7F2">
         ${safeAuthor} · Selfie
       </text>
-      <g transform="translate(28, 708) scale(2.35)">
-        <title>#keepit</title>
-        <path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="#FFFFFF"/>
-      </g>
-      <text x="28" y="756" text-anchor="start" font-family="system-ui, sans-serif" font-size="15" font-weight="700" fill="#FFFFFF" opacity="0.92">${timeStamp}</text>
+      <rect y="640" width="600" height="160" fill="#1E1B18" opacity="0.24"/>
     </svg>
   `;
 
@@ -449,7 +441,7 @@ async function uploadMediaToSupabaseStorage(params: {
   };
 }
 
-async function resolveStorageSignedUrlIfNeeded(pathOrUri: string | null | undefined): Promise<string | null> {
+export async function resolveStorageSignedUrlIfNeeded(pathOrUri: string | null | undefined): Promise<string | null> {
   if (!pathOrUri) return null;
   if (
     pathOrUri.startsWith('data:') ||
@@ -468,6 +460,159 @@ async function resolveStorageSignedUrlIfNeeded(pathOrUri: string | null | undefi
     }
   }
   return pathOrUri;
+}
+
+async function syncRecentUserMomentsToAuthMetadata(
+  userId: string,
+  state: LocalMomentsState
+): Promise<void> {
+  if (!isSupabaseConfigured || !supabase || !userId) return;
+  try {
+    const myRecent = deduplicateMoments(Object.values(state.moments))
+      .filter((m) => m?.id && m.user_id === userId && !m.snap_once)
+      .slice(0, 12)
+      .map((m) => {
+        const back = m.back_photo_url || m.back_photo_path || '';
+        const front = m.front_photo_url || m.front_photo_path || '';
+        const compactBack = back.length <= 28_000 ? back : '';
+        const compactFront = front.length <= 28_000 ? front : '';
+        return {
+          ...m,
+          back_photo_path: compactBack,
+          front_photo_path: compactFront,
+          back_photo_url: compactBack || undefined,
+          front_photo_url: compactFront || undefined,
+          video_uri: null,
+        };
+      });
+    await supabase.auth
+      .updateUser({ data: { recent_moments: myRecent } })
+      .catch(() => {});
+  } catch {
+    // Best-effort metadata backup
+  }
+}
+
+export async function hydrateRemoteMomentsIntoLocalState(params: {
+  userId: string;
+  coupleId?: string | null;
+  state?: LocalMomentsState;
+}): Promise<{ state: LocalMomentsState; mutated: boolean }> {
+  const state = params.state ?? (await readLocalMoments());
+  let mutated = false;
+  const effectiveCoupleId = params.coupleId || `solo_${params.userId}`;
+
+  if (isSupabaseConfigured && supabase && params.userId) {
+    try {
+      const filterClause =
+        params.coupleId && !params.coupleId.startsWith('solo_')
+          ? `couple_id.eq.${params.coupleId},user_id.eq.${params.userId}`
+          : `user_id.eq.${params.userId}`;
+      const { data: remoteRows, error: remoteErr } = await supabase
+        .from('moments')
+        .select('*')
+        .or(filterClause)
+        .order('posted_at', { ascending: false })
+        .limit(60);
+
+      if (!remoteErr && Array.isArray(remoteRows) && remoteRows.length > 0) {
+        for (const rawRow of remoteRows) {
+          const rec = rawRow as MomentRecord;
+          if (!rec?.id) continue;
+          const [signedBack, signedFront, signedVideo] = await Promise.all([
+            resolveStorageSignedUrlIfNeeded(rec.back_photo_url ?? rec.back_photo_path),
+            resolveStorageSignedUrlIfNeeded(rec.front_photo_url ?? rec.front_photo_path),
+            resolveStorageSignedUrlIfNeeded(rec.video_uri),
+          ]);
+          const normalizedCoupleId =
+            rec.couple_id ||
+            (rec.user_id === params.userId ? effectiveCoupleId : `solo_${rec.user_id}`);
+          const mDate = momentLocalDateString(rec);
+          const normalizedPromptId =
+            rec.prompt_id || `prompt_${normalizedCoupleId}_${mDate}`;
+          const hydratedRec: MomentRecord = {
+            ...rec,
+            couple_id: normalizedCoupleId,
+            prompt_id: normalizedPromptId,
+            is_Late_normalized: undefined,
+            is_late:
+              typeof rec.is_late === 'boolean'
+                ? rec.is_late
+                : (rec.late_by_seconds ?? 0) > PROMPT_WINDOW_SECONDS,
+            back_photo_url: signedBack ?? rec.back_photo_path,
+            front_photo_url: signedFront ?? rec.front_photo_path,
+            video_uri: signedVideo ?? rec.video_uri ?? null,
+          } as MomentRecord;
+          delete (hydratedRec as unknown as Record<string, unknown>).is_Late_normalized;
+
+          const existingLocal = state.moments[rec.id];
+          if (!existingLocal || hydratedRec.posted_at >= existingLocal.posted_at) {
+            state.moments[rec.id] = {
+              ...existingLocal,
+              ...hydratedRec,
+            };
+            mutated = true;
+          }
+          const promptKey = `${normalizedCoupleId}:${mDate}`;
+          if (!state.prompts[promptKey]) {
+            const triggerIso = computeDeterministicPromptTriggerIso(normalizedCoupleId, mDate);
+            state.prompts[promptKey] = {
+              id: normalizedPromptId,
+              couple_id: normalizedCoupleId,
+              prompt_date: mDate,
+              trigger_at: triggerIso,
+              notified_at: triggerIso,
+            };
+            mutated = true;
+          }
+        }
+      } else {
+        const { data: authData } = await supabase.auth
+          .getUser()
+          .catch(() => ({ data: { user: null } }));
+        const metaMoments = authData?.user?.user_metadata?.recent_moments;
+        if (Array.isArray(metaMoments) && metaMoments.length > 0) {
+          for (const rawMoment of metaMoments as MomentRecord[]) {
+            if (!rawMoment?.id || rawMoment.user_id !== params.userId) continue;
+            const normalizedCoupleId =
+              rawMoment.couple_id && !rawMoment.couple_id.startsWith('solo_')
+                ? rawMoment.couple_id
+                : effectiveCoupleId;
+            const mDate = momentLocalDateString(rawMoment);
+            const normalizedPromptId =
+              rawMoment.prompt_id || `prompt_${normalizedCoupleId}_${mDate}`;
+            const existingLocal = state.moments[rawMoment.id];
+            if (!existingLocal) {
+              state.moments[rawMoment.id] = {
+                ...rawMoment,
+                couple_id: normalizedCoupleId,
+                prompt_id: normalizedPromptId,
+                back_photo_url: rawMoment.back_photo_url || rawMoment.back_photo_path,
+                front_photo_url: rawMoment.front_photo_url || rawMoment.front_photo_path,
+              };
+              mutated = true;
+            }
+            const promptKey = `${normalizedCoupleId}:${mDate}`;
+            if (!state.prompts[promptKey]) {
+              const triggerIso = computeDeterministicPromptTriggerIso(normalizedCoupleId, mDate);
+              state.prompts[promptKey] = {
+                id: normalizedPromptId,
+                couple_id: normalizedCoupleId,
+                prompt_date: mDate,
+                trigger_at: triggerIso,
+                notified_at: triggerIso,
+              };
+              mutated = true;
+            }
+          }
+        }
+      }
+    } catch {
+      // Use local cache when offline or table unmigrated
+    }
+  }
+
+  return { state, mutated };
 }
 export function computeDeterministicPromptTriggerIso(
   coupleId: string,
@@ -679,43 +824,13 @@ export async function fetchTodayMomentBundle(params: {
   );
 
   // Hydrate from Supabase `public.moments` when available so offline recipients get missed moments
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { data: remoteRows, error: remoteErr } = await supabase
-        .from('moments')
-        .select('*')
-        .or(`couple_id.eq.${params.coupleId},user_id.eq.${params.userId}`)
-        .order('posted_at', { ascending: false })
-        .limit(40);
-
-      if (!remoteErr && Array.isArray(remoteRows)) {
-        for (const rawRow of remoteRows) {
-          const rec = rawRow as MomentRecord;
-          if (!rec?.id) continue;
-          const [signedBack, signedFront, signedVideo] = await Promise.all([
-            resolveStorageSignedUrlIfNeeded(rec.back_photo_url ?? rec.back_photo_path),
-            resolveStorageSignedUrlIfNeeded(rec.front_photo_url ?? rec.front_photo_path),
-            resolveStorageSignedUrlIfNeeded(rec.video_uri),
-          ]);
-          const hydratedRec: MomentRecord = {
-            ...rec,
-            back_photo_url: signedBack ?? rec.back_photo_path,
-            front_photo_url: signedFront ?? rec.front_photo_path,
-            video_uri: signedVideo ?? rec.video_uri ?? null,
-          };
-          const existingLocal = state.moments[rec.id];
-          if (!existingLocal || hydratedRec.posted_at >= existingLocal.posted_at) {
-            state.moments[rec.id] = {
-              ...existingLocal,
-              ...hydratedRec,
-            };
-            stateMutated = true;
-          }
-        }
-      }
-    } catch {
-      // Use local cache when offline or table unmigrated
-    }
+  const hydrated = await hydrateRemoteMomentsIntoLocalState({
+    userId: params.userId,
+    coupleId: params.coupleId,
+    state,
+  });
+  if (hydrated.mutated) {
+    stateMutated = true;
   }
 
   // Enforce permanent Snap Once expiration & local cache scrubbing for any expired moments
@@ -1124,7 +1239,7 @@ export async function submitDailyMoment(params: {
   }
 
   await writeLocalMoments(state);
-
+  void syncRecentUserMomentsToAuthMetadata(params.userId, state);
   void broadcastCoupleSync(params.coupleId, {
     kind: 'moment_upsert',
     moment: broadcastMoment,
@@ -1212,7 +1327,7 @@ export async function updateMomentDetails(params: {
     state.moments[k] = updated;
   }
   await writeLocalMoments(state);
-
+  void syncRecentUserMomentsToAuthMetadata(params.userId, state);
   if (isSupabaseConfigured && supabase) {
     try {
       await supabase
@@ -1303,7 +1418,7 @@ export async function deleteMomentPost(params: {
   }
 
   await writeLocalMoments(state);
-
+  void syncRecentUserMomentsToAuthMetadata(params.userId, state);
   if (isSupabaseConfigured && supabase) {
     try {
       if (storagePathsToRemove.length > 0) {
@@ -1555,35 +1670,14 @@ export async function fetchUserMomentsFeed(params: {
   const state = await readLocalMoments();
   let mutated = false;
 
-  if (isSupabaseConfigured && supabase && params.userId) {
-    try {
-      const { data: remoteRows, error: remoteErr } = await supabase
-        .from('moments')
-        .select('*')
-        .eq('user_id', params.userId)
-        .order('posted_at', { ascending: false })
-        .limit(40);
-      if (!remoteErr && Array.isArray(remoteRows)) {
-        for (const rawRow of remoteRows) {
-          const rec = rawRow as MomentRecord;
-          if (!rec?.id) continue;
-          const [signedBack, signedFront, signedVideo] = await Promise.all([
-            resolveStorageSignedUrlIfNeeded(rec.back_photo_url ?? rec.back_photo_path),
-            resolveStorageSignedUrlIfNeeded(rec.front_photo_url ?? rec.front_photo_path),
-            resolveStorageSignedUrlIfNeeded(rec.video_uri),
-          ]);
-          state.moments[rec.id] = {
-            ...(state.moments[rec.id] ?? {}),
-            ...rec,
-            back_photo_url: signedBack ?? rec.back_photo_path,
-            front_photo_url: signedFront ?? rec.front_photo_path,
-            video_uri: signedVideo ?? rec.video_uri ?? null,
-          };
-          mutated = true;
-        }
-      }
-    } catch {
-      // Use local moments cache when offline
+  if (params.userId) {
+    const hydrated = await hydrateRemoteMomentsIntoLocalState({
+      userId: params.userId,
+      coupleId: params.coupleId,
+      state,
+    });
+    if (hydrated.mutated) {
+      mutated = true;
     }
   }
 

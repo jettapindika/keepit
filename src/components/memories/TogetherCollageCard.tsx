@@ -310,9 +310,11 @@ export function TogetherCollageCard({
         <View style={styles.footerBar}>
           <View style={styles.watermark}>
             <KeepItWatermarkLogo width={68} color={colors.ink} />
-            <Text style={[styles.author, { color: colors.ink, fontFamily: type.fontMono }]}>
-              {activeStamp.watermarkText}
-            </Text>
+            {activeStamp.watermarkText.replace(/^#keepit(?:\s*·\s*)?/i, '').trim() ? (
+              <Text style={[styles.author, { color: colors.ink, fontFamily: type.fontMono }]}>
+                {activeStamp.watermarkText.replace(/^#keepit(?:\s*·\s*)?/i, '').trim()}
+              </Text>
+            ) : null}
             <Text style={[styles.secondary, { color: colors.inkMuted }]}>
               {formatMomentWatermarkTimestamp(myMoment.posted_at || partnerMoment.posted_at)}
             </Text>

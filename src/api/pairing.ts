@@ -2,6 +2,7 @@ import {
   buildInviteChannelTopic,
   buildUserDirectoryChannelTopic,
   broadcastCoupleSync,
+  createFreshRealtimeChannel,
   getActiveDirectoryChannel,
   subscribeDirectoryInviteAnnounce,
   syncDirectoryPresence,
@@ -247,7 +248,7 @@ async function tryRedeemViaRealtimeRoom(params: {
   if (!isSupabaseConfigured || !supabase) return null;
   const client = supabase;
   const channelName = buildInviteChannelTopic(params.cleanedCode);
-  const room = client.channel(channelName, {
+  const room = createFreshRealtimeChannel(client, channelName, {
     config: {
       broadcast: { ack: true, self: false },
       presence: { key: `joiner_${params.joinerProfile.id}` },
@@ -663,7 +664,7 @@ export async function upsertUserProfile(params: {
   void syncDirectoryPresence({ profile });
 
   if (isSupabaseConfigured && supabase) {
-    void supabase.auth
+    await supabase.auth
       .updateUser({
         data: {
           display_name: profile.display_name,

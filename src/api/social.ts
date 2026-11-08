@@ -15,6 +15,7 @@ import {
   broadcastCoupleSync,
   buildDirectMessageSyncChannelTopic,
   buildUserDirectoryChannelTopic,
+  createFreshRealtimeChannel,
   getActiveDirectoryChannel,
   subscribeDirectoryUserAnnounce,
 } from '@/api/realtimeSync';
@@ -256,16 +257,29 @@ export async function fetchFriendsCircle(params: {
         .select('id, user_id, friend_id, relationship, created_at')
         .eq('user_id', params.userId);
 
-      if (!remoteErr && Array.isArray(remoteRows) && remoteRows.length > 0) {
-        const friendIds = remoteRows.map((r) => String(r.friend_id));
-        const { data: profiles } = await supabase
-          .from('users')
-          .select('*')
-          .in('id', friendIds);
+      if (!remoteErr && Array.isArray(remoteRows)) {
+        const remoteFriendIds = new Set(remoteRows.map((r) => String(r.friend_id)));
+        const friendIds = Array.from(remoteFriendIds);
+        const { data: profiles } = friendIds.length > 0
+          ? await supabase.from('users').select('*').in('id', friendIds)
+          : { data: [] as unknown[] };
         const profileMap = new Map<string, UserProfile>(
           (profiles ?? []).map((p) => [String((p as UserProfile).id), p as UserProfile])
         );
         let changed = false;
+        // Prune local records that no longer exist on the authoritative `friendships` table
+        const pruned = stored.filter((loc) => {
+          if (loc.user_id !== params.userId) return true;
+          if (!remoteFriendIds.has(loc.friend_id)) {
+            changed = true;
+            return false;
+          }
+          return true;
+        });
+        if (pruned.length !== stored.length) {
+          stored.length = 0;
+          stored.push(...pruned);
+        }
         for (const r of remoteRows) {
           const fProfile = profileMap.get(String(r.friend_id));
           if (!fProfile) continue;
@@ -290,8 +304,25 @@ export async function fetchFriendsCircle(params: {
       } else {
         const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
         const metaFriends = authData?.user?.user_metadata?.friends_circle;
-        if (Array.isArray(metaFriends) && metaFriends.length > 0) {
+        if (Array.isArray(metaFriends)) {
+          const metaIds = new Set(
+            (metaFriends as FriendRecord[])
+              .map((f) => f?.friend_id)
+              .filter((id): id is string => Boolean(id))
+          );
           let changed = false;
+          const pruned = stored.filter((loc) => {
+            if (loc.user_id !== params.userId) return true;
+            if (!metaIds.has(loc.friend_id)) {
+              changed = true;
+              return false;
+            }
+            return true;
+          });
+          if (pruned.length !== stored.length) {
+            stored.length = 0;
+            stored.push(...pruned);
+          }
           for (const rawFriend of metaFriends as FriendRecord[]) {
             if (!rawFriend?.friend_id || !rawFriend?.friend_profile) continue;
             const exists = stored.some(
@@ -429,12 +460,15 @@ async function tryResolveUserViaRealtimeDirectory(params: {
           c.topic === `realtime:${buildUserDirectoryChannelTopic()}` ||
           c.topic === buildUserDirectoryChannelTopic()
       );
-  const ownsDirChannel = !existingDir;
-  const dirChannel =
-    existingDir ??
-    client.channel(buildUserDirectoryChannelTopic(), {
-      config: { broadcast: { ack: true, self: false }, presence: { key: `lookup_${params.userId}` } },
-    });
+  const canReuseExisting = Boolean(
+    existingDir && (existingDir.state === 'joined' || existingDir.state === 'joining')
+  );
+  const ownsDirChannel = !canReuseExisting;
+  const dirChannel = canReuseExisting
+    ? existingDir!
+    : createFreshRealtimeChannel(client, buildUserDirectoryChannelTopic(), {
+        config: { broadcast: { ack: true, self: false }, presence: { key: `lookup_${params.userId}` } },
+      });
 
   const onAnnounce = (msg: { payload?: unknown }) => {
     const candidate = extractProfileFromEntry(msg.payload);
@@ -702,16 +736,42 @@ export async function removeFriend(params: {
   );
   await writeLocalFriends(next);
 
-  if (target && isSupabaseConfigured && supabase) {
-    try {
-      await supabase
-        .from('friendships')
-        .delete()
-        .eq('user_id', params.userId)
-        .eq('friend_id', target.friend_id);
-    } catch {
-      // Ignore when offline
+  if (isSupabaseConfigured && supabase) {
+    const myFriendsCompact = next
+      .filter((f) => f.user_id === params.userId)
+      .slice(-25)
+      .map((f) => ({
+        ...f,
+        friend_profile: {
+          ...f.friend_profile,
+          avatar_path:
+            f.friend_profile.avatar_path && f.friend_profile.avatar_path.length < 24_000
+              ? f.friend_profile.avatar_path
+              : null,
+          banner_path: null,
+        },
+      }));
+    await supabase.auth
+      .updateUser({ data: { friends_circle: myFriendsCompact } })
+      .catch(() => {});
+    if (target) {
+      try {
+        await supabase
+          .from('friendships')
+          .delete()
+          .eq('user_id', params.userId)
+          .eq('friend_id', target.friend_id);
+      } catch {
+        // Ignore when offline
+      }
     }
+  }
+  if (target) {
+    void broadcastCoupleSync(buildUserDirectoryChannelTopic(), {
+      kind: 'friend_removed',
+      userId: params.userId,
+      friendId: target.friend_id,
+    });
   }
 }
 
