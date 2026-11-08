@@ -532,27 +532,6 @@ export default function ProfileScreen() {
             <View style={styles.headerActionGroup}>
               <AppPressable
                 accessibilityRole="button"
-                accessibilityLabel="Open Memories Calendar"
-                onPress={() => {
-                  triggerHaptic();
-                  router.navigate('/(tabs)/memories');
-                }}
-                style={[
-                  styles.iconHeaderBtn,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.controlBorder,
-                    borderRadius: radii.input,
-                  },
-                ]}>
-                <SymbolView
-                  name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }}
-                  tintColor={colors.ink}
-                  size={18}
-                />
-              </AppPressable>
-              <AppPressable
-                accessibilityRole="button"
                 accessibilityLabel="Open settings"
                 onPress={() => router.navigate('/(tabs)/settings')}
                 style={[
