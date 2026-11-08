@@ -64,16 +64,6 @@ export function StatusHeaderCard({
       ? `${mine.emoji} ${mine.text}`
       : 'Set status…';
 
-  const partnerSummary = isPartnerPaired
-    ? partnerActive
-      ? `${partnerName}: ${partnerActive.emoji} ${partnerActive.text}`
-      : nudgeFeedback
-        ? nudgeFeedback
-        : incomingNudge
-          ? `${partnerName} nudged you`
-          : `${partnerName} · Nudge`
-    : 'Pair partner';
-
   return (
     <View
       style={[
@@ -137,10 +127,12 @@ export function StatusHeaderCard({
             },
           ]}>
           <Text numberOfLines={1} style={[styles.chipText, { color: colors.danger }]}>
-            Retry
+            Retry status
           </Text>
         </AppPressable>
-      ) : nudgeError && onRetryNudges ? (
+      ) : null}
+
+      {nudgeError && onRetryNudges ? (
         <AppPressable
           accessibilityRole="button"
           accessibilityLabel="Retry loading nudges"
@@ -154,21 +146,53 @@ export function StatusHeaderCard({
             },
           ]}>
           <Text numberOfLines={1} style={[styles.chipText, { color: colors.danger }]}>
-            Retry
+            Retry nudges
           </Text>
         </AppPressable>
-      ) : isPartnerPaired ? (
+      ) : null}
+
+      {isPartnerPaired && partnerActive ? (
+        <View
+          accessible
+          accessibilityLabel={`${partnerName}'s status: ${partnerActive.emoji} ${partnerActive.text}`}
+          style={[
+            styles.secondaryChip,
+            styles.statusReadout,
+            {
+              backgroundColor: colors.surfaceElevated,
+              borderColor: colors.border,
+              borderRadius: radii.pill,
+            },
+          ]}>
+          <Text numberOfLines={1} style={[styles.chipText, { color: colors.ink }]}>
+            {`${partnerName}: ${partnerActive.emoji} ${partnerActive.text}`}
+          </Text>
+        </View>
+      ) : isPartnerPaired && (nudgeFeedback || incomingNudge) ? (
+        <View
+          accessible
+          style={[
+            styles.secondaryChip,
+            styles.statusReadout,
+            {
+              backgroundColor: colors.surfaceElevated,
+              borderColor: colors.border,
+              borderRadius: radii.pill,
+            },
+          ]}>
+          <Text numberOfLines={1} style={[styles.chipText, { color: colors.inkMuted }]}>
+            {nudgeFeedback ?? `${partnerName} nudged you`}
+          </Text>
+        </View>
+      ) : null}
+
+      {isPartnerPaired && onSendNudge ? (
         <AppPressable
           accessibilityRole="button"
-          accessibilityLabel={
-            partnerActive
-              ? `${partnerName}'s status: ${partnerActive.emoji} ${partnerActive.text}. Tap to nudge ${partnerName}`
-              : `Nudge ${partnerName}`
-          }
-          accessibilityState={{ busy: nudging, disabled: nudging || !onSendNudge }}
-          disabled={nudging || !onSendNudge}
+          accessibilityLabel={`Nudge ${partnerName}`}
+          accessibilityState={{ busy: nudging, disabled: nudging }}
+          disabled={nudging}
           onPress={() => {
-            if (!onSendNudge) return;
             if (Platform.OS !== 'web') void Haptics.selectionAsync();
             onSendNudge();
           }}
@@ -176,20 +200,17 @@ export function StatusHeaderCard({
             styles.secondaryChip,
             {
               backgroundColor: colors.surfaceElevated,
-              borderColor: partnerActive ? colors.controlBorder : colors.border,
+              borderColor: colors.controlBorder,
               borderRadius: radii.pill,
             },
           ]}>
-          <Text
-            numberOfLines={1}
-            style={[
-              styles.chipText,
-              { color: partnerActive ? colors.ink : colors.inkMuted },
-            ]}>
-            {nudging ? 'Nudging…' : partnerSummary}
+          <Text numberOfLines={1} style={[styles.chipText, { color: colors.ink }]}>
+            {nudging ? 'Nudging…' : 'Nudge'}
           </Text>
         </AppPressable>
-      ) : onPressPair ? (
+      ) : null}
+
+      {!isPartnerPaired && onPressPair ? (
         <AppPressable
           accessibilityRole="button"
           accessibilityLabel="Pair with partner"
@@ -213,12 +234,12 @@ export function StatusHeaderCard({
 
 const styles = StyleSheet.create({
   bar: {
-    height: 56,
     minHeight: 56,
-    maxHeight: 56,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     paddingHorizontal: 12,
+    paddingVertical: 8,
     gap: 8,
     borderWidth: 1,
     borderCurve: 'continuous',
@@ -260,6 +281,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderCurve: 'continuous',
+  },
+  statusReadout: {
+    flexShrink: 1,
+    maxWidth: 170,
   },
   chipText: {
     fontSize: 13,

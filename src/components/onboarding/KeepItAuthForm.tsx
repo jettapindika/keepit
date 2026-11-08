@@ -33,7 +33,7 @@ export function KeepItAuthForm({
   const signUpWithPassword = useSessionStore((s) => s.signUpWithPassword);
   const signInWithPassword = useSessionStore((s) => s.signInWithPassword);
   const resendConfirmationEmail = useSessionStore((s) => s.resendConfirmationEmail);
-  const [mode, setMode] = useState(initialMode);
+  const mode = initialMode;
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -92,13 +92,6 @@ export function KeepItAuthForm({
     }
   }, [error, notice, statusMessage]);
 
-  const updateMode = (nextMode: 'signup' | 'signin') => {
-    if (submitting.current) return;
-    setError(null);
-    setNotice(null);
-    setCanResendConfirmation(false);
-    setMode(nextMode);
-  };
 
   const handleResendConfirmation = async () => {
     if (submitting.current || resending) return;
@@ -128,6 +121,23 @@ export function KeepItAuthForm({
 
   const handleSubmit = async () => {
     if (submitting.current) return;
+    const trimmedEmail = email.trim();
+    if (mode === 'signup' && !displayName.trim()) {
+      setError('Enter your first name.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Use at least 6 characters for your password.');
+      return;
+    }
+    if (mode === 'signup' && password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
     submitting.current = true;
     setError(null);
     setNotice(null);
@@ -144,8 +154,6 @@ export function KeepItAuthForm({
       if (mounted.current) {
         const msg = err instanceof Error ? err.message : 'Authentication failed. Please try again.';
         if (mode === 'signup' && /Check your inbox to confirm your email/i.test(msg)) {
-          setMode('signin');
-          setConfirmPassword('');
           setCanResendConfirmation(true);
           setNotice(msg);
         } else {
@@ -186,23 +194,6 @@ export function KeepItAuthForm({
             subtitle="Keep every moment, together."
           />
           <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group }]}>
-            <View accessibilityRole="tablist" accessibilityLabel="KeepIt account access" style={[styles.modeTrack, { backgroundColor: colors.canvas, borderRadius: radii.input }]}>
-              {(['signup', 'signin'] as const).map((item) => (
-                <AppPressable
-                  key={item}
-                  accessibilityRole="tab"
-                  accessibilityLabel={item === 'signup' ? 'Create Account tab' : 'Sign In tab'}
-                  accessibilityState={{ selected: mode === item, disabled: loading }}
-                  disabled={loading}
-                  onPress={() => updateMode(item)}
-                  style={[styles.modeSegment, { borderRadius: radii.input, backgroundColor: mode === item ? colors.ink : 'transparent', opacity: loading ? 0.6 : 1 }]}>
-                  <Text style={[styles.modeText, { color: mode === item ? colors.canvas : colors.inkMuted }]}>
-                    {item === 'signup' ? 'Create Account' : 'Sign In'}
-                  </Text>
-                </AppPressable>
-              ))}
-            </View>
-
             {mode === 'signup' ? (
               <AuthField
                 key="input-first-name"
@@ -326,8 +317,6 @@ const styles = StyleSheet.create({
   },
   backButton: { alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 16 },
   card: { padding: APP_LAYOUT.cardPadding, gap: 20, borderCurve: 'continuous' },
-  modeTrack: { flexDirection: 'row', padding: 4, gap: 4 },
-  modeSegment: { flex: 1, paddingHorizontal: 4, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   modeText: { fontSize: 15, lineHeight: 22, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
   fieldGroup: { gap: 8 },
   label: { fontSize: 15, lineHeight: 22, fontWeight: '600' },

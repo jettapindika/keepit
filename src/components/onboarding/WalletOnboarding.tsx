@@ -34,12 +34,12 @@ interface OnboardingSlide {
 const slides: readonly OnboardingSlide[] = [
   {
     titleLines: ['Your day,', 'together.'],
-    subtitleLines: ['Capture both sides of your day.', 'Share a Moment with your partner.'],
+    subtitleLines: ['Capture both sides of your day.', 'Share Moments with your partner or friends.'],
     artAsset: 'access',
   },
   {
     titleLines: ['Both sides,', 'one Moment.'],
-    subtitleLines: ['Use the front and back cameras.', 'Post yours to see your partner’s.'],
+    subtitleLines: ['Use the front and back cameras.', 'Post yours to see theirs.'],
     artAsset: 'secure',
   },
   {
@@ -267,13 +267,22 @@ export function WalletOnboarding({
             </View>
 
             <View
-              accessible
               accessibilityLabel={`Slide ${activeIndex + 1} of ${slides.length}`}
               accessibilityLiveRegion="polite"
               style={styles.pagination}
             >
               {slides.map((_, index) => (
-                <PaginationIndicator key={index} active={index === activeIndex} reducedMotion={reducedMotion} />
+                <Pressable
+                  key={index}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Go to slide ${index + 1}`}
+                  accessibilityState={{ selected: index === activeIndex }}
+                  hitSlop={8}
+                  onPress={() => changeSlide(index)}
+                  style={styles.paginationDotBtn}
+                >
+                  <PaginationIndicator active={index === activeIndex} reducedMotion={reducedMotion} />
+                </Pressable>
               ))}
             </View>
 
@@ -440,6 +449,7 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
   pagination: { height: 24, marginTop: 22, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' },
+  paginationDotBtn: { minHeight: 24, paddingHorizontal: 4, justifyContent: 'center', alignItems: 'center' },
   primaryGap: { marginTop: 23 },
   secondaryGap: { marginTop: 13 },
   button: { width: '100%', paddingVertical: 10, paddingHorizontal: 4, justifyContent: 'center', alignItems: 'center', borderCurve: 'continuous' },

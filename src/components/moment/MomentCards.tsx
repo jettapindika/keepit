@@ -1067,6 +1067,17 @@ export function DualMomentCard({
                   contentFit="cover"
                   style={styles.fullImage}
                 />
+                <View pointerEvents="none" style={styles.pipSwapBadge}>
+                  <SymbolView
+                    name={{
+                      ios: 'arrow.triangle.2.circlepath',
+                      android: 'flip_camera_ios',
+                      web: 'flip_camera_ios',
+                    }}
+                    tintColor="#FFFFFF"
+                    size={12}
+                  />
+                </View>
               </Pressable>
             </Animated.View> : null}
 
@@ -1325,21 +1336,22 @@ export function DualMomentCard({
                     borderRadius: radii.pill,
                   },
                 ]}>
-                {topReactionEmoji ? (
-                  <ReactionGlyph emoji={topReactionEmoji} size={18} tintColor="#FFFFFF" />
-                ) : (
-                  <SymbolView
-                    name={{
-                      ios: 'ellipsis',
-                      android: 'more_horiz',
-                      web: 'more_horiz',
-                    }}
-                    tintColor="#FFFFFF"
-                    size={19}
-                  />
-                )}
+                <SymbolView
+                  name={{
+                    ios: 'ellipsis',
+                    android: 'more_horiz',
+                    web: 'more_horiz',
+                  }}
+                  tintColor="#FFFFFF"
+                  size={19}
+                />
                 {totalActivityCount > 0 ? (
                   <Text style={styles.cornerHubCountText}>{totalActivityCount}</Text>
+                ) : null}
+                {topReactionEmoji ? (
+                  <View pointerEvents="none" style={styles.cornerHubReactionBadge}>
+                    <ReactionGlyph emoji={topReactionEmoji} size={12} tintColor="#FFFFFF" />
+                  </View>
                 ) : null}
               </Pressable>
             </View>
@@ -1365,42 +1377,64 @@ export function DualMomentCard({
             }
             onPress={openHubSheet}
             style={styles.compactCaptionLeft}>
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={[
-                styles.compactCaptionText,
-                { color: localCaption ? colors.ink : colors.inkMuted },
-              ]}>
-              {localCaption
-                ? `“${localCaption}”`
-                : ownerFlag
-                  ? 'Add a note or manage Moment…'
-                  : 'Add a reaction or comment…'}
-            </Text>
-            {localLocationLabel || localMusicTrack || localTaggedUsers.length > 0 ? (
+            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
               <Text
                 numberOfLines={1}
                 ellipsizeMode="tail"
-                style={[styles.compactContextMeta, { color: colors.inkMuted }]}>
-                {[
-                  localLocationLabel,
-                  localMusicTrack ? `${localMusicTrack.title} · ${localMusicTrack.artist}` : null,
-                  localTaggedUsers.length > 0
-                    ? localTaggedUsers.map((p) => `@${p.username}`).join(' ')
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
+                style={[
+                  styles.compactCaptionText,
+                  { color: localCaption ? colors.ink : colors.inkMuted },
+                ]}>
+                {localCaption
+                  ? `“${localCaption}”`
+                  : ownerFlag
+                    ? 'Add a note or manage Moment…'
+                    : 'Add a reaction or comment…'}
               </Text>
-            ) : null}
+              {localLocationLabel || localMusicTrack || localTaggedUsers.length > 0 ? (
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  style={[styles.compactContextMeta, { color: colors.inkMuted }]}>
+                  {[
+                    localLocationLabel,
+                    localMusicTrack ? `${localMusicTrack.title} · ${localMusicTrack.artist}` : null,
+                    localTaggedUsers.length > 0
+                      ? localTaggedUsers.map((p) => `@${p.username}`).join(' ')
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </Text>
+              ) : null}
+            </View>
+            <SymbolView
+              name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
+              tintColor={colors.inkMuted}
+              size={14}
+            />
           </Pressable>
           <View style={styles.compactCaptionRight}>
-            {localComments.length > 0 ? (
+            {ownerFlag && canRetake && onRetake ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${localComments.length} ${localComments.length === 1 ? 'reply' : 'replies'}. Tap to view comments`}
-                onPress={openHubSheet}
+                accessibilityLabel={`Retake Moment (${remainingRetakes} left)`}
+                onPress={onRetake}
+                style={[
+                  styles.compactSummaryBadge,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.border,
+                    borderRadius: radii.pill,
+                  },
+                ]}>
+                <Text style={[styles.compactSummaryCount, { color: colors.accent }]}>
+                  {`Retake (${remainingRetakes} left)`}
+                </Text>
+              </Pressable>
+            ) : null}
+            {localComments.length > 0 ? (
+              <View
                 style={[
                   styles.compactSummaryBadge,
                   {
@@ -1412,7 +1446,7 @@ export function DualMomentCard({
                 <Text style={[styles.compactSummaryCount, { color: colors.ink }]}>
                   {localComments.length} {localComments.length === 1 ? 'reply' : 'replies'}
                 </Text>
-              </Pressable>
+              </View>
             ) : null}
             <Pressable
               accessibilityRole="button"
@@ -1448,7 +1482,7 @@ export function DualMomentCard({
                 },
               ]}>
               <ReactionGlyph
-                emoji={myReactionEmoji ?? topReactionEmoji ?? '❤️'}
+                emoji={myReactionEmoji ?? '❤️'}
                 size={16}
                 tintColor={colors.ink}
               />
@@ -2601,10 +2635,10 @@ export function LockedMomentCard({
           {partnerName}’s Moment is waiting
         </Text>
         <Text style={[styles.lockedBody, { color: colors.inkMuted }]}>
-          Post yours to unlock both Moments.
+          {`Post your Moment to see ${partnerName}’s.`}
         </Text>
 
-        <KeepItButton label="Post Yours to Reveal" onPress={onCaptureMine} />
+        <KeepItButton label="Post Yours to Unlock" onPress={onCaptureMine} />
       </View>
     </View>
   );
@@ -2646,6 +2680,17 @@ const styles = StyleSheet.create({
     borderWidth: 2.5,
     overflow: 'hidden',
     borderCurve: 'continuous',
+  },
+  pipSwapBadge: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(16, 13, 15, 0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   overlayItemAnchor: {
     position: 'absolute',
@@ -2786,6 +2831,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
+  cornerHubReactionBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: 'rgba(16, 13, 15, 0.92)',
+    borderRadius: 999,
+    padding: 2,
+  },
   radialDismissBackdrop: {
     position: 'absolute',
     top: 0,
@@ -2850,7 +2903,9 @@ const styles = StyleSheet.create({
   compactCaptionLeft: {
     flex: 1,
     minWidth: 0,
-    gap: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   compactCaptionText: {
     fontSize: 14,

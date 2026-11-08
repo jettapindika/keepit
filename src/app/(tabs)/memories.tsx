@@ -216,6 +216,8 @@ export default function MemoriesScreen() {
         <PageHeader
           title="Memories"
           subtitle={isPartnerPaired ? `${myName} & ${partnerName}` : myName}
+          onBack={() => router.navigate('/(tabs)')}
+          backLabel="Back to Home"
           action={
             <View style={styles.headerBadges}>
               <View
@@ -241,6 +243,7 @@ export default function MemoriesScreen() {
                 <Text style={[styles.statNumber, { color: colors.ink, fontFamily: type.fontSans }]}>
                   {currentStreakValue}
                 </Text>
+                <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Streak</Text>
               </View>
               <View
                 accessible
@@ -262,13 +265,14 @@ export default function MemoriesScreen() {
                   style={[styles.statNumber, { color: colors.inkMuted, fontFamily: type.fontSans }]}>
                   {bestStreakValue}
                 </Text>
+                <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Best</Text>
               </View>
               <AppPressable
                 accessibilityRole="button"
-                accessibilityLabel={`Open monthly recap (${days.length} archived days, ${togetherCount} Together collages)`}
+                accessibilityLabel={`Open monthly recap (${togetherCount} Together collages)`}
                 accessibilityShowsLargeContentViewer
                 accessibilityLargeContentTitle="Monthly Recap"
-                disabled={!days.length || memoriesQuery.isLoading}
+                disabled={!togetherCount || memoriesQuery.isLoading}
                 onPress={() => setRecapOpen(true)}
                 style={[
                   styles.recapIconBtn,
@@ -282,11 +286,9 @@ export default function MemoriesScreen() {
                   tintColor={colors.onAccent}
                   size={18}
                 />
-                {days.length > 0 ? (
-                  <Text style={[styles.recapCountText, { color: colors.onAccent }]}>
-                    {days.length}
-                  </Text>
-                ) : null}
+                <Text style={[styles.recapCountText, { color: colors.onAccent }]}>
+                  Recap{togetherCount > 0 ? ` (${togetherCount})` : ''}
+                </Text>
               </AppPressable>
             </View>
           }
@@ -450,17 +452,30 @@ export default function MemoriesScreen() {
                       ? colors.canvas
                       : colors.ink;
 
+                  if (!count) {
+                    return (
+                      <View
+                        key={cell.date}
+                        style={[
+                          styles.cell,
+                          styles.day,
+                          { backgroundColor: colors.canvas, borderRadius: radii.input },
+                        ]}>
+                        <View style={styles.dateBadge}>
+                          <Text style={[styles.dateNumber, { color: colors.inkMuted }]}>
+                            {cell.day}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  }
+
                   return (
                     <AppPressable
                       key={cell.date}
                       accessibilityRole="button"
-                      accessibilityLabel={`${fullDate(cell.date)}, ${
-                        count
-                          ? `${count} ${count === 1 ? 'person' : 'people'} posted`
-                          : 'no archived Moment'
-                      }`}
-                      accessibilityState={{ selected, disabled: !count }}
-                      disabled={!count}
+                      accessibilityLabel={`${fullDate(cell.date)}, ${count} ${count === 1 ? 'person' : 'people'} posted`}
+                      accessibilityState={{ selected }}
                       onPress={() => {
                         if (Platform.OS !== 'web') void Haptics.selectionAsync();
                         setSelectedDate(cell.date);
@@ -469,16 +484,8 @@ export default function MemoriesScreen() {
                         styles.cell,
                         styles.day,
                         {
-                          backgroundColor: selected
-                            ? colors.ink
-                            : count
-                              ? colors.surfaceElevated
-                              : colors.canvas,
-                          borderColor: selected
-                            ? colors.focusRing
-                            : count
-                              ? colors.controlBorder
-                              : 'transparent',
+                          backgroundColor: selected ? colors.ink : colors.surfaceElevated,
+                          borderColor: selected ? colors.focusRing : colors.controlBorder,
                           borderRadius: radii.input,
                         },
                       ]}>
@@ -503,21 +510,17 @@ export default function MemoriesScreen() {
                                 ? '#FFFFFF'
                                 : selected
                                   ? colors.canvas
-                                  : count
-                                    ? colors.ink
-                                    : colors.inkMuted,
+                                  : colors.ink,
                             },
                           ]}>
                           {cell.day}
                         </Text>
-                        {count > 0 ? (
-                          <View style={styles.dotsIndicatorRow}>
+                        <View style={styles.dotsIndicatorRow}>
+                          <View style={[styles.postDot, { backgroundColor: dotColor }]} />
+                          {count > 1 ? (
                             <View style={[styles.postDot, { backgroundColor: dotColor }]} />
-                            {count > 1 ? (
-                              <View style={[styles.postDot, { backgroundColor: dotColor }]} />
-                            ) : null}
-                          </View>
-                        ) : null}
+                          ) : null}
+                        </View>
                       </View>
                     </AppPressable>
                   );
@@ -539,7 +542,7 @@ export default function MemoriesScreen() {
                 tintColor={colors.inkMuted}
                 size={14}
               />
-              <Text style={[styles.legendText, { color: colors.inkMuted }]}>Solo</Text>
+              <Text style={[styles.legendText, { color: colors.inkMuted }]}>One posted</Text>
             </View>
             <View
               accessible
@@ -555,7 +558,7 @@ export default function MemoriesScreen() {
                 size={15}
               />
               <Text style={[styles.legendText, { color: colors.ink }]}>
-                Together ({togetherCount})
+                Both posted ({togetherCount})
               </Text>
             </View>
           </View>
@@ -686,6 +689,10 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   recapIconBtn: {
     flexDirection: 'row',

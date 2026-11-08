@@ -1,6 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
@@ -134,9 +135,15 @@ export default function MessagesScreen() {
     return list;
   }, [isPartnerPaired, partner, couple, userId, friendsQuery.data, params.peerId, params.peerName]);
 
-  const [manualPeerId, setManualPeerId] = useState<string | null>(null);
+  const [manualSelection, setManualSelection] = useState<{
+    paramPeerId: string | undefined;
+    peerId: string;
+  } | null>(null);
+  const manualPeerId =
+    manualSelection && manualSelection.paramPeerId === params.peerId
+      ? manualSelection.peerId
+      : null;
   const effectiveSelectedPeerId = manualPeerId ?? params.peerId ?? '';
-
   const activePeer = useMemo<PeerOption | null>(() => {
     if (peers.length === 0) return null;
     return peers.find((p) => p.id === effectiveSelectedPeerId) ?? peers[0];
@@ -330,6 +337,7 @@ export default function MessagesScreen() {
         text: content,
         snapOnce: snapOnceMode,
       });
+      setSnapOnceMode(false);
       if (overrideText === undefined) {
         setDraftText('');
       }
@@ -380,18 +388,6 @@ export default function MessagesScreen() {
                   ? `Chat and 15s Snaps with ${activePeer.displayName}`
                   : 'Pair with a partner or add friends to start chatting'
               }
-              onBack={() => router.navigate('/(tabs)')}
-              backLabel="Back to Home"
-              action={
-                <AppPressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Open Profile and Friends"
-                  onPress={() => router.navigate('/(tabs)/profile' as never)}
-                  style={[styles.headerAction, { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radii.input }]}
-                >
-                  <Text style={[styles.iconPillText, { color: colors.ink }]}>Friends</Text>
-                </AppPressable>
-              }
             />
           </View>
         </RevealOnAppear>
@@ -424,7 +420,8 @@ export default function MessagesScreen() {
                     accessibilityLabel={`${peer.displayName} (${peer.roleLabel})`}
                     onPress={() => {
                       triggerHaptic();
-                      setManualPeerId(peer.id);
+                      setManualSelection({ paramPeerId: params.peerId, peerId: peer.id });
+                      setSnapOnceMode(false);
                       setActiveReactionMsgId(null);
                     }}
                     style={[
@@ -460,14 +457,23 @@ export default function MessagesScreen() {
                         ]}>
                         {peer.displayName}
                       </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.peerRoleText,
-                          { color: selected ? colors.canvas : colors.inkMuted, opacity: selected ? 0.78 : 1 },
-                        ]}>
-                        {peer.isPartner ? 'Partner' : peer.roleLabel}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        {peer.isPartner ? (
+                          <SymbolView
+                            name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
+                            tintColor={selected ? colors.canvas : colors.ink}
+                            size={11}
+                          />
+                        ) : null}
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.peerRoleText,
+                            { color: selected ? colors.canvas : colors.inkMuted, opacity: selected ? 0.78 : 1 },
+                          ]}>
+                          {peer.isPartner ? 'Partner' : peer.roleLabel}
+                        </Text>
+                      </View>
                     </View>
                   </AppPressable>
                 );
@@ -541,6 +547,10 @@ export default function MessagesScreen() {
               <Text style={[styles.emptyBody, { color: colors.inkMuted }]}>
                 Pair with your partner or add friends to your Friends Circle on your Profile to send messages and 15s disappearing Snaps.
               </Text>
+              <KeepItButton
+                label="Add Friends on Profile"
+                onPress={() => router.navigate('/(tabs)/profile')}
+              />
             </View>
           ) : messagesQuery.isLoading && messages.length === 0 ? (
             <SkeletonBlock height={140} label="Loading conversation..." />
@@ -625,8 +635,6 @@ export default function MessagesScreen() {
                           handleOpenSnapMessage(msg);
                         } else if (isMine && !peerOpenedMine) {
                           handleOpenSnapMessage(msg);
-                        } else {
-                          setActiveReactionMsgId((prev) => (prev === msg.id ? null : msg.id));
                         }
                       }}
                       onLongPress={() =>
@@ -839,9 +847,9 @@ export default function MessagesScreen() {
                 <AppPressable
                   key={chip}
                   accessibilityRole="button"
-                  accessibilityLabel={`Send quick message: ${chip}`}
+                  accessibilityLabel={`Insert quick message: ${chip}`}
                   disabled={sending}
-                  onPress={() => void handleSendText(chip)}
+                  onPress={() => setDraftText(chip)}
                   style={[
                     styles.nudgeChip,
                     {
@@ -855,12 +863,18 @@ export default function MessagesScreen() {
               ))}
             </ScrollView>
 
+            {snapOnceMode ? (
+              <Text style={[styles.snapHintText, { color: colors.inkMuted }]}>
+                Next message disappears 15 seconds after it’s opened.
+              </Text>
+            ) : null}
             <View style={styles.inputRow}>
               {/* Snap Once 15s Toggle */}
               <AppPressable
                 accessibilityRole="switch"
                 accessibilityState={{ checked: snapOnceMode }}
                 accessibilityLabel="Toggle 15 second Snap Once disappearing message"
+                accessibilityHint="Applies to your next message only"
                 onPress={() => {
                   triggerHaptic();
                   setSnapOnceMode((prev) => !prev);

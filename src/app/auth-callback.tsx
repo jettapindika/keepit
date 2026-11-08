@@ -23,7 +23,7 @@ export default function AuthCallbackScreen() {
   const { colors, radii, spacing } = useKeepItTheme();
   const user = useSessionStore((s) => s.user);
   const consumeAuthRedirectUrl = useSessionStore((s) => s.consumeAuthRedirectUrl);
-  const [status, setStatus] = useState<'verifying' | 'verified' | 'error'>('verifying');
+  const [status, setStatus] = useState<'verifying' | 'verified' | 'unverified' | 'error'>('verifying');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const processedRef = useRef(false);
   const effectiveStatus = user ? 'verified' : status;
@@ -88,15 +88,12 @@ export default function AuthCallbackScreen() {
           return;
         }
 
-        // Even when Supabase redirected without inline session tokens (e.g., server-side
-        // GET /auth/v1/verify already marked email_confirmed_at and redirected to keepit://auth-callback),
-        // the user's email is now confirmed and they can sign in directly on the Welcome screen.
-        setStatus('verified');
+        setStatus('unverified');
         setTimeout(() => {
           if (active && !useSessionStore.getState().user) {
             router.replace({
               pathname: '/(auth)/welcome',
-              params: { confirmed: '1' },
+              params: { mode: 'signin' },
             });
           }
         }, 900);
@@ -155,6 +152,19 @@ export default function AuthCallbackScreen() {
               }}
             />
           </>
+        ) : effectiveStatus === 'unverified' ? (
+          <>
+            <Text style={[styles.title, { color: colors.ink }]}>Check your email</Text>
+            <Text style={[styles.body, { color: colors.inkMuted }]}>
+              Open the confirmation link we emailed you, then sign in with your email and password.
+            </Text>
+            <KeepItButton
+              label="Go to Sign In"
+              onPress={() =>
+                router.replace({ pathname: '/(auth)/welcome', params: { mode: 'signin' } })
+              }
+            />
+          </>
         ) : (
           <>
             <Text style={[styles.title, { color: colors.ink }]}>Verification link notice</Text>
@@ -168,7 +178,7 @@ export default function AuthCallbackScreen() {
             <KeepItButton
               label="Go to Sign In"
               onPress={() =>
-                router.replace({ pathname: '/(auth)/welcome', params: { confirmed: '1' } })
+                router.replace({ pathname: '/(auth)/welcome', params: { mode: 'signin' } })
               }
             />
           </>

@@ -240,7 +240,6 @@ export default function ProfileScreen() {
     void updateProfile({
       displayName,
       isPrivate: nextVal,
-      dumpMode: nextVal ? true : isDumpAccount,
     })
       .then(() => {
         showTemporaryFeedback(
@@ -686,32 +685,6 @@ export default function ProfileScreen() {
 
               <View style={styles.headerEditActions}>
                 <AppPressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Copy Friend Code ${friendCode}`}
-                  onPress={() => void handleCopyFriendCode()}
-                  style={[
-                    styles.friendCodePill,
-                    {
-                      backgroundColor: colors.surface,
-                      borderColor: copiedCode ? colors.success : colors.border,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <SymbolView
-                    name={
-                      copiedCode
-                        ? { ios: 'checkmark', android: 'check', web: 'check' }
-                        : { ios: 'doc.on.doc', android: 'content_copy', web: 'content_copy' }
-                    }
-                    tintColor={copiedCode ? colors.success : colors.inkMuted}
-                    size={14}
-                  />
-                  <Text pointerEvents="none" style={[styles.friendCodeValue, { color: colors.ink }]}>
-                    {copiedCode ? 'Copied' : friendCode}
-                  </Text>
-                </AppPressable>
-
-                <AppPressable
                   accessibilityRole="switch"
                   accessibilityState={{ checked: isPrivateAccount }}
                   accessibilityLabel={
@@ -722,7 +695,7 @@ export default function ProfileScreen() {
                   disabled={privateModeSaving}
                   onPress={handleTogglePrivacyQuick}
                   style={[
-                    styles.iconActionBtn,
+                    styles.iconActionBtnWide,
                     {
                       backgroundColor: isPrivateAccount ? colors.accentSoft : colors.surface,
                       borderColor: isPrivateAccount ? colors.ink : colors.border,
@@ -738,6 +711,9 @@ export default function ProfileScreen() {
                     tintColor={colors.ink}
                     size={16}
                   />
+                  <Text style={[styles.iconActionText, { color: colors.ink }]}>
+                    {isPrivateAccount ? 'Private' : 'Public'}
+                  </Text>
                 </AppPressable>
 
                 <AppPressable
@@ -745,7 +721,7 @@ export default function ProfileScreen() {
                   accessibilityLabel="Edit Profile"
                   onPress={openEditProfileModal}
                   style={[
-                    styles.iconActionBtn,
+                    styles.iconActionBtnWide,
                     {
                       backgroundColor: colors.ink,
                       borderColor: colors.ink,
@@ -753,10 +729,11 @@ export default function ProfileScreen() {
                     },
                   ]}>
                   <SymbolView
-                    name={{ ios: 'slider.horizontal.3', android: 'tune', web: 'tune' }}
+                    name={{ ios: 'pencil', android: 'edit', web: 'edit' }}
                     tintColor={colors.canvas}
                     size={16}
                   />
+                  <Text style={[styles.iconActionText, { color: colors.canvas }]}>Edit</Text>
                 </AppPressable>
               </View>
             </View>
@@ -895,6 +872,7 @@ export default function ProfileScreen() {
                     size={15}
                   />
                   <Text style={[styles.statValue, { color: colors.ink }]}>{myPosts.length}</Text>
+                  <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Posts</Text>
                 </View>
 
                 <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
@@ -909,20 +887,22 @@ export default function ProfileScreen() {
                     size={15}
                   />
                   <Text style={[styles.statValue, { color: colors.ink }]}>{streakCount}d</Text>
+                  <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Streak</Text>
                 </View>
 
                 <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
 
                 <View
                   accessible
-                  accessibilityLabel={`${friendsList.length} Friends`}
+                  accessibilityLabel={`${friendsList.length + (isPartnerPaired ? 1 : 0)} Circle`}
                   style={styles.statCol}>
                   <SymbolView
                     name={{ ios: 'person.2.fill', android: 'group', web: 'group' }}
                     tintColor={colors.inkMuted}
                     size={15}
                   />
-                  <Text style={[styles.statValue, { color: colors.ink }]}>{friendsList.length}</Text>
+                  <Text style={[styles.statValue, { color: colors.ink }]}>{friendsList.length + (isPartnerPaired ? 1 : 0)}</Text>
+                  <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Circle</Text>
                 </View>
 
                 <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
@@ -1004,7 +984,7 @@ export default function ProfileScreen() {
                       styles.subTabText,
                       { color: subTab === 'posts' ? colors.canvas : colors.inkMuted },
                     ]}>
-                    {myPosts.length}
+                    Posts · {myPosts.length}
                   </Text>
                 </AppPressable>
 
@@ -1034,7 +1014,7 @@ export default function ProfileScreen() {
                       styles.subTabText,
                       { color: subTab === 'friends' ? colors.canvas : colors.inkMuted },
                     ]}>
-                    {friendsList.length + (isPartnerPaired ? 1 : 0)}
+                    Friends · {friendsList.length + (isPartnerPaired ? 1 : 0)}
                   </Text>
                 </AppPressable>
               </View>
@@ -1052,7 +1032,7 @@ export default function ProfileScreen() {
                     },
                   ]}>
                   <SymbolView
-                    name={{ ios: 'camera.fill', android: 'add_a_photo', web: 'add_a_photo' }}
+                    name={{ ios: 'plus', android: 'add', web: 'add' }}
                     tintColor={colors.canvas}
                     size={17}
                   />
@@ -1147,6 +1127,49 @@ export default function ProfileScreen() {
             ) : (
               /* SUB-TAB 2: FRIENDS CIRCLE */
               <View style={{ marginTop: spacing.md, gap: spacing.md }}>
+                <View
+                  style={[
+                    styles.addFriendCard,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      borderRadius: radii.card,
+                      padding: spacing.md,
+                      gap: spacing.sm,
+                    },
+                  ]}>
+                  <Text style={{ fontSize: 15, lineHeight: 22, color: colors.ink }}>
+                    Your Friend Code
+                  </Text>
+                  <Text style={{ fontSize: 13, lineHeight: 20, color: colors.inkMuted }}>
+                    Share this so someone can add you.
+                  </Text>
+                  <AppPressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Copy Friend Code ${friendCode}`}
+                    onPress={() => void handleCopyFriendCode()}
+                    style={[
+                      styles.friendCodePill,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderColor: copiedCode ? colors.success : colors.border,
+                        borderRadius: radii.pill,
+                      },
+                    ]}>
+                    <SymbolView
+                      name={
+                        copiedCode
+                          ? { ios: 'checkmark', android: 'check', web: 'check' }
+                          : { ios: 'doc.on.doc', android: 'content_copy', web: 'content_copy' }
+                      }
+                      tintColor={copiedCode ? colors.success : colors.inkMuted}
+                      size={14}
+                    />
+                    <Text style={[styles.friendCodeValue, { color: colors.ink }]}>
+                      {copiedCode ? 'Copied' : friendCode}
+                    </Text>
+                  </AppPressable>
+                </View>
                 {/* Compact Add Friend Bar */}
                 <View
                   style={[
@@ -1189,6 +1212,13 @@ export default function ProfileScreen() {
                         tintColor={friendRel === 'bestie' ? colors.canvas : colors.ink}
                         size={16}
                       />
+                      <Text
+                        style={[
+                          styles.iconActionText,
+                          { color: friendRel === 'bestie' ? colors.canvas : colors.ink },
+                        ]}>
+                        {friendRel === 'bestie' ? 'Bestie' : 'Friend'}
+                      </Text>
                     </AppPressable>
 
                     <AppTextInput
@@ -2230,6 +2260,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconActionBtnWide: {
+    minWidth: 44,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderCurve: 'continuous',
+  },
+  iconActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   nameAndPronounsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2297,16 +2342,20 @@ const styles = StyleSheet.create({
   },
   statCol: {
     flex: 1,
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    minHeight: 36,
+    gap: 3,
+    minHeight: 44,
   },
   statValue: {
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: -0.3,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   statPartnerValue: {
     fontSize: 13,
@@ -2361,11 +2410,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   tierToggleIconBtn: {
-    width: 44,
-    height: 44,
-    borderWidth: 1,
+    minWidth: 44,
+    minHeight: 44,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderCurve: 'continuous',
   },
   addFriendInputRow: {
     flexDirection: 'row',

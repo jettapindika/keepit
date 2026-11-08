@@ -2,14 +2,9 @@ import { Image } from 'expo-image';
 import React, { useRef, useState } from 'react';
 import { GestureResponderEvent, StyleSheet, Text, View } from 'react-native';
 
-import {
-  computeDistanceMeters,
-  formatDistanceApart,
-  formatRelativeTimeAgo,
-} from '@/api/locations';
+import { formatRelativeTimeAgo } from '@/api/locations';
 import {
   CloseCrossIcon,
-  CoupleLinkIcon,
   CrosshairIcon,
   DirectionChevronIcon,
   FriendsClusterIcon,
@@ -171,10 +166,6 @@ export function InteractiveCoupleMap({
   const tilesLoading =
     tiles.length > 0 &&
     tiles.some((tile) => !loadedTiles.includes(tile.key) && !failedTiles.includes(tile.key));
-  const distance =
-    hasCoordinates(mine) && hasCoordinates(partner)
-      ? formatDistanceApart(computeDistanceMeters(mine.lat, mine.lng, partner.lat, partner.lng))
-      : null;
   const metersPerPixel = anchor
     ? (156543.03392 * Math.cos((anchor.lat * Math.PI) / 180)) / 2 ** zoom
     : null;
@@ -304,12 +295,6 @@ export function InteractiveCoupleMap({
             },
           )}
         </View>
-        {distance ? (
-          <View style={styles.hudDistance}>
-            <CoupleLinkIcon color={colors.inkMuted} size={14} />
-            <Text style={[styles.badgeText, { color: colors.ink }]}>{distance}</Text>
-          </View>
-        ) : null}
       </View>
 
       {panEnabled && anchor ? (
@@ -539,15 +524,30 @@ export function InteractiveCoupleMap({
                   'Center map on shared pins',
                   center,
                 )}
-                {iconButton(
-                  <PanMoveIcon
-                    color={panEnabled ? colors.onAccent : colors.ink}
-                    size={18}
-                  />,
-                  'Move map',
-                  () => setPanEnabled((value) => !value),
-                  { selected: panEnabled, toggle: true },
-                )}
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel={panEnabled ? 'Lock map panning' : 'Move map'}
+                  accessibilityState={{ selected: panEnabled }}
+                  onPress={() => setPanEnabled((value) => !value)}
+                  style={[
+                    styles.panToggle,
+                    {
+                      backgroundColor: panEnabled ? colors.ink : colors.surface,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.pill,
+                    },
+                  ]}
+                >
+                  <PanMoveIcon color={panEnabled ? colors.canvas : colors.ink} size={14} />
+                  <Text
+                    style={[
+                      styles.panToggleText,
+                      { color: panEnabled ? colors.canvas : colors.ink },
+                    ]}
+                  >
+                    {panEnabled ? 'Done' : 'Move'}
+                  </Text>
+                </AppPressable>
               </View>
             </View>
           </View>
@@ -635,14 +635,8 @@ export function InteractiveCoupleMap({
             </View>
 
             <View style={styles.metaStrip}>
-              {distance ? (
-                <View style={styles.metaBadge}>
-                  <CoupleLinkIcon color={colors.inkMuted} size={14} />
-                  <Text style={[styles.metaText, { color: colors.ink }]}>{distance}</Text>
-                </View>
-              ) : null}
               <Text style={[styles.metaText, { color: colors.inkMuted }]}>
-                {scaleMeters}m · z{zoom} · © Esri · OSM
+                {`${scaleMeters} m · © ${mapStyle === 'street' ? 'Esri · OSM' : 'KeepIt radar'}`}
               </Text>
             </View>
           </View>
@@ -672,7 +666,7 @@ export function InteractiveCoupleMap({
       ) : (
         <EmptyState
           title="No active pins on map"
-          message="Tap a mode or check-in icon below to place a pin."
+          message="Tap a check-in chip below to place a pin."
         />
       )}
 
@@ -755,17 +749,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  hudDistance: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-  },
   canvasRightDock: {
     position: 'absolute',
     right: 10,
     top: 10,
     gap: 6,
+  },
+  panToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+  },
+  panToggleText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   dpadRow: {
     flexDirection: 'row',
@@ -846,11 +846,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
-  },
-  metaBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
   metaText: {
     fontSize: 12,

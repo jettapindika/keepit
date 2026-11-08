@@ -30,7 +30,6 @@ import {
   LiveBeaconIcon,
   MomentPinIcon,
   ParkOverlookIcon,
-  PauseResumeIcon,
 } from '@/components/map/MapIcons';
 import { InlineNotice, KeepItButton, SkeletonBlock } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
@@ -52,7 +51,7 @@ const MODE_OPTIONS: {
   },
   {
     mode: 'on_moment',
-    label: 'Moment',
+    label: 'On Moment',
     shortHint: 'With photo',
     description: 'Share a location with your Moments. Waits for a located Moment if no pin is available.',
   },
@@ -395,6 +394,8 @@ export default function MapScreen() {
           action={
             distance ? (
               <View
+                accessible
+                accessibilityLabel={`Distance between you and ${partnerName}: ${distance}`}
                 style={[
                   styles.distancePill,
                   {
@@ -565,47 +566,6 @@ export default function MapScreen() {
                   </View>
                 </View>
 
-                <AppPressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    currentMode === 'ghost'
-                      ? 'Resume sharing with On Moment mode'
-                      : 'Pause sharing with Ghost mode'
-                  }
-                  disabled={!canChange}
-                  onPress={() =>
-                    void changeSharing(
-                      currentMode === 'ghost' ? 'on_moment' : 'ghost',
-                      undefined,
-                      true,
-                    )
-                  }
-                  style={[
-                    styles.quickToggleBtn,
-                    {
-                      borderColor: colors.controlBorder,
-                      borderRadius: radii.input,
-                      backgroundColor:
-                        currentMode === 'ghost' ? colors.accent : colors.surface,
-                    },
-                  ]}
-                >
-                  <PauseResumeIcon
-                    color={currentMode === 'ghost' ? colors.onAccent : colors.ink}
-                    paused={currentMode === 'ghost'}
-                    size={16}
-                  />
-                  <Text
-                    style={[
-                      styles.quickToggleText,
-                      {
-                        color: currentMode === 'ghost' ? colors.onAccent : colors.ink,
-                      },
-                    ]}
-                  >
-                    {currentMode === 'ghost' ? 'Resume' : 'Pause'}
-                  </Text>
-                </AppPressable>
               </View>
             </View>
 
@@ -622,9 +582,8 @@ export default function MapScreen() {
             <View style={[styles.compactCard, surface]}>
               <View style={styles.checkinRow}>
                 {QUICK_CHECKIN_PLACES.map((place) => {
-                  const isPrimary = Boolean(place.useGps);
                   const isSelected = pendingPlace?.id === place.id;
-                  const active = isPrimary || isSelected;
+                  const active = isSelected;
                   const fg = active ? colors.onAccent : colors.ink;
                   return (
                     <AppPressable
@@ -638,14 +597,10 @@ export default function MapScreen() {
                       accessibilityState={{ disabled: !canChange, selected: isSelected }}
                       disabled={!canChange}
                       onPress={() => {
-                        if (place.useGps) {
-                          void changeSharing('live', place);
-                        } else {
-                          setPendingPlace((current) =>
-                            current?.id === place.id ? null : place,
-                          );
-                          setPendingGpsAction(null);
-                        }
+                        setPendingPlace((current) =>
+                          current?.id === place.id ? null : place,
+                        );
+                        setPendingGpsAction(null);
                       }}
                       style={[
                         styles.checkinChip,
@@ -681,8 +636,9 @@ export default function MapScreen() {
                         {pendingPlace.placeName}
                       </Text>
                       <Text style={[styles.secondary, { color: colors.inkMuted }]}>
-                        {pendingPlace.lat?.toFixed(4)}, {pendingPlace.lng?.toFixed(4)} · Sets Live
-                        pin
+                        {pendingPlace.lat != null && pendingPlace.lng != null
+                          ? `${pendingPlace.lat.toFixed(4)}, ${pendingPlace.lng.toFixed(4)} · Sets Live pin`
+                          : 'Uses current GPS · Sets Live pin'}
                       </Text>
                     </View>
                     <AppPressable
@@ -705,7 +661,7 @@ export default function MapScreen() {
                     label="Share spot"
                     disabled={!canChange}
                     onPress={() => {
-                      if (pendingPlace) void changeSharing('live', pendingPlace, true);
+                      if (pendingPlace) void changeSharing('live', pendingPlace);
                     }}
                   />
                 </View>
@@ -1026,20 +982,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 1,
-  },
-  quickToggleBtn: {
-    minHeight: 44,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  quickToggleText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
   },
   checkinRow: {
     flexDirection: 'row',

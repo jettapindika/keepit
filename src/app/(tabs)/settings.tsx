@@ -49,18 +49,27 @@ export default function SettingsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [preferenceSaving, setPreferenceSaving] = useState(false);
+  const [preferenceSaved, setPreferenceSaved] = useState(false);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const pendingPreference = useRef<(() => Promise<void>) | null>(null);
+  const preferenceSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'your partner';
+  useEffect(() => () => {
+    clearTimeout(preferenceSavedTimer.current ?? undefined);
+  }, []);
   const updatePreference = async (action: () => Promise<void>) => {
     if (preferenceSaving) return;
     pendingPreference.current = action;
     setPreferenceError(null);
+    setPreferenceSaved(false);
     setPreferenceSaving(true);
     try {
       await action();
       pendingPreference.current = null;
+      setPreferenceSaved(true);
+      clearTimeout(preferenceSavedTimer.current ?? undefined);
+      preferenceSavedTimer.current = setTimeout(() => setPreferenceSaved(false), 2500);
     } catch (err) {
       setPreferenceError(`This preference may not be saved. ${err instanceof Error ? err.message : 'Try saving it again.'}`);
     } finally {
@@ -156,7 +165,7 @@ export default function SettingsScreen() {
           />
         }
         contentContainerStyle={[styles.content, { paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: spacing.lg, paddingBottom: APP_LAYOUT.tabBarClearance + insets.bottom }]}>
-        <PageHeader title="Settings" subtitle="Account, couple space, and how KeepIt feels." onBack={busy ? undefined : () => { if (confirmAction) setConfirmAction(null); else router.replace('/(tabs)'); }} backLabel={confirmAction ? 'Cancel confirmation' : 'Back to Home'} />
+        <PageHeader title="Settings" subtitle="Account, couple space, and how KeepIt feels." onBack={busy ? undefined : () => router.navigate('/(tabs)')} backLabel="Back to Home" />
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.sm }]}>
           <SectionHeader title="Couple space" subtitle="Your shared archive and pairing status." />
@@ -179,6 +188,7 @@ export default function SettingsScreen() {
             })}
           </View>
           {preferenceSaving ? <Text accessibilityLiveRegion="polite" style={[styles.muted, { color: colors.inkMuted }]}>Saving preferences…</Text> : null}
+          {preferenceSaved ? <InlineNotice tone="success" message="Preferences saved." /> : null}
           {preferenceError ? <View style={{ gap: 8 }}><InlineNotice message={preferenceError} tone="error" /><KeepItButton label="Retry saving preference" variant="secondary" disabled={preferenceSaving} onPress={() => { if (pendingPreference.current) void updatePreference(pendingPreference.current); }} /></View> : null}
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <View style={styles.switchRow}>
@@ -198,6 +208,11 @@ export default function SettingsScreen() {
           ) : null}
         </View>
 
+        <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
+          <SectionHeader title="Session" subtitle="Signing out keeps your account. You can sign in again later." />
+          <KeepItButton label="Sign Out" loadingLabel="Signing out…" variant="secondary" disabled={busy !== null || confirmAction !== null} loading={busy === 'signout'} onPress={() => void executeSignOut()} />
+        </View>
+
         <View style={[styles.card, styles.dangerCard, { backgroundColor: colors.surface, borderColor: colors.danger, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
           <SectionHeader title="Danger zone" subtitle="Unpairing removes shared Moments and streaks for both partners. Deleting your account permanently removes your profile, pairing, Moment photos, statuses, and location history." />
           {error ? <InlineNotice message={error} tone="error" /> : null}
@@ -214,9 +229,6 @@ export default function SettingsScreen() {
             {isPartnerPaired ? <KeepItButton label={`Unpair from ${partnerName}`} loadingLabel="Unpairing…" variant="danger" loading={busy === 'unpair'} disabled={busy !== null} onPress={requestUnpair} /> : null}
             <KeepItButton label="Delete Account & All Data" loadingLabel="Deleting account…" variant="danger" loading={busy === 'delete'} disabled={busy !== null} onPress={requestDeleteAccount} />
           </>}
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <Text style={[styles.muted, { color: colors.inkMuted }]}>Signing out keeps your account. You can sign in again later.</Text>
-          <KeepItButton label="Sign Out" loadingLabel="Signing out…" variant="secondary" disabled={busy !== null || confirmAction !== null} loading={busy === 'signout'} onPress={() => void executeSignOut()} />
         </View>
       </ScrollView>
     </SafeAreaView>

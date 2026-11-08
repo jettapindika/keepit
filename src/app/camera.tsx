@@ -749,15 +749,31 @@ export default function CameraModalScreen() {
         minute: '2-digit',
       })
     : countdown.currentTimeShort;
-  const activeSlotNumber = replaceTarget?.daily_index
-    ? replaceTarget.daily_index
-    : Math.min(MAX_DAILY_MOMENTS_PER_DAY, dailyPostedCount + 1);
-  const headerTimingSuffix =
+  const headerQuotaLabel = replaceTarget?.daily_index
+    ? `Editing ${replaceTarget.daily_index}/${MAX_DAILY_MOMENTS_PER_DAY}`
+    : `${Math.min(dailyPostedCount, MAX_DAILY_MOMENTS_PER_DAY)}/${MAX_DAILY_MOMENTS_PER_DAY} today`;
+  const headerTimingLabel =
     isThisCapturePromptCheckIn && countdown.phase === 'live'
-      ? `${countdown.formattedTimer} left`
+      ? `Live · ${countdown.formattedTimer} left`
       : isThisCapturePromptCheckIn && countdown.phase === 'late'
-        ? countdown.formattedTimer
+        ? `Late · ${countdown.formattedTimer}`
         : captureTimeShort;
+  const shutterDisabled =
+    !permission?.granted ||
+    !cameraReady ||
+    (stage !== 'ready' && stage !== 'recording_video') ||
+    (stage === 'ready' &&
+      bundleQuery.isSuccess &&
+      shotsRemainingToday === 0 &&
+      !params.replaceMomentId) ||
+    (Platform.OS === 'web' && mediaType === 'video');
+  const shutterHint = shotsRemainingToday === 0 && !params.replaceMomentId
+    ? 'All of today’s Moments are posted. Replace one from its menu on Home.'
+    : !permission?.granted
+      ? 'Camera permission is required to capture.'
+      : !cameraReady
+        ? 'Camera is still starting.'
+        : undefined;
   const watermarkTimestamp = formatMomentWatermarkTimestamp(capturedAtIso);
 
   const handleClose = () => {
@@ -809,35 +825,50 @@ export default function CameraModalScreen() {
                 />
               </Pressable>
 
-              <View
-                style={[
-                  styles.timerPill,
-                  {
-                    borderColor:
-                      stage === 'recording_video' ? colors.danger : colors.border,
-                    backgroundColor: colors.surface,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text
+              <View style={styles.capturePillRow}>
+                <View
                   style={[
-                    styles.timerText,
+                    styles.timerPill,
                     {
-                      color:
-                        stage === 'recording_video' ? colors.danger : colors.ink,
+                      borderColor: colors.border,
+                      backgroundColor: colors.surface,
+                      borderRadius: radii.pill,
                     },
                   ]}>
-                  {stage === 'recording_video'
-                    ? `REC 00:${String(recordingSec).padStart(2, '0')} / 00:15`
-                    : `${activeSlotNumber}/${MAX_DAILY_MOMENTS_PER_DAY} · ${headerTimingSuffix}`}
-                </Text>
+                  <Text style={[styles.timerText, { color: colors.ink }]}>
+                    {headerQuotaLabel}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.timerPill,
+                    {
+                      borderColor:
+                        stage === 'recording_video' ? colors.danger : colors.border,
+                      backgroundColor: colors.surface,
+                      borderRadius: radii.pill,
+                    },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.timerText,
+                      {
+                        color:
+                          stage === 'recording_video' ? colors.danger : colors.ink,
+                      },
+                    ]}>
+                    {stage === 'recording_video'
+                      ? `REC 00:${String(recordingSec).padStart(2, '0')} / 00:15`
+                      : headerTimingLabel}
+                  </Text>
+                </View>
               </View>
 
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Toggle flash, currently ${flash}`}
                 accessibilityState={{ checked: flash === 'on' }}
-                disabled={stage !== 'ready'}
+                disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
                 onPress={() => {
                   if (Platform.OS !== 'web') {
                     void Haptics.selectionAsync();
@@ -1105,7 +1136,7 @@ export default function CameraModalScreen() {
                             accessibilityRole="button"
                             accessibilityLabel={`Filter ${preset.label}`}
                             accessibilityState={{ selected }}
-                            disabled={stage !== 'ready'}
+                            disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
                             onPress={() => {
                               if (Platform.OS !== 'web') {
                                 void Haptics.selectionAsync();
@@ -1175,7 +1206,7 @@ export default function CameraModalScreen() {
                   accessibilityRole="tab"
                   accessibilityLabel="Photo"
                   accessibilityState={{ selected: mediaType === 'photo' }}
-                  disabled={stage !== 'ready'}
+                  disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
                   onPress={() => handleSelectMediaType('photo')}
                   style={styles.cameraModeOption}>
                   <Text
@@ -1204,7 +1235,7 @@ export default function CameraModalScreen() {
                   accessibilityRole="tab"
                   accessibilityLabel="Video"
                   accessibilityState={{ selected: mediaType === 'video' }}
-                  disabled={stage !== 'ready'}
+                  disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
                   onPress={() => handleSelectMediaType('video')}
                   style={styles.cameraModeOption}>
                   <Text
@@ -1235,7 +1266,7 @@ export default function CameraModalScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={`Toggle filters, current filter ${activeFilterMeta.label}`}
                   accessibilityState={{ expanded: showFilterTray, selected: filterActive }}
-                  disabled={stage !== 'ready'}
+                  disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
                   onPress={() => {
                     if (Platform.OS !== 'web') {
                       void Haptics.selectionAsync();
@@ -1280,16 +1311,8 @@ export default function CameraModalScreen() {
                         : 'Record Dual Video'
                       : 'Capture Dual Moment'
                   }
-                  disabled={
-                    !permission?.granted ||
-                    !cameraReady ||
-                    (stage !== 'ready' && stage !== 'recording_video') ||
-                    (stage === 'ready' &&
-                      bundleQuery.isSuccess &&
-                      shotsRemainingToday === 0 &&
-                      !params.replaceMomentId) ||
-                    (Platform.OS === 'web' && mediaType === 'video')
-                  }
+                  accessibilityHint={shutterHint}
+                  disabled={shutterDisabled}
                   onPress={() => {
                     if (mediaType === 'video') {
                       void startOrStopVideoRecording();
@@ -1302,8 +1325,7 @@ export default function CameraModalScreen() {
                     {
                       borderColor:
                         mediaType === 'video' ? colors.danger : colors.ink,
-                      opacity:
-                        stage === 'ready' || stage === 'recording_video' ? 1 : 0.5,
+                      opacity: shutterDisabled ? 0.4 : 1,
                     },
                   ]}>
                   <View
@@ -1322,7 +1344,7 @@ export default function CameraModalScreen() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Switch camera lens, currently ${facing}`}
-                  disabled={stage !== 'ready'}
+                  disabled={!permission?.granted || !cameraReady || stage !== 'ready'}
                   onPress={() => {
                     if (Platform.OS !== 'web') {
                       void Haptics.selectionAsync();
@@ -1366,7 +1388,7 @@ export default function CameraModalScreen() {
               title="Review Moment"
               subtitle="Check both sides before publishing."
               onBack={handleClose}
-              backLabel={submitting ? 'Publishing…' : 'Close'}
+              backLabel={submitting ? 'Publishing…' : 'Back'}
               backDisabled={submitting}
             />
             {bundleQuery.isError ? (
@@ -1632,9 +1654,8 @@ export default function CameraModalScreen() {
                 })}
               </ScrollView>
               <SectionHeader title="Make it yours" subtitle="Attachments are optional. Review the audience before publishing." />
-              {locationLabel || selectedMusic || taggedUsers.length > 0 ? (
+              {selectedMusic || taggedUsers.length > 0 ? (
                 <View style={styles.wrapRow}>
-                  {locationLabel ? <KeepItButton label={`Remove location: ${locationLabel}`} variant="secondary" disabled={submitting} onPress={() => { setLocationLabel(null); setCoords(null); }} /> : null}
                   {selectedMusic ? <KeepItButton label={`Remove music: ${selectedMusic.title}`} variant="secondary" disabled={submitting} onPress={() => setSelectedMusic(null)} /> : null}
                   {taggedUsers.map((person) => <KeepItButton key={person.userId} label={`Untag @${person.username}`} variant="secondary" disabled={submitting} onPress={() => toggleTagPerson(person)} />)}
                 </View>
@@ -1817,7 +1838,7 @@ export default function CameraModalScreen() {
                         </Text>
                       </Pressable>
                     ))}
-                    {overlays.length > 0 ? (
+                    {selectedOverlayId ? (
                       <>
                         <Pressable
                           accessibilityRole="button"
@@ -2110,7 +2131,7 @@ export default function CameraModalScreen() {
                   styles.snapOnceCard,
                   {
                     backgroundColor: colors.surface,
-                    borderColor: snapOnce ? colors.warning : colors.border,
+                    borderColor: colors.border,
                     borderRadius: radii.card,
                   },
                 ]}>
@@ -2130,7 +2151,18 @@ export default function CameraModalScreen() {
                     onValueChange={setSnapOnce}
                   />
                 </View>
+                <Text style={[styles.musicSub, { color: colors.inkMuted }]}>Snap Once gives each viewer 15 seconds after opening. It does not prevent screenshots or recordings.</Text>
+              </View>
 
+              <View
+                style={[
+                  styles.snapOnceCard,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    borderRadius: radii.card,
+                  },
+                ]}>
                 <SectionHeader title="Who can see this?" subtitle={visibility === 'partner' ? 'Shared with your paired partner only.' : visibility === 'friends' ? 'Shared with your friends circle.' : 'Shared with your partner and friends circle.'} />
                 <View style={styles.audienceRow}>
                   {(['everyone', 'partner', 'friends'] as const).map((vis) => (
@@ -2166,7 +2198,6 @@ export default function CameraModalScreen() {
                   ))}
                 </View>
               </View>
-              <Text style={[styles.musicSub, { color: colors.inkMuted }]}>Snap Once gives each viewer 15 seconds after opening. It does not prevent screenshots or recordings.</Text>
 
               {/* Caption Input */}
               <View style={styles.captionWrap}>
@@ -2198,14 +2229,12 @@ export default function CameraModalScreen() {
               {error ? <InlineNotice message={error} tone="error" /> : null}
               {saveFeedback ? <InlineNotice message={saveFeedback} tone="success" /> : null}
 
+              {bundleQuery.isPending ? <InlineNotice tone="info" message="Checking today’s capture allowance…" /> : null}
+
               {/* Post / Save Preview / Retake Buttons */}
               <View style={styles.previewActions}>
                 <KeepItButton
-                  label={
-                    snapOnce
-                      ? 'Post Snap Once (15s)'
-                      : `Post Moment (#KeepIt · ${captureOriginLens === 'front' ? 'Front Lead' : 'Dual'})`
-                  }
+                  label={snapOnce ? 'Post Snap Once (15s)' : 'Post Moment'}
                   loading={submitting}
                   loadingLabel="Publishing Moment…"
                   disabled={!user || !couple || submitting || bundleQuery.isPending || bundleQuery.isError}
@@ -2444,10 +2473,17 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '600',
   },
+  capturePillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+  },
   timerPill: {
     borderWidth: 1,
     paddingHorizontal: 14,
     paddingVertical: 7,
+    flexShrink: 1,
   },
   timerText: {
     fontSize: 13,

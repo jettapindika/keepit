@@ -301,24 +301,22 @@ export default function HomeScreen() {
           onOpenStatusSheet={() => router.push('/status-sheet')}
         />
 
-        {actionError || bundleQuery.isError ? (
+        {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
+        {bundleQuery.isError ? (
           <View style={{ gap: spacing.xs }}>
             <InlineNotice
               message={
-                actionError ??
-                (bundleQuery.error instanceof Error
+                bundleQuery.error instanceof Error
                   ? bundleQuery.error.message
-                  : 'Could not sync today’s Moments.')
+                  : 'Could not sync today’s Moments.'
               }
               tone="error"
             />
-            {bundleQuery.isError ? (
-              <KeepItButton
-                label="Retry Sync"
-                variant="secondary"
-                onPress={() => void bundleQuery.refetch()}
-              />
-            ) : null}
+            <KeepItButton
+              label="Retry Sync"
+              variant="secondary"
+              onPress={() => void bundleQuery.refetch()}
+            />
           </View>
         ) : null}
 
@@ -455,20 +453,13 @@ export default function HomeScreen() {
                 label="Post a Moment"
                 onPress={() => openCameraModal()}
               />
-              {isPartnerPaired ? (
+              {!isPartnerPaired ? (
                 <KeepItButton
-                  label={`Nudge ${partnerName}`}
-                  variant="secondary"
-                  loading={nudging}
-                  onPress={() => void handleSendNudge()}
-                />
-              ) : (
-                <KeepItButton
-                  label="Add Partner or Friends"
+                  label="Add Friends"
                   variant="secondary"
                   onPress={() => router.navigate('/(tabs)/profile' as never)}
                 />
-              )}
+              ) : null}
             </View>
           </View>
         )}
