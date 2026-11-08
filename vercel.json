@@ -4,8 +4,8 @@
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/:path*",
-      "destination": "/"
+      "source": "/((?!_expo/|assets/|favicon).*)",
+      "destination": "/index.html"
     }
   ]
 }
