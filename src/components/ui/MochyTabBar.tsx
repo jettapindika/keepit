@@ -94,9 +94,9 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                   accessibilityLargeContentTitle="Capture"
                   accessibilityHint="Capture a new Moment"
                   onPress={() => router.push('/camera')}
-                  style={[styles.capture, { backgroundColor: colors.accent, borderRadius: radii.lg }]}
+                  style={[styles.capture, { backgroundColor: colors.accent, borderRadius: 14 }]}
                 >
-                  <SymbolView name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }} tintColor={colors.onAccent} size={22} />
+                  <SymbolView name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }} tintColor={colors.onAccent} size={17} />
                   {!compactLabels ? <Text style={[styles.label, { color: colors.onAccent }]}>Capture</Text> : null}
                 </AppPressable>
               ) : null}
@@ -124,12 +124,8 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                 ]}
               >
                 <View pointerEvents="none" style={styles.tabContent}>
-                  <SymbolView name={icons[route.name as keyof typeof icons]} tintColor={focused ? colors.ink : colors.inkMuted} size={21} />
-                  {!compactLabels ? (
-                    <Text style={[styles.label, { color: focused ? colors.ink : colors.inkMuted, fontWeight: '600' }]}>
-                      {label}
-                    </Text>
-                  ) : null}
+                  <SymbolView name={icons[route.name as keyof typeof icons]} tintColor={focused ? colors.ink : colors.inkMuted} size={17} />
+                  {!compactLabels ? <Text style={[styles.label, { color: focused ? colors.ink : colors.inkMuted, fontWeight: focused ? '600' : '500' }]}>{label}</Text> : null}
                 </View>
               </AppPressable>
             </React.Fragment>
@@ -142,9 +138,9 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
 
 const styles = StyleSheet.create({
   wrapper: { position: 'absolute', bottom: 0, left: 12, right: 12, alignItems: 'center', zIndex: 20 },
-  dock: { width: '100%', maxWidth: 600, minHeight: 72, borderWidth: 1, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6 },
-  tab: { flex: 1, minWidth: 0, minHeight: 56, paddingHorizontal: 8, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
-  tabContent: { alignItems: 'center', justifyContent: 'center', gap: 4 },
-  capture: { flex: 1, minWidth: 0, minHeight: 56, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', gap: 4 },
-  label: { fontSize: 13, lineHeight: 16, fontWeight: '600', letterSpacing: 0, textAlign: 'center' },
+  dock: { width: '100%', maxWidth: 560, minHeight: 58, borderWidth: 1, borderRadius: 20, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 5 },
+  tab: { flex: 1, minWidth: 0, minHeight: 46, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
+  tabContent: { alignItems: 'center', justifyContent: 'center', gap: 3 },
+  capture: { flex: 1, minWidth: 0, minHeight: 46, borderRadius: 14, paddingVertical: 5, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  label: { fontSize: 11, lineHeight: 13, fontWeight: '600', letterSpacing: 0, textAlign: 'center' },
 });

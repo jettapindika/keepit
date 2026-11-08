@@ -1065,8 +1065,22 @@ export function DualMomentCard({
                   onError={() => setFailedImageUris((uris) => [...uris, pipSource])}
                   source={{ uri: pipSource }}
                   contentFit="cover"
-                  style={styles.fullImage}
+                  style={[
+                    styles.fullImage,
+                    Platform.OS === 'web' && filterMeta.webCssFilter !== 'none'
+                      ? ({ filter: filterMeta.webCssFilter } as never)
+                      : null,
+                  ]}
                 />
+                {filterMeta.tintOverlay !== 'transparent' ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      StyleSheet.absoluteFill,
+                      { backgroundColor: filterMeta.tintOverlay },
+                    ]}
+                  />
+                ) : null}
                 <View pointerEvents="none" style={styles.pipSwapBadge}>
                   <SymbolView
                     name={{
@@ -2394,8 +2408,22 @@ export function DualMomentCard({
                       <Image
                         source={{ uri: savePreviewPipSource }}
                         contentFit="cover"
-                        style={styles.fullImage}
+                        style={[
+                          styles.fullImage,
+                          Platform.OS === 'web' && filterMeta.webCssFilter !== 'none'
+                            ? ({ filter: filterMeta.webCssFilter } as never)
+                            : null,
+                        ]}
                       />
+                      {filterMeta.tintOverlay !== 'transparent' ? (
+                        <View
+                          pointerEvents="none"
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: filterMeta.tintOverlay },
+                          ]}
+                        />
+                      ) : null}
                     </Pressable>
                   </View>
                 ) : null}
@@ -2647,17 +2675,20 @@ export function LockedMomentCard({
 const styles = StyleSheet.create({
   confirmDialog: { width: '100%', maxWidth: 520, alignSelf: 'center', padding: 20, gap: 16 },
   postCard: {
+    width: '100%',
+    maxWidth: 360,
+    alignSelf: 'center',
     borderWidth: 1.5,
     overflow: 'hidden',
     borderCurve: 'continuous',
   },
   postHeader: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   photoFrame: {
     width: '100%',
-    aspectRatio: 0.75,
+    aspectRatio: 3 / 4,
     borderTopWidth: 1,
     borderBottomWidth: 1,
     overflow: 'hidden',
@@ -2746,19 +2777,13 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: -0.6,
     lineHeight: 20,
-    textShadowColor: 'rgba(0, 0, 0, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
   },
   keepItWatermarkTime: {
     color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '600',
     lineHeight: 18,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
-    textShadowColor: 'rgba(0, 0, 0, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
   },
   videoProgressTrack: {
     position: 'absolute',
@@ -3223,15 +3248,17 @@ const styles = StyleSheet.create({
   },
   savePreviewCanvasFrame: {
     width: '86%',
-    maxWidth: 340,
-    aspectRatio: 4 / 5,
+    maxWidth: 320,
+    aspectRatio: 3 / 4,
     borderWidth: 1,
     overflow: 'hidden',
     position: 'relative',
   },
   lockedFrame: {
     width: '100%',
-    minHeight: 300,
+    maxWidth: 360,
+    alignSelf: 'center',
+    minHeight: 280,
     justifyContent: 'space-between',
     position: 'relative',
     borderCurve: 'continuous',

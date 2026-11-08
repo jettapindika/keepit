@@ -1,5 +1,6 @@
 import React, { forwardRef, useState } from 'react';
 import {
+  Modal,
   Platform,
   Pressable,
   PressableProps,
@@ -215,6 +216,88 @@ export function EmptyState({ title, message, actionLabel, onAction }: {
   );
 }
 
+export function ConfirmModal({
+  visible,
+  title,
+  message,
+  confirmLabel,
+  cancelLabel = 'Cancel',
+  confirmVariant = 'danger',
+  loading = false,
+  loadingLabel,
+  onConfirm,
+  onCancel,
+}: {
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  confirmVariant?: 'primary' | 'danger';
+  loading?: boolean;
+  loadingLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { colors, radii, type } = useKeepItTheme();
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => {
+        if (!loading) onCancel();
+      }}
+    >
+      <View style={styles.confirmBackdrop}>
+        <Pressable
+          accessible={false}
+          disabled={loading}
+          onPress={onCancel}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          accessibilityViewIsModal
+          style={[
+            styles.confirmCard,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              borderRadius: radii.card,
+            },
+          ]}
+        >
+          <Text
+            accessibilityRole="header"
+            style={[styles.sectionTitle, { color: colors.ink, fontFamily: type.fontSans }]}
+          >
+            {title}
+          </Text>
+          <Text style={[styles.emptyBody, { color: colors.inkMuted, fontFamily: type.fontSans }]}>
+            {message}
+          </Text>
+          <View style={styles.confirmActions}>
+            <KeepItButton
+              label={confirmLabel}
+              loadingLabel={loadingLabel}
+              variant={confirmVariant}
+              loading={loading}
+              disabled={loading}
+              onPress={onConfirm}
+            />
+            <KeepItButton
+              label={cancelLabel}
+              variant="secondary"
+              disabled={loading}
+              onPress={onCancel}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   target: { minHeight: APP_LAYOUT.minimumTarget, minWidth: APP_LAYOUT.minimumTarget, borderCurve: 'continuous' },
   input: { minHeight: 50, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, lineHeight: 22, borderWidth: 1, borderCurve: 'continuous' },
@@ -231,4 +314,23 @@ const styles = StyleSheet.create({
   emptyBody: { fontSize: 15, lineHeight: 22 },
   switchTarget: { minWidth: 56, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   webSwitch: { width: 48, height: 24 },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 7, 8, 0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: APP_LAYOUT.pageInset,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    padding: 20,
+    gap: 14,
+    borderCurve: 'continuous',
+  },
+  confirmActions: {
+    gap: 8,
+    marginTop: 2,
+  },
 });

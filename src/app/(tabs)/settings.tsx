@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   BackHandler,
   Platform,
   RefreshControl,
@@ -13,13 +12,17 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { deleteAccountAndAllData } from '@/api/extras';
+import { fetchTodayMomentBundle } from '@/api/moments';
 import { unpairCurrentCouple } from '@/api/pairing';
 import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
-import { AppPressable, AppSwitch, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
+import { fetchCoupleStatuses } from '@/api/statuses';
+import { AppPressable, AppSwitch, ConfirmModal, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { WidgetPreviewCard } from '@/components/widget/WidgetPreviewCard';
+import { useWidgetSync } from '@/hooks/useWidgetSync';
 import { useSessionStore } from '@/store/sessionStore';
-import { ANIMATION_SPEEDS, formatAnimationSpeedLabel } from '@/theme/motion';
 import { APP_LAYOUT, ThemeMode, useKeepItTheme } from '@/theme/tokens';
+import { useQuery } from '@tanstack/react-query';
 
 const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
   { label: 'Light', value: 'light' },
@@ -39,8 +42,8 @@ export default function SettingsScreen() {
   const setThemePreference = useSessionStore((s) => s.setThemePreference);
   const motionEnabled = useSessionStore((s) => s.motionEnabled);
   const setMotionEnabled = useSessionStore((s) => s.setMotionEnabled);
-  const motionSpeed = useSessionStore((s) => s.motionSpeed);
-  const setMotionSpeed = useSessionStore((s) => s.setMotionSpeed);
+  const widgetLayout = useSessionStore((s) => s.widgetLayout);
+  const setWidgetLayout = useSessionStore((s) => s.setWidgetLayout);
   const setPairing = useSessionStore((s) => s.setPairing);
   const signOut = useSessionStore((s) => s.signOut);
 
@@ -55,6 +58,24 @@ export default function SettingsScreen() {
   const preferenceSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'your partner';
+  const momentQuery = useQuery({
+    queryKey: ['today-moment', couple?.id, user?.id],
+    enabled: Boolean(couple?.id && user?.id),
+    queryFn: () => fetchTodayMomentBundle({ coupleId: couple!.id, userId: user!.id }),
+  });
+  const statusQuery = useQuery({
+    queryKey: ['couple-statuses', couple?.id, user?.id],
+    enabled: Boolean(couple?.id && user?.id),
+    queryFn: () => fetchCoupleStatuses({ coupleId: couple!.id, userId: user!.id }),
+  });
+  const widgetSync = useWidgetSync({
+    partnerName: partner?.display_name ?? 'Partner',
+    myName: user?.display_name ?? 'You',
+    coupleId: couple?.id,
+    momentBundle: momentQuery.data,
+    statusBundle: statusQuery.data,
+    widgetLayout,
+  });
   useEffect(() => () => {
     clearTimeout(preferenceSavedTimer.current ?? undefined);
   }, []);
@@ -115,20 +136,6 @@ export default function SettingsScreen() {
     } finally { setBusy(null); setConfirmAction(null); }
   };
 
-  const requestUnpair = () => {
-    if (Platform.OS === 'web') return setConfirmAction('unpair');
-    Alert.alert(`Unpair from ${partnerName}?`, 'This dissolves your couple space and deletes shared Moments and streaks for both of you.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Unpair & Wipe Shared Data', style: 'destructive', onPress: () => void executeUnpair() },
-    ]);
-  };
-  const requestDeleteAccount = () => {
-    if (Platform.OS === 'web') return setConfirmAction('delete');
-    Alert.alert('Delete Account & All Data?', 'This permanently deletes your profile, couple pairing, Moment photos, statuses, and location history.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete Everything Permanently', style: 'destructive', onPress: () => void executeDeleteAccount() },
-    ]);
-  };
   const executeSignOut = async () => {
     setError(null); setBusy('signout');
     try { await signOut(); router.replace('/(auth)/welcome'); }
@@ -176,61 +183,86 @@ export default function SettingsScreen() {
           {!isPartnerPaired ? <KeepItButton label="Pair with Partner" variant="secondary" disabled={busy !== null} onPress={() => router.navigate('/(auth)/pair')} /> : null}
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
-          <SectionHeader title="Appearance" subtitle="Use a light, dark, or device-matched palette." />
-          <View accessibilityRole="radiogroup" accessibilityLabel="Theme" style={[styles.radioGroup, { backgroundColor: colors.canvas, borderColor: colors.controlBorder, borderRadius: radii.input }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
+          <SectionHeader title="Appearance" />
+          <View accessibilityRole="radiogroup" accessibilityLabel="Theme" style={[styles.segmentedTrack, { backgroundColor: colors.canvas, borderColor: colors.controlBorder, borderRadius: radii.input }]}>
             {THEME_OPTIONS.map((option) => {
               const selected = themePreference === option.value;
-              return <AppPressable key={option.value} accessibilityRole="radio" accessibilityLabel={`${option.label} theme`} accessibilityState={{ checked: selected, disabled: preferenceSaving, busy: preferenceSaving }} disabled={preferenceSaving} onPress={() => void updatePreference(() => setThemePreference(option.value))} style={[styles.radioOption, { backgroundColor: selected ? colors.surface : 'transparent', borderRadius: radii.input - 4 }]}>
-                <View style={[styles.radioDot, { borderColor: selected ? colors.primary : colors.controlBorder }]}>{selected ? <View style={[styles.radioDotInner, { backgroundColor: colors.primary }]} /> : null}</View>
-                <Text style={[styles.radioText, { color: selected ? colors.ink : colors.inkMuted, fontFamily: type.fontSans }]}>{option.label}</Text>
-              </AppPressable>;
+              return (
+                <AppPressable
+                  key={option.value}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${option.label} theme`}
+                  accessibilityState={{ checked: selected, disabled: preferenceSaving, busy: preferenceSaving }}
+                  disabled={preferenceSaving}
+                  onPress={() => void updatePreference(() => setThemePreference(option.value))}
+                  style={[
+                    styles.segmentedOption,
+                    {
+                      backgroundColor: selected ? colors.ink : 'transparent',
+                      borderRadius: radii.input - 2,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.segmentedText, { color: selected ? colors.canvas : colors.inkMuted, fontFamily: type.fontSans }]}>
+                    {option.label}
+                  </Text>
+                </AppPressable>
+              );
             })}
           </View>
-          {preferenceSaving ? <Text accessibilityLiveRegion="polite" style={[styles.muted, { color: colors.inkMuted }]}>Saving preferences…</Text> : null}
+          <View style={styles.switchRow}>
+            <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Motion</Text>
+            <AppSwitch accessibilityLabel="Enable motion animations" accessibilityState={{ checked: motionEnabled, disabled: preferenceSaving }} disabled={preferenceSaving} value={motionEnabled} onValueChange={(value) => void updatePreference(() => setMotionEnabled(value))} />
+          </View>
+          <View style={styles.switchRow}>
+            <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Side-by-side widget photos</Text>
+            <AppSwitch accessibilityLabel="Show my photo and partner photo side by side on widget" accessibilityState={{ checked: widgetLayout === 'side_by_side', disabled: preferenceSaving }} disabled={preferenceSaving} value={widgetLayout === 'side_by_side'} onValueChange={(value) => void updatePreference(() => setWidgetLayout(value ? 'side_by_side' : 'partner_only'))} />
+          </View>
+          {preferenceSaving ? <Text accessibilityLiveRegion="polite" style={[styles.muted, { color: colors.inkMuted }]}>Saving…</Text> : null}
           {preferenceSaved ? <InlineNotice tone="success" message="Preferences saved." /> : null}
           {preferenceError ? <View style={{ gap: 8 }}><InlineNotice message={preferenceError} tone="error" /><KeepItButton label="Retry saving preference" variant="secondary" disabled={preferenceSaving} onPress={() => { if (pendingPreference.current) void updatePreference(pendingPreference.current); }} /></View> : null}
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <View style={styles.switchRow}>
-            <View style={styles.flex}><Text style={[styles.section, { color: colors.ink, fontFamily: type.fontSans }]}>Spring animations</Text><Text style={[styles.muted, { color: colors.inkMuted }]}>Use motion when moving through KeepIt.</Text></View>
-            <AppSwitch accessibilityLabel="Enable spring animations" accessibilityState={{ checked: motionEnabled, disabled: preferenceSaving }} disabled={preferenceSaving} value={motionEnabled} onValueChange={(value) => void updatePreference(() => setMotionEnabled(value))} />
-          </View>
-          {motionEnabled ? (
-            <View style={{ gap: spacing.sm }}>
-              <Text style={[styles.muted, { color: colors.inkMuted }]}>Animation speed: {formatAnimationSpeedLabel(motionSpeed)}</Text>
-              <View accessibilityRole="radiogroup" accessibilityLabel="Animation speed" style={styles.speedRow}>
-                {ANIMATION_SPEEDS.map((speed) => {
-                  const selected = motionSpeed === speed;
-                  return <AppPressable key={speed} accessibilityRole="radio" accessibilityLabel={`Animation speed ${formatAnimationSpeedLabel(speed)}`} accessibilityState={{ checked: selected, disabled: preferenceSaving }} disabled={preferenceSaving} onPress={() => void updatePreference(() => setMotionSpeed(speed))} style={[styles.speedOption, { backgroundColor: selected ? colors.ink : colors.surfaceElevated, borderColor: selected ? colors.ink : colors.controlBorder, borderRadius: radii.input }]}><Text style={{ fontSize: 15, lineHeight: 22, color: selected ? colors.canvas : colors.ink, fontFamily: type.fontSans, fontWeight: '600' }}>{formatAnimationSpeedLabel(speed)}</Text></AppPressable>;
-                })}
-              </View>
-            </View>
-          ) : null}
         </View>
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
+        <WidgetPreviewCard
+          snapshot={widgetSync.snapshot}
+          lastSyncedAt={widgetSync.lastSyncedAt}
+          widgetLayout={widgetLayout}
+          onChangeWidgetLayout={(nextLayout) => void updatePreference(() => setWidgetLayout(nextLayout))}
+          onPressOpenApp={() => router.navigate('/(tabs)')}
+          onPressCaptureLocked={() => router.push('/camera')}
+          onPressSyncNow={() => widgetSync.forceSync()}
+          loading={momentQuery.isLoading}
+          syncError={widgetSync.error}
+        />
+
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
           <SectionHeader title="Session" subtitle="Signing out keeps your account. You can sign in again later." />
           <KeepItButton label="Sign Out" loadingLabel="Signing out…" variant="secondary" disabled={busy !== null || confirmAction !== null} loading={busy === 'signout'} onPress={() => void executeSignOut()} />
         </View>
 
-        <View style={[styles.card, styles.dangerCard, { backgroundColor: colors.surface, borderColor: colors.danger, borderRadius: radii.group, paddingTop: APP_LAYOUT.cardPaddingTop, paddingHorizontal: APP_LAYOUT.cardPadding, paddingBottom: APP_LAYOUT.cardPaddingBottom, gap: spacing.sm }]}>
-          <SectionHeader title="Danger zone" subtitle="Unpairing removes shared Moments and streaks for both partners. Deleting your account permanently removes your profile, pairing, Moment photos, statuses, and location history." />
+        <View style={[styles.card, styles.dangerCard, { backgroundColor: colors.surface, borderColor: colors.danger, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
+          <SectionHeader title="Danger zone" subtitle="Unpairing removes shared Moments and streaks for both partners. Deleting your account removes all KeepIt data." />
           {error ? <InlineNotice message={error} tone="error" /> : null}
-          {confirmAction ? (
-            <View style={[styles.confirmBox, { backgroundColor: colors.dangerSoft, borderColor: colors.danger, borderRadius: radii.input }]}>
-              <Text accessibilityRole="header" style={[styles.section, { color: colors.ink }]}>{confirmAction === 'unpair' ? `Unpair from ${partnerName}?` : 'Permanently delete your account?'}</Text>
-              <Text style={[styles.body, { color: colors.ink }]}>{confirmAction === 'unpair' ? 'Your shared Moments and streaks will be deleted for both partners. This cannot be undone.' : 'Your profile, pairing, Moment photos, statuses, and location history will be permanently deleted. This cannot be undone.'}</Text>
-              <View style={styles.confirmActions}>
-                <KeepItButton label="Cancel" variant="secondary" disabled={busy !== null} onPress={() => setConfirmAction(null)} />
-                <KeepItButton label={confirmAction === 'unpair' ? 'Confirm Unpair' : 'Confirm Delete Everything'} loadingLabel={confirmAction === 'unpair' ? 'Unpairing…' : 'Deleting account…'} variant="danger" disabled={busy !== null} loading={busy === confirmAction} onPress={() => void (confirmAction === 'unpair' ? executeUnpair() : executeDeleteAccount())} />
-              </View>
-            </View>
-          ) : <>
-            {isPartnerPaired ? <KeepItButton label={`Unpair from ${partnerName}`} loadingLabel="Unpairing…" variant="danger" loading={busy === 'unpair'} disabled={busy !== null} onPress={requestUnpair} /> : null}
-            <KeepItButton label="Delete Account & All Data" loadingLabel="Deleting account…" variant="danger" loading={busy === 'delete'} disabled={busy !== null} onPress={requestDeleteAccount} />
-          </>}
+          {isPartnerPaired ? <KeepItButton label={`Unpair from ${partnerName}`} loadingLabel="Unpairing…" variant="danger" loading={busy === 'unpair'} disabled={busy !== null} onPress={() => setConfirmAction('unpair')} /> : null}
+          <KeepItButton label="Delete Account & All Data" loadingLabel="Deleting account…" variant="danger" loading={busy === 'delete'} disabled={busy !== null} onPress={() => setConfirmAction('delete')} />
         </View>
       </ScrollView>
+
+      <ConfirmModal
+        visible={confirmAction !== null}
+        title={confirmAction === 'unpair' ? `Unpair from ${partnerName}?` : 'Delete account & all data?'}
+        message={
+          confirmAction === 'unpair'
+            ? 'Your shared Moments and streaks will be deleted for both partners. This cannot be undone.'
+            : 'Your profile, pairing, Moment photos, statuses, and location history will be permanently deleted. This cannot be undone.'
+        }
+        confirmLabel={confirmAction === 'unpair' ? 'Unpair & Delete Shared Data' : 'Delete Everything Permanently'}
+        loadingLabel={confirmAction === 'unpair' ? 'Unpairing…' : 'Deleting account…'}
+        loading={busy === 'unpair' || busy === 'delete'}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => void (confirmAction === 'unpair' ? executeUnpair() : executeDeleteAccount())}
+      />
     </SafeAreaView>
   );
 }
@@ -243,16 +275,8 @@ const styles = StyleSheet.create({
   section: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
   body: { fontSize: 15, lineHeight: 22 },
   muted: { fontSize: 13, lineHeight: 20 },
-  radioGroup: { flexDirection: 'row', flexWrap: 'wrap', borderWidth: 1, padding: 3, gap: 4 },
-  radioOption: { flex: 1, minWidth: 72, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 8 },
-  radioDot: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  radioDotInner: { width: 8, height: 8, borderRadius: 4 },
-  radioText: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
-  divider: { height: 1, width: '100%' },
-  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  flex: { flex: 1, gap: 3 },
-  speedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  speedOption: { minWidth: 88, minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderWidth: 1 },
-  confirmBox: { borderWidth: 1, padding: 14, gap: 12 },
-  confirmActions: { gap: 8 },
+  segmentedTrack: { flexDirection: 'row', borderWidth: 1, padding: 3, gap: 4 },
+  segmentedOption: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  segmentedText: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
 });

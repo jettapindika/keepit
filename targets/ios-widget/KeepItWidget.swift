@@ -20,13 +20,16 @@ struct KeepItWidgetSnapshot: Codable {
   let updatedAt: String
   let locationLabel: String?
   let musicTitle: String?
+  let myPhotoUri: String?
+  let myName: String?
+  let widgetLayout: String?
 }
 
 struct KeepItWidgetEntry: TimelineEntry {
   let date: Date
   let snapshot: KeepItWidgetSnapshot?
   let momentImage: UIImage?
-
+  let myImage: UIImage?
   var deepLinkUrl: String {
     guard let snapshot = snapshot else {
       return "keepit://"
@@ -76,9 +79,13 @@ struct KeepItTimelineProvider: TimelineProvider {
         deepLinkUrl: "keepit://",
         updatedAt: ISO8601DateFormatter().string(from: Date()),
         locationLabel: "Blue Bottle Coffee",
-        musicTitle: "Sunset Lover"
+        musicTitle: "Sunset Lover",
+        myPhotoUri: nil,
+        myName: "You",
+        widgetLayout: "side_by_side"
       ),
-      momentImage: nil
+      momentImage: nil,
+      myImage: nil
     )
   }
 
@@ -89,19 +96,21 @@ struct KeepItTimelineProvider: TimelineProvider {
     }
     let snapshot = loadSnapshot()
     let image = loadLocalOrCachedImage(from: snapshot)
-    completion(KeepItWidgetEntry(date: Date(), snapshot: snapshot, momentImage: image))
+    let myImage = loadUriImage(snapshot?.myPhotoUri)
+    completion(KeepItWidgetEntry(date: Date(), snapshot: snapshot, momentImage: image, myImage: myImage))
   }
 
   func getTimeline(in context: Context, completion: @escaping (Timeline<KeepItWidgetEntry>) -> Void) {
     let now = Date()
     let snapshot = loadSnapshot()
     let image = loadLocalOrCachedImage(from: snapshot)
+    let myImage = loadUriImage(snapshot?.myPhotoUri)
 
     // Schedule periodic timeline ticks over the next hour so relative "12m ago" stays fresh
     var entries: [KeepItWidgetEntry] = []
     for minuteOffset in stride(from: 0, through: 45, by: 15) {
       if let entryDate = Calendar.current.date(byAdding: .minute, value: minuteOffset, to: now) {
-        entries.append(KeepItWidgetEntry(date: entryDate, snapshot: snapshot, momentImage: image))
+        entries.append(KeepItWidgetEntry(date: entryDate, snapshot: snapshot, momentImage: image, myImage: myImage))
       }
     }
 
@@ -121,14 +130,16 @@ struct KeepItTimelineProvider: TimelineProvider {
   }
 
   private func loadLocalOrCachedImage(from snapshot: KeepItWidgetSnapshot?) -> UIImage? {
-    guard
-      let snapshot = snapshot,
-      !snapshot.momentLocked,
-      let uriString = snapshot.momentPhotoUri
-    else {
+    guard let snapshot = snapshot, !snapshot.momentLocked else {
       return nil
     }
+    return loadUriImage(snapshot.momentPhotoUri)
+  }
 
+  private func loadUriImage(_ uriString: String?) -> UIImage? {
+    guard let uriString = uriString, !uriString.isEmpty else {
+      return nil
+    }
     if uriString.hasPrefix("data:image/"),
        let commaIndex = uriString.firstIndex(of: ",") {
       let base64Part = String(uriString[uriString.index(after: commaIndex)...])
@@ -345,45 +356,91 @@ private struct MediumWidgetLayout: View {
 
       if let snapshot = entry.snapshot {
         HStack(spacing: 12) {
-          // Left squircle Moment tile
-          ZStack(alignment: .bottomLeading) {
-            MochyWidgetTheme.surface
+          // Left Moment tile(s): side-by-side (mine + partner) or single photo
+          if snapshot.widgetLayout != "partner_only", (entry.myImage != nil || entry.momentImage != nil) {
+            HStack(spacing: 6) {
+              ZStack(alignment: .bottomLeading) {
+                MochyWidgetTheme.surface
+                if let myImg = entry.myImage {
+                  Image(uiImage: myImg)
+                    .resizable()
+                    .scaledToFill()
+                }
+                Text(snapshot.myName ?? "You")
+                  .font(.system(size: 9, weight: .bold))
+                  .foregroundColor(MochyWidgetTheme.ink)
+                  .padding(.horizontal, 6)
+                  .padding(.vertical, 2)
+                  .background(MochyWidgetTheme.canvas.opacity(0.75))
+                  .clipShape(Capsule())
+                  .padding(5)
+              }
+              .frame(width: 72)
+              .frame(maxHeight: .infinity)
+              .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-            if snapshot.momentLocked {
-              LockedPhotoBackdrop(compact: false)
-            } else if let uiImage = entry.momentImage {
-              Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFill()
-            } else {
-              VStack(spacing: 4) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                  .stroke(MochyWidgetTheme.border, lineWidth: 1.5)
-                  .frame(width: 26, height: 32)
-                Text("No Moment")
-                  .font(.system(size: 10, weight: .semibold))
-                  .foregroundColor(MochyWidgetTheme.inkMuted)
+              ZStack(alignment: .bottomLeading) {
+                MochyWidgetTheme.surface
+                if snapshot.momentLocked {
+                  LockedPhotoBackdrop(compact: true)
+                } else if let partnerImg = entry.momentImage {
+                  Image(uiImage: partnerImg)
+                    .resizable()
+                    .scaledToFill()
+                }
+                Text(snapshot.partnerName)
+                  .font(.system(size: 9, weight: .bold))
+                  .foregroundColor(MochyWidgetTheme.ink)
+                  .padding(.horizontal, 6)
+                  .padding(.vertical, 2)
+                  .background(MochyWidgetTheme.canvas.opacity(0.75))
+                  .clipShape(Capsule())
+                  .padding(5)
+              }
+              .frame(width: 72)
+              .frame(maxHeight: .infinity)
+              .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+          } else {
+            ZStack(alignment: .bottomLeading) {
+              MochyWidgetTheme.surface
+
+              if snapshot.momentLocked {
+                LockedPhotoBackdrop(compact: false)
+              } else if let uiImage = entry.momentImage {
+                Image(uiImage: uiImage)
+                  .resizable()
+                  .scaledToFill()
+              } else {
+                VStack(spacing: 4) {
+                  RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(MochyWidgetTheme.border, lineWidth: 1.5)
+                    .frame(width: 26, height: 32)
+                  Text("No Moment")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(MochyWidgetTheme.inkMuted)
+                }
+              }
+
+              if !snapshot.momentLocked {
+                KeepItWatermarkBadge(
+                  width: 40,
+                  timestamp: KeepItWidgetFormatters.watermarkTimestampLabel(
+                    for: snapshot.momentPostedAt ?? snapshot.updatedAt,
+                    fallback: entry.date
+                  )
+                )
+                .padding(6)
               }
             }
-
-            if !snapshot.momentLocked {
-              KeepItWatermarkBadge(
-                width: 40,
-                timestamp: KeepItWidgetFormatters.watermarkTimestampLabel(
-                  for: snapshot.momentPostedAt ?? snapshot.updatedAt,
-                  fallback: entry.date
-                )
-              )
-              .padding(6)
-            }
+            .frame(width: 112)
+            .frame(maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(MochyWidgetTheme.border, lineWidth: 1)
+            )
           }
-          .frame(width: 112)
-          .frame(maxHeight: .infinity)
-          .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-          .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-              .stroke(MochyWidgetTheme.border, lineWidth: 1)
-          )
 
           // Right metadata column
           VStack(alignment: .leading, spacing: 6) {

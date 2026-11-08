@@ -287,12 +287,33 @@ export async function fetchFriendsCircle(params: {
         if (changed) {
           await writeLocalFriends(stored);
         }
+      } else {
+        const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+        const metaFriends = authData?.user?.user_metadata?.friends_circle;
+        if (Array.isArray(metaFriends) && metaFriends.length > 0) {
+          let changed = false;
+          for (const rawFriend of metaFriends as FriendRecord[]) {
+            if (!rawFriend?.friend_id || !rawFriend?.friend_profile) continue;
+            const exists = stored.some(
+              (loc) => loc.user_id === params.userId && loc.friend_id === rawFriend.friend_id
+            );
+            if (!exists) {
+              stored.push({
+                ...rawFriend,
+                user_id: params.userId,
+              });
+              changed = true;
+            }
+          }
+          if (changed) {
+            await writeLocalFriends(stored);
+          }
+        }
       }
     } catch {
       // Use local friends cache when offline
     }
   }
-
   return stored.filter((f) => f.user_id === params.userId);
 }
 
@@ -611,6 +632,23 @@ export async function addFriendByHandleOrCode(params: {
   await writeLocalFriends(existing);
 
   if (isSupabaseConfigured && supabase) {
+    const myFriendsCompact = existing
+      .filter((f) => f.user_id === params.userId)
+      .slice(-25)
+      .map((f) => ({
+        ...f,
+        friend_profile: {
+          ...f.friend_profile,
+          avatar_path:
+            f.friend_profile.avatar_path && f.friend_profile.avatar_path.length < 24_000
+              ? f.friend_profile.avatar_path
+              : null,
+          banner_path: null,
+        },
+      }));
+    void supabase.auth
+      .updateUser({ data: { friends_circle: myFriendsCompact } })
+      .catch(() => {});
     try {
       await supabase.from('friendships').upsert(
         {

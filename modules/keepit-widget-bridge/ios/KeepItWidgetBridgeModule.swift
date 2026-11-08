@@ -179,15 +179,9 @@ public final class KeepItWidgetBridgeModule: Module {
         border.lineWidth = 6
         border.stroke()
         // #keepit SVG + Timestamp Watermark directly embedded on photo (bottom-left)
-        let wmShadow = NSShadow()
-        wmShadow.shadowColor = UIColor(white: 0.0, alpha: 0.85)
-        wmShadow.shadowOffset = CGSize(width: 0, height: 2)
-        wmShadow.shadowBlurRadius = 6
-
         let wmTimeAttrs: [NSAttributedString.Key: Any] = [
           .font: UIFont.systemFont(ofSize: 22, weight: .bold),
           .foregroundColor: UIColor(white: 1.0, alpha: 0.92),
-          .shadow: wmShadow,
         ]
         Self.drawKeepItWatermarkSvgPath(
           in: ctx.cgContext,

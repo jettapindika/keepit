@@ -84,14 +84,68 @@ export function useRealtimePairing() {
 
     const syncDirectoryPresenceToLocalDb = async () => {
       const state = directoryChannel.presenceState();
-      for (const [key, entries] of Object.entries(state)) {
-        if (key === userId) continue;
+      for (const [, entries] of Object.entries(state)) {
         for (const rawEntry of entries as unknown[]) {
           if (rawEntry && typeof rawEntry === 'object' && 'profile' in rawEntry) {
             const candidate = rawEntry.profile as UserProfile | undefined;
-            if (candidate?.id && candidate.id !== userId) {
+            if (candidate?.id) {
               await applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
-              emitDirectoryUserAnnounce(candidate);
+              if (candidate.id === userId) {
+                const cur = useSessionStore.getState().user;
+                const merged: UserProfile = {
+                  ...(cur ?? candidate),
+                  ...candidate,
+                  bio: candidate.bio || cur?.bio || '',
+                  pronouns: candidate.pronouns || cur?.pronouns || '',
+                  mood_song: candidate.mood_song || cur?.mood_song || '',
+                  website: candidate.website || cur?.website || '',
+                  avatar_path: candidate.avatar_path ?? cur?.avatar_path ?? null,
+                  banner_path: candidate.banner_path ?? cur?.banner_path ?? null,
+                };
+                useSessionStore.setState({ user: merged });
+              } else {
+                emitDirectoryUserAnnounce(candidate);
+              }
+            }
+            if (
+              'couple' in rawEntry &&
+              rawEntry.couple &&
+              typeof rawEntry.couple === 'object'
+            ) {
+              const candCouple = rawEntry.couple as {
+                id: string;
+                user_a_id: string;
+                user_b_id: string | null;
+                invite_code: string;
+                invite_expires_at: string;
+                state: 'pending' | 'active';
+                paired_at: string | null;
+                created_at: string;
+              };
+              if (
+                candCouple.state === 'active' &&
+                (candCouple.user_a_id === userId || candCouple.user_b_id === userId)
+              ) {
+                const currentSelf = useSessionStore.getState().user;
+                const partnerId =
+                  candCouple.user_a_id === userId ? candCouple.user_b_id : candCouple.user_a_id;
+                let resolvedPartner: UserProfile | null =
+                  candidate && candidate.id === partnerId
+                    ? candidate
+                    : useSessionStore.getState().partner;
+                if (!resolvedPartner && partnerId) {
+                  const snap = await fetchPairingSnapshot(userId);
+                  resolvedPartner = snap.partner;
+                }
+                if (resolvedPartner) {
+                  await saveCompletedPairingLocally({
+                    couple: candCouple,
+                    partner: resolvedPartner,
+                    selfProfile: currentSelf,
+                  });
+                }
+                setPairing(candCouple, resolvedPartner);
+              }
             }
           }
         }
@@ -178,7 +232,7 @@ export function useRealtimePairing() {
       .on('broadcast', { event: 'RequestRecentMoments' }, (msg) => {
         const payload = msg.payload as { requesterId?: string } | undefined;
         const currentUser = useSessionStore.getState().user;
-        if (!currentUser || payload?.requesterId === currentUser.id) return;
+        if (!currentUser) return;
         void (async () => {
           const [state, friends] = await Promise.all([
             readLocalMoments(),
@@ -188,13 +242,17 @@ export function useRealtimePairing() {
             Boolean(payload?.requesterId) &&
             friends.some((f) => f.friend_id === payload?.requesterId);
           const today = todayLocalDateString();
+          const isSameUserRequest = payload?.requesterId === currentUser.id;
           const myTodayMoments = Object.values(state.moments).filter(
             (m) =>
               m?.id &&
               m.user_id === currentUser.id &&
-              m.visibility !== 'partner' &&
-              (m.posted_at?.startsWith(today) || m.captured_at?.startsWith(today)) &&
-              (!currentUser.is_private ||
+              (isSameUserRequest || m.visibility !== 'partner') &&
+              (isSameUserRequest ||
+                m.posted_at?.startsWith(today) ||
+                m.captured_at?.startsWith(today)) &&
+              (isSameUserRequest ||
+                !currentUser.is_private ||
                 friends.some((f) => f.friend_id === payload?.requesterId && f.relationship === 'bestie') ||
                 !requesterIsFriend)
           );
@@ -218,6 +276,24 @@ export function useRealtimePairing() {
                 type: 'broadcast',
                 event: 'couple_packet',
                 payload: { kind: 'moment_upsert', moment: shareable } satisfies CoupleSyncPacket,
+              })
+              .catch(() => {});
+          }
+          if (isSameUserRequest) {
+            for (const f of friends) {
+              await directoryChannel
+                .send({
+                  type: 'broadcast',
+                  event: 'couple_packet',
+                  payload: { kind: 'friend_added', friend: f } satisfies CoupleSyncPacket,
+                })
+                .catch(() => {});
+            }
+            await directoryChannel
+              .send({
+                type: 'broadcast',
+                event: 'couple_packet',
+                payload: { kind: 'profile_upsert', profile: currentUser } satisfies CoupleSyncPacket,
               })
               .catch(() => {});
           }
@@ -256,7 +332,11 @@ export function useRealtimePairing() {
             void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
             void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
           } else if (packet.kind === 'profile_upsert') {
-            emitDirectoryUserAnnounce(packet.profile);
+            if (packet.profile.id === userId) {
+              useSessionStore.setState({ user: packet.profile });
+            } else {
+              emitDirectoryUserAnnounce(packet.profile);
+            }
           } else if (
             packet.kind === 'moment_upsert' ||
             packet.kind === 'moment_delete' ||

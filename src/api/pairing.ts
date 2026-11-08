@@ -203,6 +203,34 @@ export async function saveCompletedPairingLocally(params: {
 
   db.couples[params.couple.id] = params.couple;
   await writeLocalDb(db);
+  if (isSupabaseConfigured && supabase) {
+    void supabase.auth
+      .updateUser({
+        data: {
+          active_couple: params.couple,
+          partner_profile: {
+            id: params.partner.id,
+            display_name: params.partner.display_name,
+            username: params.partner.username,
+            friend_code: params.partner.friend_code,
+            bio: params.partner.bio,
+            pronouns: params.partner.pronouns,
+            mood_song: params.partner.mood_song,
+            banner_color: params.partner.banner_color,
+            website: params.partner.website,
+            is_private: params.partner.is_private,
+            dump_mode: params.partner.dump_mode,
+            avatar_path:
+              params.partner.avatar_path && params.partner.avatar_path.length < 32_000
+                ? params.partner.avatar_path
+                : null,
+            timezone: params.partner.timezone,
+            created_at: params.partner.created_at,
+          },
+        },
+      })
+      .catch(() => {});
+  }
   if (params.selfProfile) {
     void syncDirectoryPresence({ profile: params.selfProfile, couple: params.couple });
   }
@@ -528,7 +556,22 @@ export async function upsertUserProfile(params: {
   const tz = params.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
 
   const db = await readLocalDb();
-  const existing = db.users[params.userId];
+  let existing = db.users[params.userId];
+  if (!existing && isSupabaseConfigured && supabase) {
+    try {
+      const { data: remoteUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', params.userId)
+        .maybeSingle();
+      if (remoteUser) {
+        existing = remoteUser as UserProfile;
+        db.users[params.userId] = existing;
+      }
+    } catch {
+      // Use local or metadata fallback when offline
+    }
+  }
   const rawRequestedUsername =
     params.username !== undefined
       ? params.username.trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9._]/g, '').slice(0, 24)
@@ -542,7 +585,6 @@ export async function upsertUserProfile(params: {
     rawRequestedUsername ??
     existing?.username ??
     buildDefaultUsername(trimmedName, params.userId);
-
   const duplicateLocalUser = Object.values(db.users).find(
     (u) =>
       u.id !== params.userId &&
@@ -631,6 +673,14 @@ export async function upsertUserProfile(params: {
           pronouns: profile.pronouns,
           mood_song: profile.mood_song,
           banner_color: profile.banner_color,
+          banner_path:
+            profile.banner_path && profile.banner_path.length < 28_000
+              ? profile.banner_path
+              : null,
+          avatar_path:
+            profile.avatar_path && profile.avatar_path.length < 28_000
+              ? profile.avatar_path
+              : null,
           website: profile.website,
           is_private: profile.is_private,
           dump_mode: profile.dump_mode,
@@ -704,29 +754,57 @@ export async function fetchPairingSnapshot(userId: string): Promise<PairingSnaps
       .maybeSingle();
 
     if (!coupleError) {
-      if (!coupleData) return { couple: null, partner: null };
-      const couple = coupleData as CoupleRecord;
-      const partnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
-      if (!partnerId) return { couple, partner: null };
-      const { data: partnerData, error: partnerError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', partnerId)
-        .maybeSingle();
-      if (partnerError && !isSchemaNotMigratedError(partnerError)) throw mapRpcError(partnerError);
-      return { couple, partner: (partnerData as UserProfile | null) ?? null };
+      if (coupleData) {
+        const couple = coupleData as CoupleRecord;
+        const partnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
+        if (!partnerId) return { couple, partner: null };
+        const { data: partnerData, error: partnerError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', partnerId)
+          .maybeSingle();
+        if (partnerError && !isSchemaNotMigratedError(partnerError)) throw mapRpcError(partnerError);
+        return { couple, partner: (partnerData as UserProfile | null) ?? null };
+      }
+    } else if (!isSchemaNotMigratedError(coupleError)) {
+      throw mapRpcError(coupleError);
     }
-    if (!isSchemaNotMigratedError(coupleError)) throw mapRpcError(coupleError);
   }
 
   const db = await readLocalDb();
   const couple =
     Object.values(db.couples).find((c) => c.user_a_id === userId || c.user_b_id === userId) ?? null;
-  if (!couple) return { couple: null, partner: null };
+  if (couple) {
+    const partnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
+    const partner = partnerId ? (db.users[partnerId] ?? null) : null;
+    return { couple, partner };
+  }
 
-  const partnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
-  const partner = partnerId ? (db.users[partnerId] ?? null) : null;
-  return { couple, partner };
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const meta = authData?.user?.user_metadata;
+      if (meta && typeof meta === 'object' && 'active_couple' in meta && meta.active_couple) {
+        const metaCouple = meta.active_couple as CoupleRecord;
+        const metaPartner = (meta.partner_profile as UserProfile | null) ?? null;
+        if (
+          metaCouple?.id &&
+          (metaCouple.user_a_id === userId || metaCouple.user_b_id === userId)
+        ) {
+          db.couples[metaCouple.id] = metaCouple;
+          if (metaPartner?.id) {
+            db.users[metaPartner.id] = metaPartner;
+          }
+          await writeLocalDb(db);
+          return { couple: metaCouple, partner: metaPartner };
+        }
+      }
+    } catch {
+      // Ignore metadata lookup error
+    }
+  }
+
+  return { couple: null, partner: null };
 }
 
 export async function createOrRefreshInvite(
@@ -906,6 +984,13 @@ export async function unpairCurrentCouple(userId: string): Promise<void> {
     }
   }
   await writeLocalDb(db);
+  if (isSupabaseConfigured && supabase) {
+    void supabase.auth
+      .updateUser({
+        data: { active_couple: null, partner_profile: null },
+      })
+      .catch(() => {});
+  }
   if (db.users[userId]) {
     void syncDirectoryPresence({ profile: db.users[userId], couple: null });
   }
