@@ -26,16 +26,16 @@ KeepIt is a private, BeReal-style mobile app built strictly for couples (`2` par
    - Three privacy modes: `Live`, `On Moment`, and `Ghost`.
    - Postgres trigger (`trg_location_privacy`) + `dispatch-push` notify your partner automatically every time location sharing turns on or off.
 6. **Couple Extras & Privacy (`(tabs)/memories` & `(tabs)/settings`):**
-   - Shared daily streak counter, `"Together"` side-by-side daily Moment collage, rate-limited partner Nudge/Poke, interactive Calendar archive, and Monthly Memory Recap story deck.
-   - Motion controls (`AppMotion` speed `0.5x`..`2x` + Reduce Motion), Theme selector (`Dark` / `Light` / `System`), one-tap **Unpair**, and **Delete Account & All Data**.
+   - Shared daily streak counter, `"Together"` side-by-side daily Moment collage, top-right **Chat** access on Home & Profile, **Memories** in the main 5-tab dock, interactive Calendar archive, and Monthly Memory Recap story deck.
+   - Front-camera **Mirror** option (unmirrored by default, toggleable in Camera top bar and Settings), motion toggle, Theme selector (`Light` / `Dark` / `System`), side-by-side widget photo layout, **Unpair**, and **Delete Account & All Data**.
 
 ## Visual system and UX patterns
 
-KeepIt extends the [`design.md`](design.md) visual system across every screen while keeping `DESIGN.md` untouched for owner reconciliation.
+KeepIt implements the **Threads Light System** ([`design.md`](design.md) & [`DESIGN.md`](DESIGN.md)) across every screen:
 
-- **Palette and hierarchy:** Dark mode uses pure-black `#000000` / `#0F0E0F` surfaces with crisp `#FFFFFF` primary controls and `#000000` labels; Light mode uses `#F8F6F7` / `#FFFFFF` with `#000000` ink. Yellow remains confined to the three onboarding SVGs. Photos, emoji statuses/reactions, filter overlays, music artwork, and chosen profile banners remain user content rather than UI chrome.
-- **Geometry and typography:** Content cards use `22px` radii, buttons use `18px`, inputs use `10px`, and pages stay centered within `640px` (`520px` for modal sheets) with `20px` page insets. Native sans handles titles (`28/34`), sections (`18/24`), and body copy (`15/22`); bundled, SIL-licensed Space Mono Bold handles onboarding CTAs.
-- **Navigation and safety:** `NavigationGuard` resumes `pendingInviteCode` after sign-in, peer tabs switch without sliding, the bottom dock hides during text entry, and dirty status/profile/camera edits confirm before discard. Destructive actions (unpair, delete account, delete Moment, delete comment, remove friend, clear status) require explicit confirmation across web and native.
+- **Palette and hierarchy:** Light mode (default) uses crisp `#FFFFFF` canvas/surfaces, `#F5F5F5` tertiary cards, `#000000` ink and primary button fills, `1px` `#00000026` subtle outlines, `#D92D20` error states, and `#1876F2` primary blue for focus rings, active states, and button hover; Dark mode provides a matching high-contrast counterpart.
+- **Geometry and typography:** Cards and modals use `24px` (`rounded.xl`) radii, buttons and inputs use `20px` (`rounded.lg`), and navigation items use `8px` (`rounded.md`). Typography uses `system-ui` in sentence case (`0px` letter-spacing) with weight `600` headings/labels and `400` body copy.
+- **Navigation and safety:** `NavigationGuard` resumes `pendingInviteCode` after sign-in, peer tabs (`Home`, `Map`, `Capture`, `Memories`, `Profile`) switch without sliding in a compact dock (`58px` height), **Chat** sits in the top-right header of Home and Profile, and dirty status/profile/camera edits confirm before discard. Destructive actions require explicit confirmation via `ConfirmModal`.
 - **Truthful states:** Missing, failed, or SVG-generated Moment media shows an unavailable/retry state instead of synthetic photos. Missing location coordinates remain `null` until a real GPS fix, located Moment, or confirmed place check-in exists. Browser camera capture uses `CameraView`/`takePictureAsync` and reports unsupported browser video explicitly.
 
 [NEXT_AI_NOTES.md](NEXT_AI_NOTES.md) records the remaining native-device and strict-gate items.
