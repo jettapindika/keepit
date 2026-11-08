@@ -7,7 +7,6 @@ import { useLocalSearchParams, usePreventRemove, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -38,7 +37,7 @@ import {
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
 import { InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
-import { AppPressable, AppSwitch as Switch, AppTextInput, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
+import { AppPressable, AppSwitch as Switch, AppTextInput, ConfirmModal, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { useMomentCountdown } from '@/hooks/useMomentCountdown';
 import { useSessionStore } from '@/store/sessionStore';
 import { MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
@@ -168,6 +167,7 @@ export default function CameraModalScreen() {
   const [snapOnce, setSnapOnce] = useState(false);
   const [allowLeave, setAllowLeave] = useState(false);
   const pendingRemovalRef = useRef<(() => void) | null>(null);
+  const [confirmPrompt, setConfirmPrompt] = useState<'discard' | 'retake' | null>(null);
   const [visibility, setVisibility] = useState<PostVisibility>('everyone');
 
   const [submitting, setSubmitting] = useState(false);
@@ -640,26 +640,35 @@ export default function CameraModalScreen() {
     );
   });
 
+  const executeDiscardMoment = () => {
+    if (stage === 'recording_video') {
+      clearInterval(recordingTimerRef.current);
+      try { cameraRef.current?.stopRecording(); } catch { /* The recorder may have already stopped. */ }
+    }
+    const repeat = pendingRemovalRef.current;
+    pendingRemovalRef.current = null;
+    setConfirmPrompt(null);
+    setAllowLeave(true);
+    repeat?.();
+  };
+
+  const executeRetakeMoment = () => {
+    setConfirmPrompt(null);
+    setBackUri(null);
+    setFrontUri(null);
+    setVlogPipUri(null);
+    setVideoUri(null);
+    setVideoDurationSec(null);
+    setCapturedAtIso(null);
+    setSaveFeedback(null);
+    setStage('ready');
+    setError(null);
+  };
+
   const disableRemovalPrevention = usePreventRemove(!allowLeave && (stage !== 'ready' || submitting), ({ repeat }) => {
     if (submitting || (stage !== 'preview' && stage !== 'recording_video')) return;
-    const discard = () => {
-      if (stage === 'recording_video') {
-        clearInterval(recordingTimerRef.current);
-        try { cameraRef.current?.stopRecording(); } catch { /* The recorder may have already stopped. */ }
-      }
-      pendingRemovalRef.current = null;
-      setAllowLeave(true);
-      repeat();
-    };
-    const message = stage === 'preview' ? 'Your captured media and edits will be lost.' : 'Your current recording will not be saved.';
-    if (Platform.OS === 'web') {
-      if (globalThis.confirm(`Discard this Moment? ${message}`)) discard();
-    } else {
-      Alert.alert('Discard this Moment?', message, [
-        { text: stage === 'preview' ? 'Keep editing' : 'Keep recording', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: discard },
-      ]);
-    }
+    pendingRemovalRef.current = repeat;
+    setConfirmPrompt('discard');
   });
 
   const handlePostMoment = async () => {
@@ -2253,27 +2262,7 @@ export default function CameraModalScreen() {
                   label="Retake"
                   variant="secondary"
                   disabled={submitting}
-                  onPress={() => {
-                    const retake = () => {
-                      setBackUri(null);
-                      setFrontUri(null);
-                      setVlogPipUri(null);
-                      setVideoUri(null);
-                      setVideoDurationSec(null);
-                      setCapturedAtIso(null);
-                      setSaveFeedback(null);
-                      setStage('ready');
-                      setError(null);
-                    };
-                    if (Platform.OS === 'web') {
-                      if (globalThis.confirm('Retake this Moment? Your captured media will be replaced.')) retake();
-                    } else {
-                      Alert.alert('Retake this Moment?', 'Your captured media will be replaced. Captions and attachments will stay.', [
-                        { text: 'Keep editing', style: 'cancel' },
-                        { text: 'Retake', style: 'destructive', onPress: retake },
-                      ]);
-                    }
-                  }}
+                  onPress={() => setConfirmPrompt('retake')}
                 />
               </View>
 
@@ -2420,6 +2409,27 @@ export default function CameraModalScreen() {
           </ScrollView>
         )}
       </KeyboardAvoidingView>
+      <ConfirmModal
+        visible={confirmPrompt !== null}
+        title={confirmPrompt === 'retake' ? 'Retake this Moment?' : 'Discard this Moment?'}
+        message={
+          confirmPrompt === 'retake'
+            ? 'Your captured media will be replaced. Captions and attachments will stay.'
+            : stage === 'preview'
+              ? 'Your captured media and edits will be lost.'
+              : 'Your current recording will not be saved.'
+        }
+        confirmLabel={confirmPrompt === 'retake' ? 'Retake' : 'Discard'}
+        cancelLabel={stage === 'preview' ? 'Keep editing' : 'Keep recording'}
+        onCancel={() => {
+          pendingRemovalRef.current = null;
+          setConfirmPrompt(null);
+        }}
+        onConfirm={() => {
+          if (confirmPrompt === 'retake') executeRetakeMoment();
+          else executeDiscardMoment();
+        }}
+      />
     </SafeAreaView>
   );
 }

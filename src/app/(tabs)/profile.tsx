@@ -6,7 +6,6 @@ import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -37,7 +36,7 @@ import {
 } from '@/api/social';
 import { DualMomentCard } from '@/components/moment/MomentCards';
 import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
-import { AppPressable, AppSwitch as Switch, AppTextInput, PageHeader } from '@/components/ui/ScreenKit';
+import { AppPressable, AppSwitch as Switch, AppTextInput, ConfirmModal, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
@@ -143,6 +142,11 @@ export default function ProfileScreen() {
   const [friendInput, setFriendInput] = useState('');
   const [friendRel, setFriendRel] = useState<'bestie' | 'friend'>('bestie');
   const [addingFriend, setAddingFriend] = useState(false);
+  const [pendingRemoveFriend, setPendingRemoveFriend] = useState<{
+    friendRecordId: string;
+    name: string;
+  } | null>(null);
+  const [removingFriend, setRemovingFriend] = useState(false);
 
   const bundleQuery = useQuery({
     queryKey: ['today-moment', coupleId, userId],
@@ -482,34 +486,25 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleRemoveFriend = async (friendRecordId: string, name: string) => {
-    const proceed = async () => {
-      setProfileError(null);
-      triggerHaptic();
-      try {
-        await removeFriend({ userId, friendRecordId });
-        showTemporaryFeedback(`Removed ${name} from your Friends Circle.`);
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
-          queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
-        ]);
-      } catch (err) {
-        setProfileError(err instanceof Error ? err.message : 'Could not remove friend.');
-      }
-    };
-    if (Platform.OS === 'web') {
-      if (
-        typeof globalThis.confirm === 'function' &&
-        globalThis.confirm(`Remove ${name}?\nThis removes the friend from your circle.`)
-      ) {
-        await proceed();
-      }
-      return;
+  const executeRemoveFriend = async () => {
+    if (!pendingRemoveFriend || removingFriend) return;
+    const { friendRecordId, name } = pendingRemoveFriend;
+    setProfileError(null);
+    setRemovingFriend(true);
+    triggerHaptic();
+    try {
+      await removeFriend({ userId, friendRecordId });
+      setPendingRemoveFriend(null);
+      showTemporaryFeedback(`Removed ${name} from your Friends Circle.`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
+        queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
+      ]);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Could not remove friend.');
+    } finally {
+      setRemovingFriend(false);
     }
-    Alert.alert(`Remove ${name}?`, 'This removes the friend from your circle.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => void proceed() },
-    ]);
   };
 
   const handleOpenWebsite = (rawUrl: string) => {
@@ -1436,7 +1431,7 @@ export default function ProfileScreen() {
                           <AppPressable
                             accessibilityRole="button"
                             accessibilityLabel={`Remove ${fName} from friends`}
-                            onPress={() => void handleRemoveFriend(fr.id, fName)}
+                            onPress={() => setPendingRemoveFriend({ friendRecordId: fr.id, name: fName })}
                             style={[
                               styles.friendIconBtn,
                               {
@@ -2061,6 +2056,16 @@ export default function ProfileScreen() {
           </SafeAreaView>
         </KeyboardAvoidingView>
       </Modal>
+      <ConfirmModal
+        visible={pendingRemoveFriend !== null}
+        title={pendingRemoveFriend ? `Remove ${pendingRemoveFriend.name}?` : 'Remove friend?'}
+        message="This removes the friend from your circle."
+        confirmLabel="Remove"
+        loadingLabel="Removing…"
+        loading={removingFriend}
+        onCancel={() => setPendingRemoveFriend(null)}
+        onConfirm={() => void executeRemoveFriend()}
+      />
     </SafeAreaView>
   );
 }
