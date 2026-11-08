@@ -89,9 +89,43 @@ export function useRealtimePairing() {
         for (const rawEntry of entries as unknown[]) {
           if (rawEntry && typeof rawEntry === 'object' && 'profile' in rawEntry) {
             const candidate = rawEntry.profile as UserProfile | undefined;
-            if (candidate?.id && candidate.id !== userId) {
+            if (candidate?.id) {
               await applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
-              emitDirectoryUserAnnounce(candidate);
+              if (candidate.id === userId) {
+                useSessionStore.setState({ user: candidate });
+              } else {
+                emitDirectoryUserAnnounce(candidate);
+              }
+            }
+            if (
+              'couple' in rawEntry &&
+              rawEntry.couple &&
+              typeof rawEntry.couple === 'object'
+            ) {
+              const candCouple = rawEntry.couple as {
+                id: string;
+                user_a_id: string;
+                user_b_id: string | null;
+                invite_code: string;
+                invite_expires_at: string;
+                state: 'pending' | 'active';
+                paired_at: string | null;
+                created_at: string;
+              };
+              if (
+                candCouple.state === 'active' &&
+                (candCouple.user_a_id === userId || candCouple.user_b_id === userId) &&
+                candidate &&
+                candidate.id !== userId
+              ) {
+                const currentSelf = useSessionStore.getState().user;
+                await saveCompletedPairingLocally({
+                  couple: candCouple,
+                  partner: candidate,
+                  selfProfile: currentSelf,
+                });
+                setPairing(candCouple, candidate);
+              }
             }
           }
         }
@@ -178,7 +212,7 @@ export function useRealtimePairing() {
       .on('broadcast', { event: 'RequestRecentMoments' }, (msg) => {
         const payload = msg.payload as { requesterId?: string } | undefined;
         const currentUser = useSessionStore.getState().user;
-        if (!currentUser || payload?.requesterId === currentUser.id) return;
+        if (!currentUser) return;
         void (async () => {
           const [state, friends] = await Promise.all([
             readLocalMoments(),

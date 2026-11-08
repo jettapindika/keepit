@@ -18,9 +18,7 @@ import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InteractiveCoupleMap } from '@/components/map/InteractiveCoupleMap';
 import {
-  CafeCupIcon,
   ChatBubbleIcon,
-  CloseCrossIcon,
   CoupleLinkIcon,
   CrosshairIcon,
   DirectionChevronIcon,
@@ -29,7 +27,6 @@ import {
   HistoryClockIcon,
   LiveBeaconIcon,
   MomentPinIcon,
-  ParkOverlookIcon,
 } from '@/components/map/MapIcons';
 import { InlineNotice, KeepItButton, SkeletonBlock } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
@@ -40,60 +37,22 @@ import { LocationMode, LocationShareRecord } from '@/types/database';
 const MODE_OPTIONS: {
   mode: LocationMode;
   label: string;
-  shortHint: string;
   description: string;
 }[] = [
   {
     mode: 'live',
     label: 'Live',
-    shortHint: 'Active pin',
-    description: 'Share a location pin. Use GPS check-in to refresh your device location.',
+    description: 'Share your current GPS pin.',
   },
   {
     mode: 'on_moment',
     label: 'On Moment',
-    shortHint: 'With photo',
-    description: 'Share a location with your Moments. Waits for a located Moment if no pin is available.',
+    description: 'Share location when you post a located Moment.',
   },
   {
     mode: 'ghost',
     label: 'Ghost',
-    shortHint: 'Hidden',
     description: 'Pause sharing and hide your coordinates.',
-  },
-];
-
-interface QuickCheckInOption {
-  id: 'use_gps' | 'blue_bottle' | 'dolores_park';
-  label: string;
-  placeName: string;
-  lat: number | null;
-  lng: number | null;
-  useGps?: boolean;
-}
-
-const QUICK_CHECKIN_PLACES: QuickCheckInOption[] = [
-  {
-    id: 'use_gps',
-    label: 'GPS',
-    placeName: 'GPS check-in',
-    lat: null,
-    lng: null,
-    useGps: true,
-  },
-  {
-    id: 'blue_bottle',
-    label: 'Blue Bottle',
-    placeName: 'Blue Bottle Coffee · Hayes Valley',
-    lat: 37.7763,
-    lng: -122.4232,
-  },
-  {
-    id: 'dolores_park',
-    label: 'Dolores Park',
-    placeName: 'Dolores Park Overlook',
-    lat: 37.7596,
-    lng: -122.4269,
   },
 ];
 
@@ -123,19 +82,6 @@ function ModeGlyph({
   return <GhostCloakIcon color={color} size={size} />;
 }
 
-function CheckInGlyph({
-  id,
-  color,
-  size = 18,
-}: {
-  id: QuickCheckInOption['id'];
-  color: string;
-  size?: number;
-}) {
-  if (id === 'use_gps') return <CrosshairIcon color={color} size={size} />;
-  if (id === 'blue_bottle') return <CafeCupIcon color={color} size={size} />;
-  return <ParkOverlookIcon color={color} size={size} />;
-}
 
 export default function MapScreen() {
   const queryClient = useQueryClient();
@@ -153,10 +99,7 @@ export default function MapScreen() {
   const [gpsAvailability, setGpsAvailability] = useState<
     'unknown' | 'granted' | 'denied' | 'unavailable'
   >('unknown');
-  const [pendingGpsAction, setPendingGpsAction] = useState<'live_mode' | 'checkin_gps' | null>(
-    null,
-  );
-  const [pendingPlace, setPendingPlace] = useState<QuickCheckInOption | null>(null);
+  const [pendingGpsAction, setPendingGpsAction] = useState<'live_mode' | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [notice, setNotice] = useState<{
@@ -258,35 +201,30 @@ export default function MapScreen() {
 
   const changeSharing = async (
     mode: LocationMode,
-    place?: QuickCheckInOption,
     skipPrimer = false,
   ) => {
     if (!couple || !user || saving.current || !bundle) return;
-    const needsGps = Boolean(
-      place?.useGps || (mode === 'live' && !hasCoordinates(mine) && !place),
-    );
+    const needsGps = mode === 'live' && !hasCoordinates(mine);
     if (needsGps && !gpsPrimed && !skipPrimer) {
-      setPendingPlace(null);
-      setPendingGpsAction(place ? 'checkin_gps' : 'live_mode');
+      setPendingGpsAction('live_mode');
       scroll.current?.scrollTo({ y: 0, animated: false });
       return;
     }
     saving.current = true;
     setBusy(true);
     setNotice(null);
-    setPendingPlace(null);
     setPendingGpsAction(null);
     try {
-      let lat = mode === 'ghost' ? null : place ? place.lat : mine?.lat ?? null;
-      let lng = mode === 'ghost' ? null : place ? place.lng : mine?.lng ?? null;
-      let accuracyM = mode === 'ghost' ? null : place ? null : mine?.accuracy_m ?? null;
-      let placeName = mode === 'ghost' ? null : place?.placeName ?? mine?.place_name ?? null;
+      let lat = mode === 'ghost' ? null : mine?.lat ?? null;
+      let lng = mode === 'ghost' ? null : mine?.lng ?? null;
+      let accuracyM = mode === 'ghost' ? null : mine?.accuracy_m ?? null;
+      let placeName = mode === 'ghost' ? null : mine?.place_name ?? null;
       if (needsGps) {
         const gps = await requestGps();
         lat = gps.lat;
         lng = gps.lng;
         accuracyM = gps.accuracyM;
-        placeName = `GPS check-in (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+        placeName = `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
       }
       const updated = await updateMyLocationShare({
         coupleId: couple.id,
@@ -301,9 +239,7 @@ export default function MapScreen() {
       await queryClient.invalidateQueries({ queryKey: ['couple-locations', couple.id] });
       if (mounted.current) {
         setNotice({
-          text: place
-            ? `Checked in at ${placeName}.`
-            : `Mode switched to ${formatLocationModeLabel(mode)}.`,
+          text: `Mode switched to ${formatLocationModeLabel(mode)}.`,
           tone: 'success',
         });
       }
@@ -437,14 +373,7 @@ export default function MapScreen() {
                 label="Allow GPS"
                 disabled={busy}
                 onPress={() => {
-                  const action = pendingGpsAction;
-                  void changeSharing(
-                    'live',
-                    action === 'checkin_gps'
-                      ? QUICK_CHECKIN_PLACES.find((place) => place.useGps)
-                      : undefined,
-                    true,
-                  );
+                  void changeSharing('live', true);
                 }}
               />
               <KeepItButton
@@ -489,83 +418,65 @@ export default function MapScreen() {
 
         {bundle ? (
           <>
-            {/* Unified Icon Privacy Dock + Active Pin Strip */}
+            {/* Simplified Location Sharing Mode Card */}
             <View style={[styles.compactCard, surface]}>
               <View
                 accessibilityRole="radiogroup"
                 accessibilityLabel="Location sharing mode"
-                style={styles.modeGrid}
+                style={[
+                  styles.modeGrid,
+                  {
+                    backgroundColor: colors.canvas,
+                    borderColor: colors.controlBorder,
+                    borderRadius: radii.input,
+                  },
+                ]}
               >
                 {MODE_OPTIONS.map((option) => {
                   const selected = currentMode === option.mode;
-                  const fg = selected ? colors.onAccent : colors.ink;
-                  const subFg = selected ? colors.onAccent : colors.inkMuted;
+                  const fg = selected ? colors.canvas : colors.inkMuted;
                   return (
                     <AppPressable
                       key={option.mode}
                       accessibilityRole="radio"
                       accessibilityState={{ checked: selected, disabled: !canChange, busy }}
-                      accessibilityLabel={`${option.label} mode (${option.shortHint}). ${option.description}`}
+                      accessibilityLabel={`${option.label} mode. ${option.description}`}
                       disabled={!canChange}
                       onPress={() => void changeSharing(option.mode)}
                       style={[
                         styles.modeSegment,
                         {
-                          borderColor: selected ? colors.focusRing : colors.controlBorder,
-                          borderRadius: radii.input,
-                          backgroundColor: selected ? colors.accent : colors.surfaceElevated,
+                          borderRadius: radii.input - 2,
+                          backgroundColor: selected ? colors.ink : 'transparent',
                         },
                       ]}
                     >
                       <ModeGlyph
                         mode={option.mode}
                         color={fg}
-                        accentColor={selected ? colors.onAccent : colors.success}
-                        size={22}
+                        accentColor={selected ? colors.canvas : colors.success}
+                        size={16}
                       />
                       <Text style={[styles.segmentTitle, { color: fg }]}>{option.label}</Text>
-                      <Text style={[styles.segmentHint, { color: subFg }]}>
-                        {option.shortHint}
-                      </Text>
                     </AppPressable>
                   );
                 })}
               </View>
 
-              <View
-                style={[
-                  styles.statusStrip,
-                  {
-                    backgroundColor: colors.surfaceElevated,
-                    borderRadius: radii.input,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <View style={styles.statusLeft}>
-                  <ModeGlyph
-                    mode={currentMode}
-                    color={colors.ink}
-                    accentColor={colors.success}
-                    size={18}
-                  />
-                  <View style={styles.statusCopy}>
-                    <Text numberOfLines={1} style={[styles.bodyStrong, { color: colors.ink }]}>
-                      {busy ? 'Updating pin…' : statusHeadline}
-                    </Text>
-                    <Text numberOfLines={1} style={[styles.secondary, { color: colors.inkMuted }]}>
-                      {mine?.location_updated_at
-                        ? `${formatRelativeTimeAgo(mine.location_updated_at)}`
-                        : formatLocationModeLabel(currentMode)}
-                      {gpsAvailability === 'denied'
-                        ? ' · GPS off'
-                        : gpsAvailability === 'unavailable'
-                          ? ' · GPS unavailable'
-                          : ''}
-                    </Text>
-                  </View>
-                </View>
-
+              <View style={styles.statusRowCompact}>
+                <Text numberOfLines={1} style={[styles.bodyStrong, { color: colors.ink, flex: 1 }]}>
+                  {busy ? 'Updating pin…' : statusHeadline}
+                </Text>
+                <Text numberOfLines={1} style={[styles.secondary, { color: colors.inkMuted }]}>
+                  {mine?.location_updated_at
+                    ? formatRelativeTimeAgo(mine.location_updated_at)
+                    : formatLocationModeLabel(currentMode)}
+                  {gpsAvailability === 'denied'
+                    ? ' · GPS off'
+                    : gpsAvailability === 'unavailable'
+                      ? ' · GPS unavailable'
+                      : ''}
+                </Text>
               </View>
             </View>
 
@@ -577,96 +488,6 @@ export default function MapScreen() {
               myName={user?.display_name ?? 'You'}
               partnerName={partnerName}
             />
-
-            {/* Icon Check-In Chips Row */}
-            <View style={[styles.compactCard, surface]}>
-              <View style={styles.checkinRow}>
-                {QUICK_CHECKIN_PLACES.map((place) => {
-                  const isSelected = pendingPlace?.id === place.id;
-                  const active = isSelected;
-                  const fg = active ? colors.onAccent : colors.ink;
-                  return (
-                    <AppPressable
-                      key={place.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        place.useGps
-                          ? 'Check in using device GPS'
-                          : `Check in at ${place.placeName}`
-                      }
-                      accessibilityState={{ disabled: !canChange, selected: isSelected }}
-                      disabled={!canChange}
-                      onPress={() => {
-                        setPendingPlace((current) =>
-                          current?.id === place.id ? null : place,
-                        );
-                        setPendingGpsAction(null);
-                      }}
-                      style={[
-                        styles.checkinChip,
-                        {
-                          borderColor: active ? colors.focusRing : colors.controlBorder,
-                          borderRadius: radii.input,
-                          backgroundColor: active ? colors.accent : colors.surfaceElevated,
-                        },
-                      ]}
-                    >
-                      <CheckInGlyph id={place.id} color={fg} size={18} />
-                      <Text style={[styles.chipText, { color: fg }]}>{place.label}</Text>
-                    </AppPressable>
-                  );
-                })}
-              </View>
-
-              {pendingPlace ? (
-                <View
-                  style={[
-                    styles.confirmBar,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderRadius: radii.input,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                >
-                  <View style={styles.confirmMeta}>
-                    <CheckInGlyph id={pendingPlace.id} color={colors.ink} size={18} />
-                    <View style={styles.statusCopy}>
-                      <Text style={[styles.bodyStrong, { color: colors.ink }]}>
-                        {pendingPlace.placeName}
-                      </Text>
-                      <Text style={[styles.secondary, { color: colors.inkMuted }]}>
-                        {pendingPlace.lat != null && pendingPlace.lng != null
-                          ? `${pendingPlace.lat.toFixed(4)}, ${pendingPlace.lng.toFixed(4)} · Sets Live pin`
-                          : 'Uses current GPS · Sets Live pin'}
-                      </Text>
-                    </View>
-                    <AppPressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Cancel place check-in"
-                      onPress={() => setPendingPlace(null)}
-                      style={[
-                        styles.iconActionBtn,
-                        {
-                          borderColor: colors.controlBorder,
-                          borderRadius: radii.input,
-                          backgroundColor: colors.surface,
-                        },
-                      ]}
-                    >
-                      <CloseCrossIcon color={colors.ink} size={14} />
-                    </AppPressable>
-                  </View>
-                  <KeepItButton
-                    label="Share spot"
-                    disabled={!canChange}
-                    onPress={() => {
-                      if (pendingPlace) void changeSharing('live', pendingPlace);
-                    }}
-                  />
-                </View>
-              ) : null}
-            </View>
 
             {/* Compact Circle Strip with Icon Badges & Direct Chat Button */}
             <View style={[styles.compactCard, surface]}>
@@ -937,83 +758,37 @@ const styles = StyleSheet.create({
   },
   modeGrid: {
     flexDirection: 'row',
-    gap: 8,
+    borderWidth: 1,
+    padding: 3,
+    gap: 4,
   },
   modeSegment: {
     flex: 1,
     minWidth: 0,
-    minHeight: 74,
-    paddingVertical: 10,
+    minHeight: 42,
+    paddingVertical: 8,
     paddingHorizontal: 8,
-    borderWidth: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 6,
   },
   segmentTitle: {
-    fontSize: 14,
+    fontSize: 13,
     lineHeight: 18,
-    fontWeight: '700',
-    textAlign: 'center',
+    fontWeight: '600',
   },
-  segmentHint: {
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  statusStrip: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
+  statusRowCompact: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
-  },
-  statusLeft: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    paddingHorizontal: 4,
   },
   statusCopy: {
     flex: 1,
     minWidth: 0,
     gap: 1,
-  },
-  checkinRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  checkinChip: {
-    flex: 1,
-    minWidth: 92,
-    minHeight: 44,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-  },
-  chipText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  confirmBar: {
-    padding: 12,
-    borderWidth: 1,
-    gap: 10,
-  },
-  confirmMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
   },
   sectionTitleRow: {
     flexDirection: 'row',

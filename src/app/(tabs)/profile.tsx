@@ -124,6 +124,7 @@ export default function ProfileScreen() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editConfirmOpen, setEditConfirmOpen] = useState(false);
+  const [editDropdown, setEditDropdown] = useState<'avatar' | 'pronouns' | 'song' | null>(null);
   const [editInitialSnapshot, setEditInitialSnapshot] = useState('');
   const [privateModeSaving, setPrivateModeSaving] = useState(false);
   const insets = useSafeAreaInsets();
@@ -311,6 +312,7 @@ export default function ProfileScreen() {
   const openEditProfileModal = () => {
     triggerHaptic();
     setEditError(null);
+    setEditDropdown(null);
     const initial = {
       name: user?.display_name ?? '',
       username,
@@ -993,25 +995,6 @@ export default function ProfileScreen() {
                 </AppPressable>
               </View>
 
-              {subTab === 'posts' ? (
-                <AppPressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Create New Moment Post"
-                  onPress={handleOpenCameraNewPost}
-                  style={[
-                    styles.newPostIconBtn,
-                    {
-                      backgroundColor: colors.ink,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <SymbolView
-                    name={{ ios: 'plus', android: 'add', web: 'add' }}
-                    tintColor={colors.canvas}
-                    size={17}
-                  />
-                </AppPressable>
-              ) : null}
             </View>
 
             {/* SUB-TAB 1: MY POSTS (CRUD) */}
@@ -1559,7 +1542,7 @@ export default function ProfileScreen() {
               }}>
               {editError ? <InlineNotice message={editError} tone="error" /> : null}
 
-              {/* Visual Banner & Avatar Upload Preview Card */}
+              {/* Compact Banner & Avatar Preview + Swatches */}
               <View style={{ gap: spacing.sm }}>
                 <View
                   style={[
@@ -1660,7 +1643,6 @@ export default function ProfileScreen() {
                     </View>
                   </AppPressable>
 
-                  {/* Banner Color Swatches */}
                   <View style={styles.swatchRow}>
                     {BANNER_COLOR_SWATCHES.map((hex) => {
                       const selected = draftBannerColor.toUpperCase() === hex.toUpperCase();
@@ -1694,154 +1676,152 @@ export default function ProfileScreen() {
                   </View>
                 </View>
 
-                {/* Avatar Quick Presets + Upload Chip */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ gap: spacing.sm, paddingVertical: 2 }}>
-                  <AppPressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Upload custom avatar image"
-                    onPress={() => void handleModalUpload('avatar')}
+                {/* Avatar Style Dropdown */}
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose avatar style"
+                  accessibilityState={{ expanded: editDropdown === 'avatar' }}
+                  onPress={() => setEditDropdown((cur) => (cur === 'avatar' ? null : 'avatar'))}
+                  style={[
+                    styles.dropdownTrigger,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                    },
+                  ]}>
+                  <Text style={[styles.fieldLabel, { color: colors.ink, flex: 1 }]}>
+                    Avatar:{' '}
+                    {!draftAvatarUri
+                      ? 'Monogram'
+                      : AVATAR_PRESETS.find((p) => p.uri === draftAvatarUri)?.label ?? 'Custom Photo'}
+                  </Text>
+                  <SymbolView
+                    name={
+                      editDropdown === 'avatar'
+                        ? { ios: 'chevron.up', android: 'expand_less', web: 'expand_less' }
+                        : { ios: 'chevron.down', android: 'expand_more', web: 'expand_more' }
+                    }
+                    tintColor={colors.inkMuted}
+                    size={16}
+                  />
+                </AppPressable>
+                {editDropdown === 'avatar' ? (
+                  <View
                     style={[
-                      styles.avatarPresetChip,
+                      styles.dropdownMenu,
                       {
-                        backgroundColor: colors.surfaceElevated,
-                        borderColor: colors.controlBorder,
-                        borderRadius: radii.pill,
+                        backgroundColor: colors.surface,
+                        borderColor: colors.border,
+                        borderRadius: radii.input,
                       },
                     ]}>
-                    <SymbolView
-                      name={{ ios: 'arrow.up.circle.fill', android: 'file_upload', web: 'file_upload' }}
-                      tintColor={colors.ink}
-                      size={15}
-                    />
-                    <Text style={[styles.avatarPresetChipText, { color: colors.ink }]}>
-                      Upload
-                    </Text>
-                  </AppPressable>
-
-                  <AppPressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Use Monogram Avatar"
-                    onPress={() => {
-                      triggerHaptic();
-                      setDraftAvatarUri('');
-                    }}
-                    style={[
-                      styles.avatarPresetChip,
-                      {
-                        backgroundColor: !draftAvatarUri ? colors.ink : colors.surface,
-                        borderColor: !draftAvatarUri ? colors.ink : colors.border,
-                        borderRadius: radii.pill,
-                      },
-                    ]}>
-                    <Text
+                    <AppPressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Upload custom avatar image"
+                      onPress={() => {
+                        setEditDropdown(null);
+                        void handleModalUpload('avatar');
+                      }}
+                      style={styles.dropdownOption}>
+                      <Text style={{ color: colors.ink, fontSize: 14, fontWeight: '600', flex: 1 }}>
+                        Upload from device…
+                      </Text>
+                      <SymbolView
+                        name={{ ios: 'arrow.up.circle', android: 'file_upload', web: 'file_upload' }}
+                        tintColor={colors.inkMuted}
+                        size={16}
+                      />
+                    </AppPressable>
+                    <AppPressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: !draftAvatarUri }}
+                      accessibilityLabel="Use Monogram Avatar"
+                      onPress={() => {
+                        triggerHaptic();
+                        setDraftAvatarUri('');
+                        setEditDropdown(null);
+                      }}
                       style={[
-                        styles.avatarPresetChipText,
-                        { color: !draftAvatarUri ? colors.canvas : colors.ink },
+                        styles.dropdownOption,
+                        !draftAvatarUri && { backgroundColor: colors.surfaceElevated, borderRadius: radii.input - 2 },
                       ]}>
-                      Monogram
-                    </Text>
-                  </AppPressable>
-
-                  {AVATAR_PRESETS.map((preset) => {
-                    const selected = draftAvatarUri === preset.uri;
-                    return (
-                      <AppPressable
-                        key={preset.id}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Select avatar preset ${preset.label}`}
-                        onPress={() => {
-                          triggerHaptic();
-                          setDraftAvatarUri(preset.uri);
-                        }}
-                        style={[
-                          styles.avatarPresetChip,
-                          {
-                            backgroundColor: selected ? colors.ink : colors.surface,
-                            borderColor: selected ? colors.ink : colors.border,
-                            borderRadius: radii.pill,
-                          },
-                        ]}>
-                        <Image
-                          source={{ uri: preset.uri }}
-                          contentFit="cover"
-                          style={styles.presetMiniAvatar}
-                        />
-                        <Text
+                      <Text style={{ color: colors.ink, fontSize: 14, fontWeight: !draftAvatarUri ? '700' : '500', flex: 1 }}>
+                        Monogram ({monogram})
+                      </Text>
+                      {!draftAvatarUri ? (
+                        <SymbolView name={{ ios: 'checkmark', android: 'check', web: 'check' }} tintColor={colors.ink} size={15} />
+                      ) : null}
+                    </AppPressable>
+                    {AVATAR_PRESETS.map((preset) => {
+                      const selected = draftAvatarUri === preset.uri;
+                      return (
+                        <AppPressable
+                          key={preset.id}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
+                          accessibilityLabel={`Select avatar preset ${preset.label}`}
+                          onPress={() => {
+                            triggerHaptic();
+                            setDraftAvatarUri(preset.uri);
+                            setEditDropdown(null);
+                          }}
                           style={[
-                            styles.avatarPresetChipText,
-                            { color: selected ? colors.canvas : colors.ink },
+                            styles.dropdownOption,
+                            selected && { backgroundColor: colors.surfaceElevated, borderRadius: radii.input - 2 },
                           ]}>
-                          {preset.label}
-                        </Text>
-                      </AppPressable>
-                    );
-                  })}
-                </ScrollView>
+                          <Text style={{ color: colors.ink, fontSize: 14, fontWeight: selected ? '700' : '500', flex: 1 }}>
+                            {preset.label}
+                          </Text>
+                          {selected ? (
+                            <SymbolView name={{ ios: 'checkmark', android: 'check', web: 'check' }} tintColor={colors.ink} size={15} />
+                          ) : null}
+                        </AppPressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
               </View>
 
-              {/* Identity Inputs with Icons */}
+              {/* Clean Identity Fields + Dropdowns */}
               <View style={{ gap: spacing.sm }}>
-                <View style={styles.iconInputRow}>
-                  <View style={[styles.inputLeadIcon, { backgroundColor: colors.surface }]}>
-                    <SymbolView
-                      name={{ ios: 'person.fill', android: 'person', web: 'person' }}
-                      tintColor={colors.inkMuted}
-                      size={16}
-                    />
-                  </View>
-                  <AppTextInput
-                    accessibilityLabel="Display Name"
-                    value={draftName}
-                    onChangeText={setDraftName}
-                    maxLength={40}
-                    placeholder="Display name"
-                    placeholderTextColor={colors.placeholder}
-                    style={[
-                      styles.modalInput,
-                      {
-                        flex: 1,
-                        backgroundColor: colors.surface,
-                        borderColor: colors.controlBorder,
-                        color: colors.ink,
-                        borderRadius: radii.input,
-                      },
-                    ]}
-                  />
-                </View>
+                <AppTextInput
+                  accessibilityLabel="Display Name"
+                  value={draftName}
+                  onChangeText={setDraftName}
+                  maxLength={40}
+                  placeholder="Display name"
+                  placeholderTextColor={colors.placeholder}
+                  style={[
+                    styles.modalInput,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.controlBorder,
+                      color: colors.ink,
+                      borderRadius: radii.input,
+                    },
+                  ]}
+                />
 
-                <View style={styles.iconInputRow}>
-                  <View style={[styles.inputLeadIcon, { backgroundColor: colors.surface }]}>
-                    <SymbolView
-                      name={{ ios: 'at', android: 'alternate_email', web: 'alternate_email' }}
-                      tintColor={colors.inkMuted}
-                      size={16}
-                    />
-                  </View>
-                  <AppTextInput
-                    accessibilityLabel="Username handle"
-                    value={draftUsername}
-                    onChangeText={setDraftUsername}
-                    maxLength={24}
-                    autoCapitalize="none"
-                    placeholder="username"
-                    placeholderTextColor={colors.placeholder}
-                    style={[
-                      styles.modalInput,
-                      {
-                        flex: 1,
-                        backgroundColor: colors.surface,
-                        borderColor: colors.controlBorder,
-                        color: colors.ink,
-                        borderRadius: radii.input,
-                      },
-                    ]}
-                  />
-                </View>
+                <AppTextInput
+                  accessibilityLabel="Username handle"
+                  value={draftUsername}
+                  onChangeText={setDraftUsername}
+                  maxLength={24}
+                  autoCapitalize="none"
+                  placeholder="@username"
+                  placeholderTextColor={colors.placeholder}
+                  style={[
+                    styles.modalInput,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.controlBorder,
+                      color: colors.ink,
+                      borderRadius: radii.input,
+                    },
+                  ]}
+                />
 
-                {/* Bio */}
                 <View style={{ gap: 4 }}>
                   <AppTextInput
                     accessibilityLabel="Profile bio"
@@ -1867,140 +1847,205 @@ export default function ProfileScreen() {
                   </Text>
                 </View>
 
-                {/* Pronouns */}
-                <View style={styles.chipWrapRow}>
-                  {PRONOUN_PRESETS.map((p) => {
-                    const selected = draftPronouns === p;
-                    return (
-                      <AppPressable
-                        key={p}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Pronouns ${p}`}
-                        onPress={() => {
-                          triggerHaptic();
-                          setDraftPronouns(selected ? '' : p);
-                        }}
-                        style={[
-                          styles.presetSmallChip,
-                          {
-                            backgroundColor: selected ? colors.ink : colors.surface,
-                            borderColor: selected ? colors.ink : colors.border,
-                            borderRadius: radii.pill,
-                          },
-                        ]}>
-                        <Text
+                {/* Pronouns Dropdown */}
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose pronouns"
+                  accessibilityState={{ expanded: editDropdown === 'pronouns' }}
+                  onPress={() => setEditDropdown((cur) => (cur === 'pronouns' ? null : 'pronouns'))}
+                  style={[
+                    styles.dropdownTrigger,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                    },
+                  ]}>
+                  <Text style={[styles.fieldLabel, { color: draftPronouns ? colors.ink : colors.inkMuted, flex: 1 }]}>
+                    {draftPronouns ? `Pronouns: ${draftPronouns}` : 'Pronouns (optional)'}
+                  </Text>
+                  <SymbolView
+                    name={
+                      editDropdown === 'pronouns'
+                        ? { ios: 'chevron.up', android: 'expand_less', web: 'expand_less' }
+                        : { ios: 'chevron.down', android: 'expand_more', web: 'expand_more' }
+                    }
+                    tintColor={colors.inkMuted}
+                    size={16}
+                  />
+                </AppPressable>
+                {editDropdown === 'pronouns' ? (
+                  <View
+                    style={[
+                      styles.dropdownMenu,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.border,
+                        borderRadius: radii.input,
+                      },
+                    ]}>
+                    <AppPressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: !draftPronouns }}
+                      accessibilityLabel="No pronouns"
+                      onPress={() => {
+                        triggerHaptic();
+                        setDraftPronouns('');
+                        setEditDropdown(null);
+                      }}
+                      style={[
+                        styles.dropdownOption,
+                        !draftPronouns && { backgroundColor: colors.surfaceElevated, borderRadius: radii.input - 2 },
+                      ]}>
+                      <Text style={{ color: colors.inkMuted, fontSize: 14, flex: 1 }}>None</Text>
+                    </AppPressable>
+                    {PRONOUN_PRESETS.map((p) => {
+                      const selected = draftPronouns === p;
+                      return (
+                        <AppPressable
+                          key={p}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
+                          accessibilityLabel={`Pronouns ${p}`}
+                          onPress={() => {
+                            triggerHaptic();
+                            setDraftPronouns(p);
+                            setEditDropdown(null);
+                          }}
                           style={[
-                            styles.presetSmallChipText,
-                            { color: selected ? colors.canvas : colors.ink },
+                            styles.dropdownOption,
+                            selected && { backgroundColor: colors.surfaceElevated, borderRadius: radii.input - 2 },
                           ]}>
-                          {p}
-                        </Text>
-                      </AppPressable>
-                    );
-                  })}
-                </View>
+                          <Text style={{ color: colors.ink, fontSize: 14, fontWeight: selected ? '700' : '500', flex: 1 }}>
+                            {p}
+                          </Text>
+                          {selected ? (
+                            <SymbolView name={{ ios: 'checkmark', android: 'check', web: 'check' }} tintColor={colors.ink} size={15} />
+                          ) : null}
+                        </AppPressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
 
-                {/* Mood Song */}
-                <View style={{ gap: 6 }}>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: spacing.sm, paddingVertical: 2 }}>
+                {/* Mood Song Dropdown */}
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose mood song"
+                  accessibilityState={{ expanded: editDropdown === 'song' }}
+                  onPress={() => setEditDropdown((cur) => (cur === 'song' ? null : 'song'))}
+                  style={[
+                    styles.dropdownTrigger,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                    },
+                  ]}>
+                  <Text numberOfLines={1} style={[styles.fieldLabel, { color: draftMoodSong ? colors.ink : colors.inkMuted, flex: 1 }]}>
+                    {draftMoodSong ? `Mood song: ${draftMoodSong}` : 'Mood song (optional)'}
+                  </Text>
+                  <SymbolView
+                    name={
+                      editDropdown === 'song'
+                        ? { ios: 'chevron.up', android: 'expand_less', web: 'expand_less' }
+                        : { ios: 'chevron.down', android: 'expand_more', web: 'expand_more' }
+                    }
+                    tintColor={colors.inkMuted}
+                    size={16}
+                  />
+                </AppPressable>
+                {editDropdown === 'song' ? (
+                  <View
+                    style={[
+                      styles.dropdownMenu,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.border,
+                        borderRadius: radii.input,
+                      },
+                    ]}>
+                    <AppPressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: !draftMoodSong }}
+                      accessibilityLabel="No mood song"
+                      onPress={() => {
+                        triggerHaptic();
+                        setDraftMoodSong('');
+                        setEditDropdown(null);
+                      }}
+                      style={[
+                        styles.dropdownOption,
+                        !draftMoodSong && { backgroundColor: colors.surfaceElevated, borderRadius: radii.input - 2 },
+                      ]}>
+                      <Text style={{ color: colors.inkMuted, fontSize: 14, flex: 1 }}>None</Text>
+                    </AppPressable>
                     {CURATED_MUSIC_TRACKS.map((trk) => {
                       const label = `${trk.title} · ${trk.artist}`;
                       const selected = draftMoodSong === label || draftMoodSong === trk.title;
                       return (
                         <AppPressable
                           key={trk.id}
-                          accessibilityRole="button"
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
                           accessibilityLabel={`Pick mood song ${label}`}
                           onPress={() => {
                             triggerHaptic();
-                            setDraftMoodSong(selected ? '' : label);
+                            setDraftMoodSong(label);
+                            setEditDropdown(null);
                           }}
                           style={[
-                            styles.songPresetChip,
-                            {
-                              backgroundColor: selected ? colors.accent : colors.surface,
-                              borderColor: selected ? colors.accent : colors.border,
-                              borderRadius: radii.pill,
-                            },
+                            styles.dropdownOption,
+                            selected && { backgroundColor: colors.surfaceElevated, borderRadius: radii.input - 2 },
                           ]}>
-                          <SymbolView
-                            name={{ ios: 'music.note', android: 'music_note', web: 'music_note' }}
-                            tintColor={selected ? colors.onAccent : colors.inkMuted}
-                            size={13}
-                          />
-                          <Text
-                            style={[
-                              styles.songPresetChipText,
-                              { color: selected ? colors.onAccent : colors.ink },
-                            ]}>
-                            {trk.title}
+                          <Text style={{ color: colors.ink, fontSize: 14, fontWeight: selected ? '700' : '500', flex: 1 }}>
+                            {label}
                           </Text>
+                          {selected ? (
+                            <SymbolView name={{ ios: 'checkmark', android: 'check', web: 'check' }} tintColor={colors.ink} size={15} />
+                          ) : null}
                         </AppPressable>
                       );
                     })}
-                  </ScrollView>
-
-                  <View style={styles.iconInputRow}>
-                    <View style={[styles.inputLeadIcon, { backgroundColor: colors.surface }]}>
-                      <SymbolView
-                        name={{ ios: 'music.note', android: 'music_note', web: 'music_note' }}
-                        tintColor={colors.inkMuted}
-                        size={16}
-                      />
-                    </View>
                     <AppTextInput
                       accessibilityLabel="Custom Mood Song"
                       value={draftMoodSong}
                       onChangeText={setDraftMoodSong}
                       maxLength={60}
-                      placeholder="Mood track"
+                      placeholder="Or type custom track…"
                       placeholderTextColor={colors.placeholder}
                       style={[
                         styles.modalInput,
                         {
-                          flex: 1,
-                          backgroundColor: colors.surface,
+                          backgroundColor: colors.surfaceElevated,
                           borderColor: colors.controlBorder,
                           color: colors.ink,
                           borderRadius: radii.input,
+                          marginTop: 4,
                         },
                       ]}
                     />
                   </View>
-                </View>
+                ) : null}
 
-                {/* Website Link */}
-                <View style={styles.iconInputRow}>
-                  <View style={[styles.inputLeadIcon, { backgroundColor: colors.surface }]}>
-                    <SymbolView
-                      name={{ ios: 'link', android: 'link', web: 'link' }}
-                      tintColor={colors.inkMuted}
-                      size={16}
-                    />
-                  </View>
-                  <AppTextInput
-                    accessibilityLabel="Website link"
-                    value={draftWebsite}
-                    onChangeText={setDraftWebsite}
-                    maxLength={80}
-                    autoCapitalize="none"
-                    placeholder="Website link"
-                    placeholderTextColor={colors.placeholder}
-                    style={[
-                      styles.modalInput,
-                      {
-                        flex: 1,
-                        backgroundColor: colors.surface,
-                        borderColor: colors.controlBorder,
-                        color: colors.ink,
-                        borderRadius: radii.input,
-                      },
-                    ]}
-                  />
-                </View>
+                <AppTextInput
+                  accessibilityLabel="Website link"
+                  value={draftWebsite}
+                  onChangeText={setDraftWebsite}
+                  maxLength={80}
+                  autoCapitalize="none"
+                  placeholder="Website link (optional)"
+                  placeholderTextColor={colors.placeholder}
+                  style={[
+                    styles.modalInput,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.controlBorder,
+                      color: colors.ink,
+                      borderRadius: radii.input,
+                    },
+                  ]}
+                />
               </View>
 
               {/* Clean Icon-Only Toggles in Modal */}
@@ -2173,15 +2218,16 @@ const styles = StyleSheet.create({
   },
   avatarHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: -42,
+    paddingTop: 12,
   },
   avatarOuterRing: {
     width: 88,
     height: 88,
     borderRadius: 44,
     borderWidth: 4,
+    marginTop: -54,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2591,6 +2637,30 @@ const styles = StyleSheet.create({
     height: 76,
     paddingTop: 11,
     textAlignVertical: 'top',
+  },
+  dropdownTrigger: {
+    minHeight: 46,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  dropdownMenu: {
+    borderWidth: 1,
+    padding: 6,
+    gap: 2,
+  },
+  dropdownOption: {
+    minHeight: 42,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   chipWrapRow: {
     flexDirection: 'row',

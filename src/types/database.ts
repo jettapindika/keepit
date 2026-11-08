@@ -2,6 +2,7 @@ export type CoupleState = 'pending' | 'active';
 export type LocationMode = 'live' | 'on_moment' | 'ghost';
 export type StatusDurationPreset = '1h' | '3h' | 'tonight';
 export type PostVisibility = 'partner' | 'friends' | 'everyone';
+export type WidgetLayoutMode = 'partner_only' | 'side_by_side';
 export type MomentFilterPreset =
   | 'normal'
   | 'warm_film'
@@ -149,7 +150,7 @@ export interface DailyPromptRecord {
   notified_at: string | null;
 }
 
-export const MAX_DAILY_MOMENTS_PER_DAY = 5;
+export const MAX_DAILY_MOMENTS_PER_DAY = Number.MAX_SAFE_INTEGER;
 export const PROMPT_WINDOW_SECONDS = 300;
 
 export interface MomentRecord {
@@ -351,4 +352,8 @@ export interface WidgetSnapshotPayload {
   locationLabel?: string | null;
   musicTitle?: string | null;
   pinnedToHomeScreen?: boolean;
+  myPhotoUri?: string | null;
+  myFrontPhotoUri?: string | null;
+  myName?: string | null;
+  widgetLayout?: WidgetLayoutMode;
 }

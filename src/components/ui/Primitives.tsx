@@ -307,45 +307,75 @@ export function InlineNotice({
 }
 
 /**
- * KeepIt dual-lens squircle motif styled in Mochy-Music's high-contrast `PageBadge` aesthetic
+ * KeepIt dual-frame emblem: overlapping back & front camera frames with a clean viewfinder aperture.
  */
 export function DualFrameMark({ size = 56 }: { size?: number }) {
   const { colors } = useKeepItTheme();
-  const pipW = Math.round(size * 0.42);
-  const pipH = Math.round(size * 0.54);
+  const backW = Math.round(size * 0.68);
+  const backH = Math.round(size * 0.84);
+  const frontW = Math.round(size * 0.46);
+  const frontH = Math.round(size * 0.58);
+  const lensSize = Math.max(8, Math.round(size * 0.2));
 
   return (
     <View
       accessible={false}
       style={{
         width: size,
-        height: Math.round(size * 1.16),
-        borderRadius: Math.round(size * 0.34),
-        borderCurve: 'continuous',
-        backgroundColor: colors.surface,
-        borderWidth: 1.5,
-        borderColor: colors.border,
-        padding: Math.round(size * 0.13),
-        justifyContent: 'space-between',
+        height: size,
+        position: 'relative',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}>
+      {/* Rear frame */}
       <View
         style={{
-          width: pipW,
-          height: pipH,
-          borderRadius: Math.round(size * 0.18),
+          width: backW,
+          height: backH,
+          borderRadius: Math.round(size * 0.22),
           borderCurve: 'continuous',
-          backgroundColor: colors.badgeBg,
-        }}
-      />
+          backgroundColor: colors.surfaceElevated,
+          borderWidth: 1.5,
+          borderColor: colors.ink,
+          alignItems: 'center',
+          justifyContent: 'center',
+          transform: [{ translateX: Math.round(size * 0.08) }, { translateY: Math.round(size * 0.04) }],
+        }}>
+        <View
+          style={{
+            width: lensSize,
+            height: lensSize,
+            borderRadius: Math.round(lensSize / 2),
+            borderWidth: 1.5,
+            borderColor: colors.inkMuted,
+          }}
+        />
+      </View>
+      {/* Front overlapping PIP frame */}
       <View
         style={{
-          alignSelf: 'flex-end',
-          width: 8,
-          height: 8,
-          borderRadius: 4,
+          position: 'absolute',
+          top: Math.round(size * 0.06),
+          left: Math.round(size * 0.08),
+          width: frontW,
+          height: frontH,
+          borderRadius: Math.round(size * 0.16),
+          borderCurve: 'continuous',
           backgroundColor: colors.ink,
-        }}
-      />
+          borderWidth: 2,
+          borderColor: colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        <View
+          style={{
+            width: Math.max(5, Math.round(size * 0.1)),
+            height: Math.max(5, Math.round(size * 0.1)),
+            borderRadius: 99,
+            backgroundColor: colors.canvas,
+          }}
+        />
+      </View>
     </View>
   );
 }
@@ -390,7 +420,6 @@ export function KeepItWatermarkLogo({
         style: {
           display: 'block',
           flexShrink: 0,
-          filter: 'drop-shadow(0px 1px 4px rgba(0, 0, 0, 0.85))',
         },
       },
       React.createElement('title', null, '#keepit'),
@@ -410,10 +439,6 @@ export function KeepItWatermarkLogo({
         {
           width,
           height: resolvedHeight,
-          shadowColor: '#000000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.85,
-          shadowRadius: 3,
         },
         style,
       ]}>

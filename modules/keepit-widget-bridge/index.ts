@@ -92,8 +92,25 @@ export async function syncWidgetSnapshot(payload: WidgetSnapshotPayload): Promis
         'widget-front'
       );
     }
+    if (
+      sanitizedPayload.myPhotoUri?.startsWith('data:') &&
+      sanitizedPayload.myPhotoUri.length > 90_000
+    ) {
+      sanitizedPayload.myPhotoUri = await spillDataUriToFileIfLarge(
+        sanitizedPayload.myPhotoUri,
+        'widget-mine-back'
+      );
+    }
+    if (
+      sanitizedPayload.myFrontPhotoUri?.startsWith('data:') &&
+      sanitizedPayload.myFrontPhotoUri.length > 90_000
+    ) {
+      sanitizedPayload.myFrontPhotoUri = await spillDataUriToFileIfLarge(
+        sanitizedPayload.myFrontPhotoUri,
+        'widget-mine-front'
+      );
+    }
   }
-
   const serialized = JSON.stringify(sanitizedPayload);
   await safeSetStorageItem(WIDGET_SNAPSHOT_STORAGE_KEY, serialized);
 

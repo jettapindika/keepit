@@ -4,7 +4,7 @@ import { fetchPairingSnapshot, upsertUserProfile } from '@/api/pairing';
 import { getAuthRedirectUrl, isSupabaseConfigured, supabase } from '@/api/supabase';
 import { AnimationSpeed } from '@/theme/motion';
 import { ThemeMode } from '@/theme/tokens';
-import { CoupleRecord, UserProfile } from '@/types/database';
+import { CoupleRecord, UserProfile, WidgetLayoutMode } from '@/types/database';
 import {
   safeClearAllStorage,
   safeGetStorageItem,
@@ -53,6 +53,8 @@ interface UserMetadataProfileHints {
   pronouns?: string;
   moodSong?: string;
   bannerColor?: string;
+  bannerPath?: string | null;
+  avatarPath?: string | null;
   website?: string;
   isPrivate?: boolean;
   dumpMode?: boolean;
@@ -71,6 +73,8 @@ function extractUserMetadataProfileHints(
     pronouns: typeof metadata.pronouns === 'string' ? metadata.pronouns : undefined,
     moodSong: typeof metadata.mood_song === 'string' ? metadata.mood_song : undefined,
     bannerColor: typeof metadata.banner_color === 'string' ? metadata.banner_color : undefined,
+    bannerPath: typeof metadata.banner_path === 'string' ? metadata.banner_path : undefined,
+    avatarPath: typeof metadata.avatar_path === 'string' ? metadata.avatar_path : undefined,
     website: typeof metadata.website === 'string' ? metadata.website : undefined,
     isPrivate: typeof metadata.is_private === 'boolean' ? metadata.is_private : undefined,
     dumpMode: typeof metadata.dump_mode === 'boolean' ? metadata.dump_mode : undefined,
@@ -134,6 +138,7 @@ interface PersistedSessionSlice {
   themePreference: ThemeMode;
   motionEnabled: boolean;
   motionSpeed: AnimationSpeed;
+  widgetLayout?: WidgetLayoutMode;
 }
 
 interface SessionState {
@@ -145,6 +150,7 @@ interface SessionState {
   themePreference: ThemeMode;
   motionEnabled: boolean;
   motionSpeed: AnimationSpeed;
+  widgetLayout: WidgetLayoutMode;
   pendingInviteCode: string | null;
   hydrate: () => Promise<void>;
   consumeAuthRedirectUrl: (url: string) => Promise<boolean>;
@@ -177,6 +183,7 @@ interface SessionState {
   setThemePreference: (mode: ThemeMode) => Promise<void>;
   setMotionEnabled: (enabled: boolean) => Promise<void>;
   setMotionSpeed: (speed: AnimationSpeed) => Promise<void>;
+  setWidgetLayout: (layout: WidgetLayoutMode) => Promise<void>;
   setPendingInviteCode: (code: string | null) => void;
   signOut: () => Promise<void>;
   wipeLocalAccount: () => Promise<void>;
@@ -264,6 +271,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   themePreference: 'dark',
   motionEnabled: true,
   motionSpeed: 1,
+  widgetLayout: 'side_by_side',
   pendingInviteCode: null,
 
   hydrate: async () => {
@@ -292,6 +300,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       if (saved?.motionSpeed) {
         set({ motionSpeed: saved.motionSpeed });
+      }
+      if (saved?.widgetLayout === 'partner_only' || saved?.widgetLayout === 'side_by_side') {
+        set({ widgetLayout: saved.widgetLayout });
       }
 
       if (isSupabaseConfigured && supabase) {
@@ -667,16 +678,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     let metaHints: UserMetadataProfileHints = {};
+    let existingRemoteProfile: UserProfile | null = null;
     if (isSupabaseConfigured && supabase) {
       const { data: sessionData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
       metaHints = extractUserMetadataProfileHints(sessionData?.user?.user_metadata);
+      try {
+        const { data: remoteRow, error: remoteErr } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        if (!remoteErr && remoteRow) {
+          existingRemoteProfile = remoteRow as UserProfile;
+        }
+      } catch {
+        // Fall back to upsert with metadata hints
+      }
     }
 
-    const profile = await upsertUserProfile({
-      userId,
-      displayName,
-      ...metaHints,
-    });
+    const profile =
+      existingRemoteProfile ??
+      (await upsertUserProfile({
+        userId,
+        displayName,
+        ...metaHints,
+      }));
     const pairing = await fetchPairingSnapshot(userId);
     const soloFallbackCouple: CoupleRecord =
       pairing.couple ?? buildSoloFallbackCouple(userId, profile.created_at);
@@ -802,6 +828,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       themePreference: get().themePreference,
       motionEnabled: get().motionEnabled,
       motionSpeed: speed,
+    });
+  },
+
+  setWidgetLayout: async (layout: WidgetLayoutMode) => {
+    set({ widgetLayout: layout });
+    await persistSessionSlice({
+      user: get().user,
+      email: get().email,
+      themePreference: get().themePreference,
+      motionEnabled: get().motionEnabled,
+      motionSpeed: get().motionSpeed,
+      widgetLayout: layout,
     });
   },
 

@@ -49,6 +49,9 @@ data class WidgetSnapshotData(
   val updatedAt: String,
   val locationLabel: String?,
   val musicTitle: String?,
+  val myPhotoUri: String? = null,
+  val myName: String? = null,
+  val widgetLayout: String? = "side_by_side",
 )
 
 class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
@@ -103,11 +106,13 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     thread(start = true) {
       try {
         val snapshot = readSnapshot(context)
-        val photoBitmap = loadMomentBitmap(snapshot)
+        val photoBitmap = loadUriBitmap(snapshot?.takeIf { !it.momentLocked }?.momentPhotoUri)
+        val myPhotoBitmap = loadUriBitmap(snapshot?.myPhotoUri)
         val cardBitmap = drawMochyWidgetBitmap(
           context = context,
           snapshot = snapshot,
           photo = photoBitmap,
+          myPhoto = myPhotoBitmap,
           isMedium = isMedium,
           widthDp = if (isMedium) 300 else 155,
           heightDp = minHeightDp.coerceIn(135, 165)
@@ -172,6 +177,7 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     context: Context,
     snapshot: WidgetSnapshotData?,
     photo: Bitmap?,
+    myPhoto: Bitmap?,
     isMedium: Boolean,
     widthDp: Int,
     heightDp: Int
@@ -201,48 +207,49 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     canvas.clipPath(clipPath)
 
     val isLocked = snapshot?.momentLocked == true
+    val isSideBySide = snapshot?.widgetLayout != "partner_only" && (myPhoto != null || photo != null)
 
-    if (photo != null && !isLocked) {
+    canvas.drawColor(Color.parseColor("#111113"))
+
+    if (isSideBySide && !isLocked) {
+      val gap = 4f * density
+      val leftRect = RectF(0f, 0f, (w / 2f) - (gap / 2f), h.toFloat())
+      val rightRect = RectF((w / 2f) + (gap / 2f), 0f, w.toFloat(), h.toFloat())
+      if (myPhoto != null) {
+        drawCenterCropBitmap(canvas, myPhoto, leftRect)
+      } else {
+        val emptyPaint = Paint().apply { color = Color.parseColor("#1C1C1F") }
+        canvas.drawRect(leftRect, emptyPaint)
+      }
+      if (photo != null) {
+        drawCenterCropBitmap(canvas, photo, rightRect)
+      } else {
+        val emptyPaint = Paint().apply { color = Color.parseColor("#1C1C1F") }
+        canvas.drawRect(rightRect, emptyPaint)
+      }
+      val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = LinearGradient(
+          0f, 0f, 0f, h.toFloat(),
+          intArrayOf(Color.argb(120, 10, 10, 12), Color.argb(20, 10, 10, 12), Color.argb(180, 10, 10, 12)),
+          floatArrayOf(0f, 0.45f, 1f),
+          Shader.TileMode.CLAMP
+        )
+      }
+      canvas.drawRect(cardRect, scrimPaint)
+    } else if (photo != null && !isLocked) {
       drawCenterCropBitmap(canvas, photo, cardRect)
       val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         shader = LinearGradient(
-          0f,
-          0f,
-          0f,
-          h.toFloat(),
-          intArrayOf(
-            Color.argb(145, 10, 10, 14),
-            Color.argb(40, 10, 10, 14),
-            Color.argb(195, 10, 10, 14)
-          ),
+          0f, 0f, 0f, h.toFloat(),
+          intArrayOf(Color.argb(120, 10, 10, 12), Color.argb(20, 10, 10, 12), Color.argb(180, 10, 10, 12)),
           floatArrayOf(0f, 0.45f, 1f),
           Shader.TileMode.CLAMP
         )
       }
       canvas.drawRect(cardRect, scrimPaint)
     } else if (isLocked) {
-      val lockedBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = LinearGradient(
-          0f,
-          0f,
-          w.toFloat(),
-          h.toFloat(),
-          intArrayOf(
-            Color.parseColor("#18181F"),
-            Color.parseColor("#241F2E"),
-            Color.parseColor("#141418")
-          ),
-          floatArrayOf(0f, 0.55f, 1f),
-          Shader.TileMode.CLAMP
-        )
-      }
-      canvas.drawRect(cardRect, lockedBgPaint)
       drawLockedMotif(canvas, w.toFloat(), h.toFloat(), density)
-    } else {
-      // Rich stylized warm coffee / sunlight illustration when photo is null & unlocked
-      drawWarmSunlightCoffeeScene(canvas, w.toFloat(), h.toFloat(), density, isMedium)
     }
-
     val pad = 14f * density
     val titleText = snapshot?.partnerName?.takeIf { it.isNotBlank() } ?: "KeepIt"
     val streakCount = snapshot?.streakCount ?: 0
@@ -251,7 +258,7 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
 
     // Top row: Partner Name + Streak pill (or time ago)
     val streakBadgeWidth = if (streakCount > 0) {
-      drawStreakPill(canvas, "${streakCount}d 🔥", w - pad, pad, density, scaledDensity)
+      drawStreakPill(canvas, "${streakCount}d", w - pad, pad, density, scaledDensity)
     } else {
       drawTimePill(canvas, timeLabel, w - pad, pad, density, scaledDensity)
     }
@@ -259,9 +266,8 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     val maxTitleWidth = (w - pad * 2f - streakBadgeWidth - 8f * density).coerceAtLeast(60f * density)
     val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.WHITE
-      textSize = (if (isMedium) 16f else 14.5f) * scaledDensity
+      textSize = (if (isMedium) 15f else 14f) * scaledDensity
       typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-      setShadowLayer(6f * density, 0f, 2f * density, Color.argb(120, 0, 0, 0))
     }
     val ellipsizedTitle = TextUtils.ellipsize(
       titleText,
@@ -292,7 +298,6 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
       color = Color.argb(235, 255, 255, 255)
       textSize = 9f * scaledDensity
       typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-      setShadowLayer(4f * density, 0f, 1.5f * density, Color.argb(210, 0, 0, 0))
     }
     val wmTimeWidth = wmTimePaint.measureText(wmTimeText)
     val wmGap = 2.5f * density
@@ -320,15 +325,14 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
       snapshot == null -> "Tap to pair & share Moments"
       isLocked -> "Moment locked · Tap to post yours"
       !snapshot.momentCaption.isNullOrBlank() -> snapshot.momentCaption
-      !snapshot.locationLabel.isNullOrBlank() -> "📍 ${snapshot.locationLabel}"
-      else -> "Captured today's Moment ✨"
+      !snapshot.locationLabel.isNullOrBlank() -> snapshot.locationLabel
+      else -> "Captured today's Moment"
     }
 
     val subPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.argb(235, 255, 255, 255)
-      textSize = (if (isMedium) 12.5f else 11.5f) * scaledDensity
+      textSize = (if (isMedium) 12f else 11f) * scaledDensity
       typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-      setShadowLayer(5f * density, 0f, 1.5f * density, Color.argb(140, 0, 0, 0))
     }
 
     if (isMedium) {
@@ -741,15 +745,17 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
         updatedAt = json.optString("updatedAt", ""),
         locationLabel = json.optStringOrNull("locationLabel"),
         musicTitle = json.optStringOrNull("musicTitle"),
+        myPhotoUri = json.optStringOrNull("myPhotoUri"),
+        myName = json.optStringOrNull("myName"),
+        widgetLayout = json.optStringOrNull("widgetLayout") ?: "side_by_side",
       )
     } catch (_: Throwable) {
       null
     }
   }
 
-  private fun loadMomentBitmap(snapshot: WidgetSnapshotData?): Bitmap? {
-    if (snapshot == null || snapshot.momentLocked) return null
-    val uriStr = snapshot.momentPhotoUri ?: return null
+  private fun loadUriBitmap(uriStr: String?): Bitmap? {
+    if (uriStr.isNullOrBlank()) return null
     return try {
       when {
         uriStr.startsWith("data:image/jpeg;base64,") ||

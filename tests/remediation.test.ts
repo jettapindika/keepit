@@ -844,13 +844,13 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     await resetAllState();
   });
 
-  it('enforces max 5 daily posts, supports retake replacement, clears coords when location cleared, and deletes cleanly', async () => {
+  it('supports unlimited daily posts without 5-post limit, retake replacement, clears coords when location cleared, and deletes cleanly', async () => {
     const coupleId = 'solo_quota_user';
     const userId = 'quota_user';
     const today = todayLocalDateString();
     const createdIds: string[] = [];
 
-    for (let i = 1; i <= 5; i += 1) {
+    for (let i = 1; i <= 6; i += 1) {
       const m = await submitDailyMoment({
         coupleId,
         promptId: `prompt_${coupleId}_${today}`,
@@ -863,21 +863,9 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
       });
       createdIds.push(m.id);
     }
+    assert.equal(createdIds.length, 6, 'User can post more than 5 Moments per day without hitting a quota limit');
 
-    // 6th post must fail
-    await assert.rejects(
-      () =>
-        submitDailyMoment({
-          coupleId,
-          promptId: `prompt_${coupleId}_${today}`,
-          userId,
-          backUri: 'data:image/jpeg;base64,SHOT_6',
-          frontUri: 'data:image/jpeg;base64,SELFIE_6',
-        }),
-      /Daily limit reached/
-    );
-
-    // Retake replacement on post #5 succeeds even when 5/5 slots are full
+    // Retake replacement on post #5 succeeds
     const replaced = await submitDailyMoment({
       coupleId,
       promptId: `prompt_${coupleId}_${today}`,
@@ -899,14 +887,14 @@ describe('P1-4, P1-5 & P2: Post CRUD Quota, DM Reactions, Location Privacy, Widg
     assert.equal(edited.lat, null);
     assert.equal(edited.lng, null);
 
-    // Deleting 1 post frees a daily slot (4/5)
+    // Deleting 1 post reduces daily count from 6 to 5
     await deleteMomentPost({
       momentId: createdIds[4],
       userId,
       coupleId,
     });
     const bundleAfterDelete = await fetchTodayMomentBundle({ coupleId, userId });
-    assert.equal(bundleAfterDelete.dailyPostCount, 4);
+    assert.equal(bundleAfterDelete.dailyPostCount, 5);
   });
 
   it('toggles DM reactions ON and OFF cleanly across Realtime packets', async () => {

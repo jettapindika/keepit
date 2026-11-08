@@ -1,13 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { usePreventRemove, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import React, { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { clearMyStatus, DURATION_OPTIONS, fetchCoupleStatuses, formatStatusRemaining, STATUS_PRESETS, upsertMyStatus } from '@/api/statuses';
 import { InlineNotice, KeepItButton, SkeletonBlock } from '@/components/ui/Primitives';
-import { AppPressable, AppTextInput, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
+import { AppPressable, AppTextInput, ConfirmModal, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import { StatusDurationPreset } from '@/types/database';
@@ -21,6 +22,7 @@ export default function StatusSheetScreen() {
   const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const [draft, setDraft] = useState<{ emoji: string; text: string; duration: StatusDurationPreset } | null>(null);
   const [busy, setBusy] = useState<'save' | 'clear' | null>(null);
+  const [presetDropdownOpen, setPresetDropdownOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<'discard' | 'clear' | null>(null);
   const [allowLeave, setAllowLeave] = useState(false);
@@ -100,80 +102,118 @@ export default function StatusSheetScreen() {
           </View> : null}
           {!user || !couple ? <InlineNotice tone="error" message="Sign in to load and edit your status." /> : null}
           {ready ? <>
-            {existing ? <View style={[styles.current, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+            {existing ? <View style={[styles.current, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
               <Text style={[styles.secondary, { color: colors.inkMuted }]}>Current status</Text>
-              <Text style={[styles.body, { color: colors.ink }]}>{existing.emoji} {existing.text}</Text>
+              <Text style={[styles.body, { color: colors.ink, fontWeight: '600' }]}>{existing.text}</Text>
               <Text style={[styles.secondary, { color: colors.inkMuted }]}>{formatStatusRemaining(existing.expires_at)}</Text>
-            </View> : <Text style={[styles.body, { color: colors.inkMuted }]}>You have no active status. Choose a preset or write your own.</Text>}
+            </View> : null}
             <View style={styles.section}>
-              <SectionHeader title="Quick presets" />
-              <View accessibilityRole="radiogroup" accessibilityLabel="Status presets" style={styles.presets}>
-                {STATUS_PRESETS.map((preset) => {
-                  const checked = value.emoji === preset.emoji && value.text === preset.text;
-                  return <AppPressable key={preset.id} accessibilityRole="radio" accessibilityState={{ checked, disabled: Boolean(busy) }} accessibilityLabel={`${preset.emoji} ${preset.text}`} disabled={Boolean(busy)} onPress={() => update({ emoji: preset.emoji, text: preset.text, duration: preset.defaultDuration })} style={[styles.preset, { backgroundColor: checked ? colors.accent : colors.surface, borderColor: checked ? colors.accent : colors.controlBorder, borderRadius: radii.input }]}>
-                    <Text style={styles.emoji}>{preset.emoji}</Text>
-                    <Text style={[styles.body, styles.grow, { color: checked ? colors.onAccent : colors.ink }]}>{preset.text}</Text>
-                  </AppPressable>;
-                })}
-              </View>
+              <SectionHeader title="Quick preset" />
+              <AppPressable
+                accessibilityRole="button"
+                accessibilityLabel="Choose status preset"
+                accessibilityState={{ expanded: presetDropdownOpen, disabled: Boolean(busy) }}
+                disabled={Boolean(busy)}
+                onPress={() => setPresetDropdownOpen((open) => !open)}
+                style={[styles.dropdownTrigger, { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radii.input }]}
+              >
+                <Text style={[styles.body, styles.grow, { color: value.text ? colors.ink : colors.inkMuted }]}>
+                  {STATUS_PRESETS.find((p) => p.text === value.text)?.text ?? 'Select a preset…'}
+                </Text>
+                <SymbolView
+                  name={presetDropdownOpen ? { ios: 'chevron.up', android: 'expand_less', web: 'expand_less' } : { ios: 'chevron.down', android: 'expand_more', web: 'expand_more' }}
+                  tintColor={colors.inkMuted}
+                  size={16}
+                />
+              </AppPressable>
+              {presetDropdownOpen ? (
+                <View accessibilityRole="radiogroup" accessibilityLabel="Status presets" style={[styles.dropdownMenu, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.input }]}>
+                  {STATUS_PRESETS.map((preset) => {
+                    const checked = value.text === preset.text;
+                    return (
+                      <AppPressable
+                        key={preset.id}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked, disabled: Boolean(busy) }}
+                        accessibilityLabel={preset.text}
+                        disabled={Boolean(busy)}
+                        onPress={() => {
+                          update({ emoji: preset.emoji, text: preset.text, duration: preset.defaultDuration });
+                          setPresetDropdownOpen(false);
+                        }}
+                        style={[styles.dropdownOption, { backgroundColor: checked ? colors.surfaceElevated : 'transparent', borderRadius: radii.input - 2 }]}
+                      >
+                        <Text style={[styles.body, styles.grow, { color: colors.ink, fontWeight: checked ? '700' : '400' }]}>{preset.text}</Text>
+                        {checked ? <SymbolView name={{ ios: 'checkmark', android: 'check', web: 'check' }} tintColor={colors.ink} size={15} /> : null}
+                      </AppPressable>
+                    );
+                  })}
+                </View>
+              ) : null}
             </View>
             <View style={styles.section}>
               <SectionHeader title="Your status" />
-              <View style={styles.inputRow}>
-                <AppTextInput accessibilityLabel="Status emoji" editable={!busy} value={value.emoji} onChangeText={(emoji) => update({ emoji })} returnKeyType="next" onSubmitEditing={() => inputRef.current?.focus()} style={styles.emojiInput} />
-                <AppTextInput ref={inputRef} accessibilityLabel="Status text, 40 characters maximum" editable={!busy} maxLength={40} value={value.text} placeholder="What are you up to?" onChangeText={(text) => update({ text })} returnKeyType="done" onSubmitEditing={() => void save()} style={styles.grow} />
-              </View>
+              <AppTextInput
+                ref={inputRef}
+                accessibilityLabel="Status text, 40 characters maximum"
+                editable={!busy}
+                maxLength={40}
+                value={value.text}
+                placeholder="What are you up to?"
+                onChangeText={(text) => update({ text, emoji: value.emoji || '•' })}
+                returnKeyType="done"
+                onSubmitEditing={() => void save()}
+              />
               <Text style={[styles.counter, styles.secondary, { color: colors.inkMuted }]}>{value.text.length}/40 characters</Text>
             </View>
             <View style={styles.section}>
-              <SectionHeader title="Show until" subtitle="The timer starts when you save. Till tonight means the end of your local day, with at least 30 minutes of visibility. After expiry, the status clears from the app and widget." />
+              <SectionHeader title="Show until" />
               <View accessibilityRole="radiogroup" accessibilityLabel="Status expiry" style={styles.durationRow}>
                 {DURATION_OPTIONS.map((option) => {
                   const checked = value.duration === option.value;
-                  return <AppPressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked, disabled: Boolean(busy) }} disabled={Boolean(busy)} onPress={() => update({ duration: option.value })} style={[styles.duration, { backgroundColor: checked ? colors.accent : colors.surface, borderColor: checked ? colors.accent : colors.controlBorder, borderRadius: radii.input }]}>
-                    <Text style={[styles.action, { color: checked ? colors.onAccent : colors.ink }]}>{option.label}</Text>
+                  return <AppPressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked, disabled: Boolean(busy) }} disabled={Boolean(busy)} onPress={() => update({ duration: option.value })} style={[styles.duration, { backgroundColor: checked ? colors.ink : colors.surface, borderColor: checked ? colors.ink : colors.controlBorder, borderRadius: radii.input }]}>
+                    <Text style={[styles.action, { color: checked ? colors.canvas : colors.ink }]}>{option.label}</Text>
                   </AppPressable>;
                 })}
               </View>
             </View>
             {error ? <InlineNotice tone="error" message={error} /> : null}
-            <KeepItButton label="Save status" loadingLabel="Saving status…" loading={busy === 'save'} disabled={Boolean(busy) || !value.text.trim() || !value.emoji.trim()} onPress={() => void save()} />
+            <KeepItButton label="Save status" loadingLabel="Saving status…" loading={busy === 'save'} disabled={Boolean(busy) || !value.text.trim()} onPress={() => void save()} />
             {existing ? <KeepItButton label="Clear active status" variant="secondary" disabled={Boolean(busy)} onPress={() => setConfirm('clear')} /> : null}
           </> : null}
         </ScrollView>
       </KeyboardAvoidingView>
-      <Modal visible={Boolean(confirm)} transparent animationType="fade" onRequestClose={() => { if (!busy) { pendingRemoval.current = null; setConfirm(null); } }}>
-        <View style={styles.backdrop}>
-          <View accessibilityViewIsModal style={[styles.dialog, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
-            <SectionHeader title={confirm === 'discard' ? 'Discard your changes?' : 'Clear your active status?'} subtitle={confirm === 'discard' ? 'Your unsaved edits will be lost.' : 'It will be removed from the app and widget.'} />
-            {error ? <InlineNotice tone="error" message={error} /> : null}
-            <KeepItButton label={confirm === 'discard' ? 'Discard changes' : 'Clear status'} variant="danger" disabled={Boolean(busy)} loading={busy === 'clear'} onPress={() => confirm === 'discard' ? leave() : void clear()} />
-            <KeepItButton label="Keep editing" variant="secondary" disabled={Boolean(busy)} onPress={() => { pendingRemoval.current = null; setConfirm(null); }} />
-          </View>
-        </View>
-      </Modal>
+      <ConfirmModal
+        visible={Boolean(confirm)}
+        title={confirm === 'discard' ? 'Discard your changes?' : 'Clear your active status?'}
+        message={confirm === 'discard' ? 'Your unsaved edits will be lost.' : 'It will be removed from the app and widget.'}
+        confirmLabel={confirm === 'discard' ? 'Discard changes' : 'Clear status'}
+        cancelLabel="Keep editing"
+        loading={busy === 'clear'}
+        onCancel={() => {
+          pendingRemoval.current = null;
+          setConfirm(null);
+        }}
+        onConfirm={() => (confirm === 'discard' ? leave() : void clear())}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)', padding: 20, justifyContent: 'center', alignItems: 'center' },
-  dialog: { padding: 20, gap: 16, width: '100%', maxWidth: APP_LAYOUT.modalWidth },
-  content: { width: '100%', maxWidth: APP_LAYOUT.modalWidth, alignSelf: 'center', padding: APP_LAYOUT.pageInset, paddingBottom: 48, gap: 24 },
+  content: { width: '100%', maxWidth: APP_LAYOUT.modalWidth, alignSelf: 'center', padding: APP_LAYOUT.pageInset, paddingBottom: 48, gap: 20 },
   close: { paddingHorizontal: 10, justifyContent: 'center' },
-  current: { padding: 20, gap: 10 },
-  section: { gap: 12 },
-  presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  preset: { flexGrow: 1, flexBasis: 190, minHeight: 58, padding: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  emoji: { fontSize: 22 },
-  inputRow: { flexDirection: 'row', gap: 12 },
-  emojiInput: { width: 64, textAlign: 'center', fontSize: 22 },
+  current: { padding: 16, gap: 6, borderWidth: 1 },
+  section: { gap: 10 },
+  dropdownTrigger: { minHeight: 50, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  dropdownMenu: { borderWidth: 1, padding: 6, gap: 2 },
+  dropdownOption: { minHeight: 44, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   grow: { flex: 1, minWidth: 0 },
   counter: { textAlign: 'right' },
   durationRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  duration: { minWidth: 90, flexGrow: 1, padding: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  duration: { minWidth: 90, flexGrow: 1, minHeight: 44, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   body: { fontSize: 15, lineHeight: 22 },
   secondary: { fontSize: 13, lineHeight: 20 },
-  action: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  action: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
 });

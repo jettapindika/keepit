@@ -953,11 +953,6 @@ export async function submitDailyMoment(params: {
     ? myTodayList.find((m) => m.id === params.replaceMomentId)
     : undefined;
 
-  if (!existingToReplace && myTodayList.length >= MAX_DAILY_MOMENTS_PER_DAY) {
-    throw new Error(
-      `Daily limit reached (${MAX_DAILY_MOMENTS_PER_DAY}/${MAX_DAILY_MOMENTS_PER_DAY} Moments today). You can edit or delete an earlier post.`
-    );
-  }
 
   const dailyIndex = existingToReplace
     ? (existingToReplace.daily_index ?? 1)
@@ -1075,22 +1070,19 @@ export async function submitDailyMoment(params: {
         },
         { onConflict: 'id' }
       );
-      if (dbErr && dbErr.message.includes('DAILY_MOMENT_LIMIT_REACHED')) {
-        throw new Error(
-          `Daily limit reached (${MAX_DAILY_MOMENTS_PER_DAY}/${MAX_DAILY_MOMENTS_PER_DAY} Moments today). You can edit or delete an earlier post.`
-        );
-      }
-      if (dbErr && isSchemaNotMigratedError(dbErr)) {
-        await supabase.rpc('submit_daily_moment', {
-          p_prompt_id: record.prompt_id,
-          p_back_photo_path: record.back_photo_path,
-          p_front_photo_path: record.front_photo_path,
-          p_back_blurhash: record.back_blurhash,
-          p_caption: record.caption,
-          p_captured_at: record.captured_at,
-          p_lat: record.lat,
-          p_lng: record.lng,
-        });
+      if (dbErr && (isSchemaNotMigratedError(dbErr) || dbErr.message.includes('DAILY_MOMENT_LIMIT_REACHED'))) {
+        if (isSchemaNotMigratedError(dbErr)) {
+          await supabase.rpc('submit_daily_moment', {
+            p_prompt_id: record.prompt_id,
+            p_back_photo_path: record.back_photo_path,
+            p_front_photo_path: record.front_photo_path,
+            p_back_blurhash: record.back_blurhash,
+            p_caption: record.caption,
+            p_captured_at: record.captured_at,
+            p_lat: record.lat,
+            p_lng: record.lng,
+          });
+        }
       }
     } catch (err) {
       if (err instanceof Error && err.message.includes('Daily limit reached')) {
@@ -1561,6 +1553,44 @@ export async function fetchUserMomentsFeed(params: {
   coupleId?: string | null;
 }): Promise<MomentRecord[]> {
   const state = await readLocalMoments();
+  let mutated = false;
+
+  if (isSupabaseConfigured && supabase && params.userId) {
+    try {
+      const { data: remoteRows, error: remoteErr } = await supabase
+        .from('moments')
+        .select('*')
+        .eq('user_id', params.userId)
+        .order('posted_at', { ascending: false })
+        .limit(40);
+      if (!remoteErr && Array.isArray(remoteRows)) {
+        for (const rawRow of remoteRows) {
+          const rec = rawRow as MomentRecord;
+          if (!rec?.id) continue;
+          const [signedBack, signedFront, signedVideo] = await Promise.all([
+            resolveStorageSignedUrlIfNeeded(rec.back_photo_url ?? rec.back_photo_path),
+            resolveStorageSignedUrlIfNeeded(rec.front_photo_url ?? rec.front_photo_path),
+            resolveStorageSignedUrlIfNeeded(rec.video_uri),
+          ]);
+          state.moments[rec.id] = {
+            ...(state.moments[rec.id] ?? {}),
+            ...rec,
+            back_photo_url: signedBack ?? rec.back_photo_path,
+            front_photo_url: signedFront ?? rec.front_photo_path,
+            video_uri: signedVideo ?? rec.video_uri ?? null,
+          };
+          mutated = true;
+        }
+      }
+    } catch {
+      // Use local moments cache when offline
+    }
+  }
+
+  if (mutated) {
+    await writeLocalMoments(state);
+  }
+
   const all = deduplicateMoments(Object.values(state.moments));
   return all
     .filter((m) => m.user_id === params.userId)

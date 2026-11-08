@@ -210,9 +210,6 @@ export function buildMomentCompositeSvgDataUri(params: {
             <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
             <stop offset="100%" stop-color="#000000" stop-opacity="0.72"/>
           </linearGradient>
-          <filter id="wmShadow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.82"/>
-          </filter>
         </defs>
         <g clip-path="url(#mainClip)">
           <rect width="${frameW}" height="${frameH}" fill="#141416"/>
@@ -222,11 +219,12 @@ export function buildMomentCompositeSvgDataUri(params: {
           <g clip-path="url(#pipClip)">
             <rect x="38" y="38" width="236" height="314" rx="34" fill="#1E1E21"/>
             <image href="${safeFrontHref}" x="38" y="38" width="236" height="314" preserveAspectRatio="xMidYMid slice"/>
+            <rect x="38" y="38" width="236" height="314" fill="${filterMeta.svgTintHex}" opacity="${tintStopOpacity}"/>
           </g>
           <rect x="38" y="38" width="236" height="314" rx="34" fill="none" stroke="#FAF7F2" stroke-width="6"/>
           ${overlaysSvg}
           <!-- Bottom-Left #keepit SVG + Timestamp Watermark directly embedded on photo -->
-          <g filter="url(#wmShadow)">
+          <g>
             <g transform="translate(42, 1084) scale(3.52)">
               <title>#keepit</title>
               <path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="#FFFFFF"/>
@@ -310,9 +308,6 @@ export function buildMomentCompositeSvgDataUri(params: {
           <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
           <stop offset="100%" stop-color="#000000" stop-opacity="0.68"/>
         </linearGradient>
-        <filter id="storyWmShadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.82"/>
-        </filter>
       </defs>
 
       <rect width="1080" height="1920" fill="url(#storyBg)"/>
@@ -335,13 +330,14 @@ export function buildMomentCompositeSvgDataUri(params: {
         <g clip-path="url(#storyPipClip)">
           <rect x="${cardX + 38}" y="${cardY + 38}" width="244" height="324" rx="36" fill="#1E1E21"/>
           <image href="${safeFrontHref}" x="${cardX + 38}" y="${cardY + 38}" width="244" height="324" preserveAspectRatio="xMidYMid slice"/>
+          <rect x="${cardX + 38}" y="${cardY + 38}" width="244" height="324" fill="${filterMeta.svgTintHex}" opacity="${tintStopOpacity}"/>
         </g>
         <rect x="${cardX + 38}" y="${cardY + 38}" width="244" height="324" rx="36" fill="none" stroke="#FAF7F2" stroke-width="6"/>
 
         ${storyOverlaysSvg}
 
         <!-- Bottom-Left #keepit SVG + Timestamp Watermark directly embedded on photo -->
-        <g filter="url(#storyWmShadow)">
+        <g>
           <g transform="translate(${cardX + 42}, ${cardY + cardH - 118}) scale(3.68)">
             <title>#keepit</title>
             <path d="${KEEPIT_WATERMARK_SVG_PATH_D}" fill="#FFFFFF"/>
@@ -529,10 +525,6 @@ export async function embedKeepItWatermarkOnImageUri(
     ctx.fillRect(0, h - Math.round(240 * unit), w, Math.round(240 * unit));
 
     ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = Math.max(1, Math.round(2 * unit));
-    ctx.shadowBlur = Math.max(3, Math.round(8 * unit));
     drawKeepItWatermarkSvgPathOnCanvas(ctx, padX, logoY, logoScale, '#FFFFFF');
 
     if (timestampLabel) {
@@ -586,13 +578,47 @@ async function renderDirectCompositePngDataUriOnWeb(params: {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
+    const handle =
+      (params.authorName || 'keepit').toLowerCase().replace(/[^a-z0-9_]+/g, '') || 'keepit';
+
     if (isStory) {
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, outH);
+      const bgGrad = ctx.createLinearGradient(0, 0, outW * 0.25, outH);
       bgGrad.addColorStop(0, theme.topHex);
       bgGrad.addColorStop(0.52, theme.midHex);
       bgGrad.addColorStop(1, theme.bottomHex);
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, outW, outH);
+
+      ctx.save();
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = theme.accentHex;
+      ctx.beginPath();
+      ctx.arc(910, 210, 240, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.14;
+      ctx.fillStyle = filterMeta.svgTintHex;
+      ctx.beginPath();
+      ctx.arc(170, 1660, 290, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Top Header Pill matching 9:16 preview SVG
+      ctx.save();
+      drawRoundedRectPath(ctx, 250, 96, 580, 76, 38);
+      ctx.fillStyle = 'rgba(20, 20, 22, 0.88)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = theme.accentHex;
+      ctx.beginPath();
+      ctx.arc(302, 134, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 30px system-ui, -apple-system, sans-serif';
+      ctx.fillText(`KeepIt Story · @${handle}`, 556, 145);
+      ctx.restore();
     } else {
       ctx.fillStyle = '#141416';
       ctx.fillRect(0, 0, outW, outH);
@@ -604,7 +630,14 @@ async function renderDirectCompositePngDataUriOnWeb(params: {
     ctx.clip();
 
     if (backImg) {
-      drawImageCenterCrop(ctx, backImg, cardX, cardY, cardW, cardH);
+      if (params.filterPreset && params.filterPreset !== 'normal' && filterMeta.webCssFilter !== 'none') {
+        ctx.save();
+        ctx.filter = filterMeta.webCssFilter;
+        drawImageCenterCrop(ctx, backImg, cardX, cardY, cardW, cardH);
+        ctx.restore();
+      } else {
+        drawImageCenterCrop(ctx, backImg, cardX, cardY, cardW, cardH);
+      }
     } else {
       const fallbackGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
       fallbackGrad.addColorStop(0, '#EBD8C8');
@@ -644,10 +677,24 @@ async function renderDirectCompositePngDataUriOnWeb(params: {
     drawRoundedRectPath(ctx, pipX, pipY, pipW, pipH, pipR);
     ctx.clip();
     if (frontImg) {
-      drawImageCenterCrop(ctx, frontImg, pipX, pipY, pipW, pipH);
+      if (params.filterPreset && params.filterPreset !== 'normal' && filterMeta.webCssFilter !== 'none') {
+        ctx.save();
+        ctx.filter = filterMeta.webCssFilter;
+        drawImageCenterCrop(ctx, frontImg, pipX, pipY, pipW, pipH);
+        ctx.restore();
+      } else {
+        drawImageCenterCrop(ctx, frontImg, pipX, pipY, pipW, pipH);
+      }
     } else {
       ctx.fillStyle = '#221D1A';
       ctx.fillRect(pipX, pipY, pipW, pipH);
+    }
+    if (params.filterPreset && params.filterPreset !== 'normal') {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = filterMeta.svgTintHex;
+      ctx.fillRect(pipX, pipY, pipW, pipH);
+      ctx.restore();
     }
     ctx.restore();
 
@@ -688,10 +735,6 @@ async function renderDirectCompositePngDataUriOnWeb(params: {
 
     // BeReal-style bottom-left #keepit SVG + timestamp watermark directly embedded on photo
     ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 2;
-    ctx.shadowBlur = 8;
     drawKeepItWatermarkSvgPathOnCanvas(
       ctx,
       cardX + 42,
@@ -705,22 +748,45 @@ async function renderDirectCompositePngDataUriOnWeb(params: {
     ctx.fillText(params.timestampLabel, cardX + 42, cardY + cardH - (isStory ? 44 : 46));
     ctx.restore();
 
-    const handle =
-      (params.authorName || 'keepit').toLowerCase().replace(/[^a-z0-9_]+/g, '') || 'keepit';
-    ctx.save();
-    ctx.textAlign = 'right';
-    ctx.fillStyle = 'rgba(250, 247, 242, 0.92)';
-    ctx.font = '700 24px system-ui, -apple-system, sans-serif';
-    ctx.fillText(`@${handle} · ${filterMeta.label}`, cardX + cardW - 38, cardY + cardH - 52);
-    ctx.restore();
+    if (isStory) {
+      // Top-right filter pill matching 9:16 preview SVG
+      ctx.save();
+      drawRoundedRectPath(ctx, cardX + cardW - 224, cardY + 38, 186, 52, 26);
+      ctx.fillStyle = 'rgba(11, 11, 12, 0.78)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#FAF7F2';
+      ctx.font = '700 24px system-ui, -apple-system, sans-serif';
+      ctx.fillText(filterMeta.label, cardX + cardW - 131, cardY + 73);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(250, 247, 242, 0.92)';
+      ctx.font = '700 24px system-ui, -apple-system, sans-serif';
+      ctx.fillText(`@${handle} · ${filterMeta.label}`, cardX + cardW - 38, cardY + cardH - 52);
+      ctx.restore();
+    }
 
     ctx.restore();
 
     if (isStory) {
       ctx.save();
+      drawRoundedRectPath(ctx, cardX, cardY, cardW, cardH, 56);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
       drawRoundedRectPath(ctx, 90, 1484, 900, 270, 40);
       ctx.fillStyle = 'rgba(20, 20, 22, 0.88)';
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
       ctx.textAlign = 'center';
       ctx.fillStyle = '#FFFFFF';
       ctx.font = '700 34px system-ui, -apple-system, sans-serif';
@@ -728,6 +794,23 @@ async function renderDirectCompositePngDataUriOnWeb(params: {
         ? `“${params.caption.slice(0, 80)}”`
         : `${params.authorName || 'KeepIt'}’s KeepIt Moment`;
       ctx.fillText(storyTitle, 540, 1558);
+
+      const metaParts: string[] = [];
+      if (params.locationLabel) metaParts.push(params.locationLabel.slice(0, 64));
+      if (params.musicTitle) metaParts.push(params.musicTitle.slice(0, 64));
+      if (params.taggedUsers && params.taggedUsers.length > 0) {
+        metaParts.push(params.taggedUsers.map((t) => `@${t.username}`).join(' '));
+      }
+      if (metaParts.length > 0) {
+        ctx.fillStyle = theme.accentHex;
+        ctx.font = '600 26px system-ui, -apple-system, sans-serif';
+        ctx.fillText(metaParts.join(' · '), 540, 1624);
+      } else {
+        ctx.fillStyle = '#9A9AA0';
+        ctx.font = '600 25px system-ui, -apple-system, sans-serif';
+        ctx.fillText('Dual-camera authentic capture', 540, 1624);
+      }
+
       ctx.fillStyle = '#9A9AA0';
       ctx.font = '700 24px system-ui, -apple-system, sans-serif';
       ctx.fillText('KeepIt · Keep every moment, together', 540, 1704);
@@ -872,22 +955,24 @@ export async function exportAndShareCompositeMoment(params: {
   if (Platform.OS === 'web') {
     const targetW = params.aspect === '9:16' ? 1080 : 900;
     const targetH = params.aspect === '9:16' ? 1920 : 1200;
-    const directPng = await renderDirectCompositePngDataUriOnWeb({
-      backUri: embeddedBackUri,
-      frontUri: embeddedFrontUri,
-      authorName: params.authorName,
-      timestampLabel,
-      caption: params.caption,
-      locationLabel: params.locationLabel,
-      musicTitle: params.musicTitle,
-      taggedUsers: params.taggedUsers,
-      filterPreset: params.filterPreset,
-      overlays: params.overlays,
-      aspect: params.aspect,
-      storyTheme: params.storyTheme,
-    });
+    // Rasterize the exact SVG shown in preview first so exported PNG matches preview pixel-for-pixel!
+    const svgRasterPng = await rasterizeSvgDataUriOnWeb(svgDataUri, targetW, targetH);
     const pngDataUri =
-      directPng ?? (await rasterizeSvgDataUriOnWeb(svgDataUri, targetW, targetH));
+      svgRasterPng ??
+      (await renderDirectCompositePngDataUriOnWeb({
+        backUri: embeddedBackUri,
+        frontUri: embeddedFrontUri,
+        authorName: params.authorName,
+        timestampLabel,
+        caption: params.caption,
+        locationLabel: params.locationLabel,
+        musicTitle: params.musicTitle,
+        taggedUsers: params.taggedUsers,
+        filterPreset: params.filterPreset,
+        overlays: params.overlays,
+        aspect: params.aspect,
+        storyTheme: params.storyTheme,
+      }));
     const downloadHref = pngDataUri ?? svgDataUri;
     const finalName = pngDataUri ? `${cleanStem}.png` : `${cleanStem}.svg`;
 
@@ -923,7 +1008,13 @@ export async function exportAndShareCompositeMoment(params: {
     filterHex: filterMeta.svgTintHex,
     filterActive: Boolean(params.filterPreset && params.filterPreset !== 'normal'),
     themeTop: theme.topHex,
+    themeMid: theme.midHex,
     themeBottom: theme.bottomHex,
+    themeAccent: theme.accentHex,
+    filterLabel: filterMeta.label,
+    locationLabel: params.locationLabel ?? '',
+    musicTitle: params.musicTitle ?? '',
+    taggedUsers: params.taggedUsers ?? [],
     overlays: params.overlays ?? [],
     filename: jpgName,
     saveToGallery: true,

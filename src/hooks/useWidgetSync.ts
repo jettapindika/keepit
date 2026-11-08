@@ -4,6 +4,7 @@ import {
   CoupleStatusBundle,
   StatusRecord,
   TodayMomentBundle,
+  WidgetLayoutMode,
   WidgetSnapshotPayload,
 } from '@/types/database';
 
@@ -15,9 +16,11 @@ import {
 
 export interface UseWidgetSyncParams {
   partnerName: string;
+  myName?: string;
   coupleId: string | null | undefined;
   momentBundle: TodayMomentBundle | null | undefined;
   statusBundle: CoupleStatusBundle | null | undefined;
+  widgetLayout?: WidgetLayoutMode;
 }
 
 export interface UseWidgetSyncResult {
@@ -41,8 +44,10 @@ function getActiveStatus(status: StatusRecord | null | undefined, nowMs: number)
 export function buildWidgetSnapshotPayload(params: {
   coupleId: string;
   partnerName: string;
+  myName?: string;
   momentBundle: TodayMomentBundle | null | undefined;
   statusBundle: CoupleStatusBundle | null | undefined;
+  widgetLayout?: WidgetLayoutMode;
   now?: Date;
 }): WidgetSnapshotPayload {
   const now = params.now ?? new Date();
@@ -86,6 +91,8 @@ export function buildWidgetSnapshotPayload(params: {
 
   const streakCount = params.momentBundle?.streak?.current_count ?? 0;
   const deepLinkUrl = momentLocked ? 'keepit://camera' : 'keepit://';
+  const myPhotoUri = myMoment?.back_photo_url ?? myMoment?.back_photo_path ?? null;
+  const myFrontPhotoUri = myMoment?.front_photo_url ?? myMoment?.front_photo_path ?? null;
 
   return {
     coupleId: params.coupleId,
@@ -105,6 +112,10 @@ export function buildWidgetSnapshotPayload(params: {
     updatedAt: now.toISOString(),
     locationLabel,
     musicTitle,
+    myPhotoUri,
+    myFrontPhotoUri,
+    myName: params.myName ?? 'You',
+    widgetLayout: params.widgetLayout ?? 'side_by_side',
   };
 }
 
@@ -129,14 +140,19 @@ function computeSnapshotSignature(payload: WidgetSnapshotPayload): string {
     deepLinkUrl: payload.deepLinkUrl,
     locationLabel: payload.locationLabel ?? null,
     musicTitle: payload.musicTitle ?? null,
+    myPhotoUri: payload.myPhotoUri ?? null,
+    myFrontPhotoUri: payload.myFrontPhotoUri ?? null,
+    widgetLayout: payload.widgetLayout ?? 'side_by_side',
   });
 }
 
 export function useWidgetSync({
   partnerName,
+  myName,
   coupleId,
   momentBundle,
   statusBundle,
+  widgetLayout,
 }: UseWidgetSyncParams): UseWidgetSyncResult {
   const [cachedSnapshot, setCachedSnapshot] = useState<WidgetSnapshotPayload | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -167,10 +183,12 @@ export function useWidgetSync({
     return buildWidgetSnapshotPayload({
       coupleId,
       partnerName,
+      myName,
       momentBundle,
       statusBundle,
+      widgetLayout,
     });
-  }, [coupleId, partnerName, momentBundle, statusBundle]);
+  }, [coupleId, partnerName, myName, momentBundle, statusBundle, widgetLayout]);
 
   // Clear persisted snapshot if the couple unpairs or signs out
   useEffect(() => {
@@ -238,8 +256,10 @@ export function useWidgetSync({
       const freshSnapshot = buildWidgetSnapshotPayload({
         coupleId,
         partnerName,
+        myName,
         momentBundle,
         statusBundle,
+        widgetLayout,
         now: new Date(),
       });
       await syncWidgetSnapshot(freshSnapshot);
@@ -250,7 +270,7 @@ export function useWidgetSync({
       setError(err instanceof Error ? err.message : 'Your widget could not sync. Try again.');
       throw err;
     }
-  }, [coupleId, partnerName, momentBundle, statusBundle]);
+  }, [coupleId, partnerName, myName, momentBundle, statusBundle, widgetLayout]);
 
   return {
     snapshot: coupleId ? (liveSnapshot ?? cachedSnapshot) : null,

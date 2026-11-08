@@ -44,7 +44,6 @@ import { MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 import { useAppMotion } from '@/hooks/useAppMotion';
 import {
-  MAX_DAILY_MOMENTS_PER_DAY,
   MomentFilterPreset,
   MomentMediaType,
   MusicTrackAttachment,
@@ -199,7 +198,6 @@ export default function CameraModalScreen() {
   const countdown = useMomentCountdown(activeTriggerAt);
 
   const dailyPostedCount = bundleQuery.data?.dailyPostCount ?? 0;
-  const shotsRemainingToday = Math.max(0, MAX_DAILY_MOMENTS_PER_DAY - dailyPostedCount);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const myMomentsToday = bundleQuery.data?.myMomentsToday ?? (bundleQuery.data?.mine ? [bundleQuery.data.mine] : []);
   const replaceTarget = params.replaceMomentId
@@ -759,8 +757,10 @@ export default function CameraModalScreen() {
       })
     : countdown.currentTimeShort;
   const headerQuotaLabel = replaceTarget?.daily_index
-    ? `Editing ${replaceTarget.daily_index}/${MAX_DAILY_MOMENTS_PER_DAY}`
-    : `${Math.min(dailyPostedCount, MAX_DAILY_MOMENTS_PER_DAY)}/${MAX_DAILY_MOMENTS_PER_DAY} today`;
+    ? `Editing #${replaceTarget.daily_index}`
+    : dailyPostedCount > 0
+      ? `${dailyPostedCount} posted today`
+      : null;
   const headerTimingLabel =
     isThisCapturePromptCheckIn && countdown.phase === 'live'
       ? `Live · ${countdown.formattedTimer} left`
@@ -771,18 +771,12 @@ export default function CameraModalScreen() {
     !permission?.granted ||
     !cameraReady ||
     (stage !== 'ready' && stage !== 'recording_video') ||
-    (stage === 'ready' &&
-      bundleQuery.isSuccess &&
-      shotsRemainingToday === 0 &&
-      !params.replaceMomentId) ||
     (Platform.OS === 'web' && mediaType === 'video');
-  const shutterHint = shotsRemainingToday === 0 && !params.replaceMomentId
-    ? 'All of today’s Moments are posted. Replace one from its menu on Home.'
-    : !permission?.granted
-      ? 'Camera permission is required to capture.'
-      : !cameraReady
-        ? 'Camera is still starting.'
-        : undefined;
+  const shutterHint = !permission?.granted
+    ? 'Camera permission is required to capture.'
+    : !cameraReady
+      ? 'Camera is still starting.'
+      : undefined;
   const watermarkTimestamp = formatMomentWatermarkTimestamp(capturedAtIso);
 
   const handleClose = () => {
@@ -835,19 +829,21 @@ export default function CameraModalScreen() {
               </Pressable>
 
               <View style={styles.capturePillRow}>
-                <View
-                  style={[
-                    styles.timerPill,
-                    {
-                      borderColor: colors.border,
-                      backgroundColor: colors.surface,
-                      borderRadius: radii.pill,
-                    },
-                  ]}>
-                  <Text style={[styles.timerText, { color: colors.ink }]}>
-                    {headerQuotaLabel}
-                  </Text>
-                </View>
+                {headerQuotaLabel ? (
+                  <View
+                    style={[
+                      styles.timerPill,
+                      {
+                        borderColor: colors.border,
+                        backgroundColor: colors.surface,
+                        borderRadius: radii.pill,
+                      },
+                    ]}>
+                    <Text style={[styles.timerText, { color: colors.ink }]}>
+                      {headerQuotaLabel}
+                    </Text>
+                  </View>
+                ) : null}
                 <View
                   style={[
                     styles.timerPill,
@@ -1028,11 +1024,27 @@ export default function CameraModalScreen() {
                         },
                       ]}>
                       {vlogPipUri ? (
-                        <Image
-                          source={{ uri: vlogPipUri }}
-                          contentFit="cover"
-                          style={styles.full}
-                        />
+                        <>
+                          <Image
+                            source={{ uri: vlogPipUri }}
+                            contentFit="cover"
+                            style={[
+                              styles.full,
+                              Platform.OS === 'web' && activeFilterMeta.webCssFilter !== 'none'
+                                ? ({ filter: activeFilterMeta.webCssFilter } as never)
+                                : null,
+                            ]}
+                          />
+                          {activeFilterMeta.tintOverlay !== 'transparent' ? (
+                            <View
+                              pointerEvents="none"
+                              style={[
+                                StyleSheet.absoluteFill,
+                                { backgroundColor: activeFilterMeta.tintOverlay },
+                              ]}
+                            />
+                          ) : null}
+                        </>
                       ) : (
                         <View style={{ alignItems: 'center', justifyContent: 'center', gap: 4, padding: 6 }}>
                           <SymbolView
@@ -1188,15 +1200,6 @@ export default function CameraModalScreen() {
             {error ? (
               <View style={styles.compactNoticeWrap}>
                 <InlineNotice message={error} tone="error" />
-              </View>
-            ) : null}
-            {bundleQuery.isSuccess &&
-            shotsRemainingToday === 0 &&
-            !params.replaceMomentId ? (
-              <View style={styles.compactNoticeWrap}>
-                <InlineNotice
-                  message={`You have posted all ${MAX_DAILY_MOMENTS_PER_DAY} Moments for today. You can replace an existing Moment from its menu.`}
-                />
               </View>
             ) : null}
             {Platform.OS === 'web' && mediaType === 'video' ? (
@@ -1471,8 +1474,22 @@ export default function CameraModalScreen() {
                       <Image
                         source={{ uri: pipSwapped ? backUri : frontUri }}
                         contentFit="cover"
-                        style={styles.full}
+                        style={[
+                          styles.full,
+                          Platform.OS === 'web' && activeFilterMeta.webCssFilter !== 'none'
+                            ? ({ filter: activeFilterMeta.webCssFilter } as never)
+                            : null,
+                        ]}
                       />
+                      {activeFilterMeta.tintOverlay !== 'transparent' ? (
+                        <View
+                          pointerEvents="none"
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: activeFilterMeta.tintOverlay },
+                          ]}
+                        />
+                      ) : null}
                     </Pressable>
                   </Animated.View>
                 ) : null}
@@ -2325,7 +2342,12 @@ export default function CameraModalScreen() {
                         <Image
                           source={{ uri: pipSwapped ? frontUri : backUri }}
                           contentFit="cover"
-                          style={styles.full}
+                          style={[
+                            styles.full,
+                            Platform.OS === 'web' && activeFilterMeta.webCssFilter !== 'none'
+                              ? ({ filter: activeFilterMeta.webCssFilter } as never)
+                              : null,
+                          ]}
                         />
                       ) : null}
                       {activeFilterMeta.tintOverlay !== 'transparent' ? (
@@ -2353,8 +2375,22 @@ export default function CameraModalScreen() {
                             <Image
                               source={{ uri: pipSwapped ? backUri : frontUri }}
                               contentFit="cover"
-                              style={styles.full}
+                              style={[
+                                styles.full,
+                                Platform.OS === 'web' && activeFilterMeta.webCssFilter !== 'none'
+                                  ? ({ filter: activeFilterMeta.webCssFilter } as never)
+                                  : null,
+                              ]}
                             />
+                            {activeFilterMeta.tintOverlay !== 'transparent' ? (
+                              <View
+                                pointerEvents="none"
+                                style={[
+                                  StyleSheet.absoluteFill,
+                                  { backgroundColor: activeFilterMeta.tintOverlay },
+                                ]}
+                              />
+                            ) : null}
                           </Pressable>
                         </View>
                       ) : null}
@@ -2510,19 +2546,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   captureViewfinderFrame: {
-    height: '100%',
+    width: '100%',
     maxHeight: '100%',
     maxWidth: '100%',
-    aspectRatio: 4 / 5,
+    aspectRatio: 3 / 4,
     borderWidth: 1,
     overflow: 'hidden',
     position: 'relative',
   },
   viewfinderFrame: {
     width: '100%',
-    maxWidth: 440,
+    maxWidth: 380,
     alignSelf: 'center',
-    aspectRatio: 4 / 5,
+    aspectRatio: 3 / 4,
     overflow: 'hidden',
     position: 'relative',
   },
@@ -2557,9 +2593,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     lineHeight: 24,
-    textShadowColor: 'rgba(0, 0, 0, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
   },
   keepItWatermarkTime: {
     color: '#FFFFFF',
@@ -2567,9 +2600,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
-    textShadowColor: 'rgba(0, 0, 0, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
   },
   floatingFilterTray: {
     position: 'absolute',

@@ -32,7 +32,7 @@ import {
 import { buildInviteChannelTopic } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
-import { AppPressable, AppTextInput, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
+import { AppTextInput, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import { CoupleRecord } from '@/types/database';
@@ -51,7 +51,7 @@ function formatRemainingTime(expiresAtIso: string, now: number): string {
 export default function PairScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ code?: string }>();
-  const { colors, radii, type } = useKeepItTheme();
+  const { colors, radii } = useKeepItTheme();
   const user = useSessionStore((s) => s.user);
   const pendingInviteCode = useSessionStore((s) => s.pendingInviteCode);
   const setPendingInviteCode = useSessionStore((s) => s.setPendingInviteCode);
@@ -353,76 +353,78 @@ export default function PairScreen() {
             />
           }
           contentContainerStyle={styles.scrollContent}>
-          <View style={styles.header}>
-            <AppPressable accessibilityRole="button" accessibilityLabel="Back" accessibilityState={{ disabled: navigationBusy }} disabled={navigationBusy} onPress={leavePairing} style={styles.back}>
-              <Text style={[styles.actionText, { color: colors.inkMuted, fontFamily: type.fontSans }]}>Back</Text>
-            </AppPressable>
-            <PageHeader title="Pair with your partner" subtitle="Share your invite, or enter the code your partner sent you." />
-          </View>
+          <PageHeader
+            title="Pair with partner"
+            subtitle="Share your code or enter theirs."
+            onBack={navigationBusy ? undefined : leavePairing}
+            backLabel="Back"
+            backDisabled={navigationBusy}
+          />
           {savingPairing ? <InlineNotice message="Saving your pairing…" tone="info" /> : null}
-          <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
-            <SectionHeader title="Share an invite" subtitle="Send this code to your partner to connect your accounts." />
-            <View style={[styles.codeBox, { backgroundColor: colors.canvas, borderRadius: radii.input }]}>
+          {screenError ? <InlineNotice message={screenError} tone="error" /> : null}
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
+            <View style={styles.codeHeaderRow}>
+              <Text style={[styles.actionText, { color: colors.ink }]}>Your invite code</Text>
+              {remainingLabel ? <Text accessibilityLiveRegion="polite" style={[styles.secondary, { color: colors.inkMuted }]}>{remainingLabel}</Text> : null}
+            </View>
+
+            <View style={[styles.codeBox, { backgroundColor: colors.canvas, borderColor: colors.controlBorder, borderRadius: radii.input }]}>
               {loadingInvite || operation === 'refresh' ? (
                 <View accessibilityLiveRegion="polite" style={styles.loadingRow}>
-                  <ActivityIndicator color={colors.ink} />
-                  <Text style={[styles.body, { color: colors.inkMuted }]}>Creating your invite…</Text>
+                  <ActivityIndicator size="small" color={colors.ink} />
+                  <Text style={[styles.body, { color: colors.inkMuted }]}>Creating code…</Text>
                 </View>
               ) : inviteRecord ? (
-                <>
-                  <Text selectable accessibilityLabel={`Your invite code: ${inviteRecord.invite_code.split('').join(' ')}`} style={[styles.codeDisplay, { color: colors.ink }]}>{formatInviteCodeDisplay(inviteRecord.invite_code)}</Text>
-                  {remainingLabel ? <Text accessibilityLiveRegion="polite" style={[styles.secondary, { color: colors.inkMuted }]}>{remainingLabel}</Text> : null}
-                </>
+                <Text selectable accessibilityLabel={`Your invite code: ${inviteRecord.invite_code.split('').join(' ')}`} style={[styles.codeDisplay, { color: colors.ink }]}>{formatInviteCodeDisplay(inviteRecord.invite_code)}</Text>
               ) : (
-                <Text style={[styles.body, { color: colors.inkMuted }]}>Your invite isn’t available yet.</Text>
+                <Text style={[styles.body, { color: colors.inkMuted }]}>Code unavailable</Text>
               )}
             </View>
-            {inviteExpired ? <InlineNotice message="This code has expired. Create a new code to invite your partner." tone="info" /> : null}
+
+            {inviteExpired ? <InlineNotice message="This code expired. Create a new one." tone="info" /> : null}
             {copiedNotice ? <InlineNotice message={copiedNotice} tone="success" /> : null}
             {inviteError ? <InlineNotice message={inviteError} tone="error" /> : null}
+
             {!inviteRecord || inviteExpired ? (
-              <KeepItButton label={inviteExpired ? 'Create New Code' : 'Try Again'} loading={operation === 'invite' || operation === 'refresh'} loadingLabel="Creating Invite…" disabled={busy} onPress={() => void loadInvite(inviteExpired)} />
+              <KeepItButton label={inviteExpired ? 'Create New Code' : 'Try Again'} loading={operation === 'invite' || operation === 'refresh'} loadingLabel="Creating…" disabled={busy} onPress={() => void loadInvite(inviteExpired)} />
             ) : (
-              <>
-                <KeepItButton label={Platform.OS === 'web' ? 'Copy Invite Link' : 'Share Invite Link'} loading={operation === 'share'} loadingLabel={Platform.OS === 'web' ? 'Copying Invite…' : 'Opening Share…'} disabled={busy || !inviteUsable} onPress={() => void handleCopyOrShare(true)} />
-                <View style={styles.secondaryRow}>
-                  <KeepItButton label="Copy Code" variant="secondary" loading={operation === 'copy'} loadingLabel="Copying…" disabled={busy || !inviteUsable} onPress={() => void handleCopyOrShare(false)} style={styles.secondaryButton} />
-                  <KeepItButton label="New Code" accessibilityLabel="Refresh Code" variant="secondary" loading={operation === 'refresh'} loadingLabel="Creating…" disabled={busy} onPress={() => void loadInvite(true)} style={styles.secondaryButton} />
-                </View>
-                <Text style={[styles.secondary, { color: colors.inkMuted }]}>A new code replaces this invite.</Text>
-              </>
+              <View style={styles.secondaryRow}>
+                <KeepItButton label={Platform.OS === 'web' ? 'Copy Link' : 'Share'} loading={operation === 'share'} loadingLabel="Sharing…" disabled={busy || !inviteUsable} onPress={() => void handleCopyOrShare(true)} style={styles.secondaryButton} />
+                <KeepItButton label="Copy Code" variant="secondary" loading={operation === 'copy'} loadingLabel="Copying…" disabled={busy || !inviteUsable} onPress={() => void handleCopyOrShare(false)} style={styles.secondaryButton} />
+                <KeepItButton label="New Code" accessibilityLabel="Refresh Code" variant="ghost" loading={operation === 'refresh'} loadingLabel="Refreshing…" disabled={busy} onPress={() => void loadInvite(true)} />
+              </View>
             )}
-            {inviteError && inviteRecord && !inviteExpired ? <KeepItButton label="Retry Invite" variant="ghost" disabled={busy} onPress={() => void loadInvite()} /> : null}
           </View>
-          <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
-            <SectionHeader title="Join with a code" subtitle="Already received an invite? Enter your partner’s 6-character code." />
-            <Text style={[styles.actionText, { color: colors.ink }]}>Partner’s invite code</Text>
-            <AppTextInput
-              accessibilityLabel="Partner 6-character invite code"
-              accessibilityHint="Spaces and hyphens are removed automatically."
-              autoCapitalize="characters"
-              autoCorrect={false}
-              autoComplete="off"
-              value={effectivePartnerCode}
-              editable={!busy}
-              placeholder="6-character code"
-              returnKeyType="go"
-              onChangeText={(value) => {
-                setJoinError(null);
-                const extracted = extractInviteCodeFromText(value);
-                setPartnerCode(extracted || normalizeInviteCode(value).slice(0, 6));
-              }}
-              onSubmitEditing={() => void handleJoinPartner()}
-              style={styles.partnerInput}
-            />
-            <KeepItButton label="Paste Code" variant="secondary" loading={operation === 'paste'} loadingLabel="Reading Clipboard…" disabled={busy} onPress={() => void handlePaste()} />
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
+            <Text style={[styles.actionText, { color: colors.ink }]}>Enter partner’s code</Text>
+            <View style={styles.joinRow}>
+              <AppTextInput
+                accessibilityLabel="Partner 6-character invite code"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                autoComplete="off"
+                value={effectivePartnerCode}
+                editable={!busy}
+                placeholder="ABC-123"
+                returnKeyType="go"
+                onChangeText={(value) => {
+                  setJoinError(null);
+                  const extracted = extractInviteCodeFromText(value);
+                  setPartnerCode(extracted || normalizeInviteCode(value).slice(0, 6));
+                }}
+                onSubmitEditing={() => void handleJoinPartner()}
+                style={[styles.partnerInput, { flex: 1 }]}
+              />
+              <KeepItButton label="Paste" variant="secondary" loading={operation === 'paste'} loadingLabel="…" disabled={busy} onPress={() => void handlePaste()} />
+            </View>
             {joinError ? <InlineNotice message={joinError} tone="error" /> : null}
-            <KeepItButton label="Connect Our KeepIt" loading={operation === 'join'} loadingLabel="Connecting…" disabled={busy || effectivePartnerCode.length !== 6} onPress={() => void handleJoinPartner()} />
+            <KeepItButton label="Connect Partner" loading={operation === 'join'} loadingLabel="Connecting…" disabled={busy || effectivePartnerCode.length !== 6} onPress={() => void handleJoinPartner()} />
           </View>
+
           <View style={styles.soloBlock}>
-            <Text style={[styles.body, { color: colors.inkMuted, textAlign: 'center' }]}>You can keep Moments on your own and pair later from Settings.</Text>
             <KeepItButton label="Continue Solo" variant="secondary" disabled={navigationBusy} onPress={leavePairing} />
-            {screenError ? <InlineNotice message={screenError} tone="error" /> : null}
             <KeepItButton label="Sign Out" variant="ghost" loading={operation === 'signout'} loadingLabel="Signing Out…" disabled={busy} onPress={() => void handleSignOut()} />
           </View>
         </ScrollView>
@@ -434,18 +436,18 @@ export default function PairScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   flex: { flex: 1 },
-  scrollContent: { flexGrow: 1, maxWidth: APP_LAYOUT.maxContentWidth, width: '100%', alignSelf: 'center', gap: 24, paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: 16, paddingBottom: 32 },
-  header: { gap: 8 },
-  back: { alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 20 },
+  scrollContent: { flexGrow: 1, maxWidth: APP_LAYOUT.maxContentWidth, width: '100%', alignSelf: 'center', gap: 16, paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: 12, paddingBottom: 32 },
   actionText: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
   body: { fontSize: 15, lineHeight: 22 },
   secondary: { fontSize: 13, lineHeight: 20, fontVariant: ['tabular-nums'] },
-  card: { padding: APP_LAYOUT.cardPadding, gap: 16, borderCurve: 'continuous' },
-  codeBox: { minHeight: 100, padding: 16, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  codeDisplay: { fontSize: 28, lineHeight: 36, fontWeight: '600', letterSpacing: 3, fontVariant: ['tabular-nums'], textAlign: 'center' },
-  loadingRow: { gap: 10, alignItems: 'center' },
-  secondaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  secondaryButton: { flexGrow: 1, flexBasis: 120 },
-  partnerInput: { minHeight: 54, fontSize: 18, lineHeight: 26, fontWeight: '600', textAlign: 'center', fontVariant: ['tabular-nums'] },
-  soloBlock: { gap: 12 },
+  card: { padding: 16, gap: 12, borderWidth: 1, borderCurve: 'continuous' },
+  codeHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  codeBox: { minHeight: 68, padding: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  codeDisplay: { fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: 2.5, fontVariant: ['tabular-nums'], textAlign: 'center' },
+  loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  secondaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  secondaryButton: { flexGrow: 1, flexBasis: 110 },
+  joinRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  partnerInput: { minHeight: 50, fontSize: 17, lineHeight: 24, fontWeight: '600', textAlign: 'center', fontVariant: ['tabular-nums'] },
+  soloBlock: { gap: 8 },
 });

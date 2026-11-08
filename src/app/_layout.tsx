@@ -102,6 +102,7 @@ function NavigationGuard() {
   useRealtimePairing();
 
   const partner = useSessionStore((s) => s.partner);
+  const widgetLayout = useSessionStore((s) => s.widgetLayout);
   const globalBundleQuery = useQuery({
     queryKey: ['today-moment', couple?.id, user?.id],
     enabled: Boolean(couple?.id && user?.id),
@@ -122,9 +123,11 @@ function NavigationGuard() {
   });
   useWidgetSync({
     partnerName: partner?.display_name ?? 'You',
+    myName: user?.display_name ?? 'You',
     coupleId: couple?.id,
     momentBundle: globalBundleQuery.data,
     statusBundle: globalStatusQuery.data,
+    widgetLayout,
   });
 
   useEffect(() => {

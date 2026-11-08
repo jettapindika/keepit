@@ -96,7 +96,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                   onPress={() => router.push('/camera')}
                   style={[styles.capture, { backgroundColor: colors.accent }]}
                 >
-                  <SymbolView name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }} tintColor={colors.onAccent} size={22} />
+                  <SymbolView name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }} tintColor={colors.onAccent} size={18} />
                   {!compactLabels ? <Text style={[styles.label, { color: colors.onAccent }]}>Capture</Text> : null}
                 </AppPressable>
               ) : null}
@@ -118,7 +118,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                 style={[styles.tab, { backgroundColor: focused ? colors.accentSoft : 'transparent' }]}
               >
                 <View pointerEvents="none" style={styles.tabContent}>
-                  <SymbolView name={icons[route.name as keyof typeof icons]} tintColor={focused ? colors.ink : colors.inkMuted} size={21} />
+                  <SymbolView name={icons[route.name as keyof typeof icons]} tintColor={focused ? colors.ink : colors.inkMuted} size={18} />
                   {!compactLabels ? <Text style={[styles.label, { color: focused ? colors.ink : colors.inkMuted, fontWeight: focused ? '700' : '500' }]}>{label}</Text> : null}
                 </View>
               </AppPressable>
@@ -132,9 +132,9 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
 
 const styles = StyleSheet.create({
   wrapper: { position: 'absolute', bottom: 0, left: 12, right: 12, alignItems: 'center', zIndex: 20 },
-  dock: { width: '100%', maxWidth: 600, minHeight: 76, borderWidth: 1, borderRadius: 22, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6 },
-  tab: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  tabContent: { alignItems: 'center', justifyContent: 'center', gap: 5 },
-  capture: { flex: 1, minWidth: 0, minHeight: 60, borderRadius: 10, alignItems: 'center', justifyContent: 'center', gap: 5 },
-  label: { fontSize: 12, lineHeight: 16, fontWeight: '600', textAlign: 'center' },
+  dock: { width: '100%', maxWidth: 600, minHeight: 68, borderWidth: 1, borderRadius: 22, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6 },
+  tab: { flex: 1, minWidth: 0, minHeight: 54, borderRadius: 14, paddingVertical: 6, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
+  tabContent: { alignItems: 'center', justifyContent: 'center', gap: 4 },
+  capture: { flex: 1, minWidth: 0, minHeight: 54, borderRadius: 14, paddingVertical: 6, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  label: { fontSize: 11, lineHeight: 14, fontWeight: '600', textAlign: 'center' },
 });

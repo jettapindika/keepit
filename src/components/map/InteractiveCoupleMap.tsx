@@ -666,7 +666,7 @@ export function InteractiveCoupleMap({
       ) : (
         <EmptyState
           title="No active pins on map"
-          message="Tap a check-in chip below to place a pin."
+          message="Switch to Live mode above to share your pin."
         />
       )}
 

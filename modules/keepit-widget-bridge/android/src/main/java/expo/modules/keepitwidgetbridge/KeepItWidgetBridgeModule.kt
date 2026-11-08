@@ -199,7 +199,12 @@ class KeepItWidgetBridgeModule : Module() {
       val filterHex = json.optString("filterHex", "#D95D39")
       val filterActive = json.optBoolean("filterActive", false)
       val themeTop = json.optString("themeTop", "#191418")
+      val themeMid = json.optString("themeMid", "#100E12")
       val themeBottom = json.optString("themeBottom", "#070709")
+      val themeAccent = json.optString("themeAccent", "#D95D39")
+      val filterLabel = json.optString("filterLabel", "Natural")
+      val locationLabel = json.optString("locationLabel", "")
+      val musicTitle = json.optString("musicTitle", "")
       val filename = json.optString("filename", "keepit-moment.jpg").replace(Regex("[^a-zA-Z0-9._-]"), "_")
       val saveToGallery = json.optBoolean("saveToGallery", true)
 
@@ -211,16 +216,55 @@ class KeepItWidgetBridgeModule : Module() {
       val backBmp = decodeUriToBitmap(backUri)
       val frontBmp = decodeUriToBitmap(frontUri)
 
+      val safeHandle = authorName.lowercase().replace(Regex("[^a-z0-9_]+"), "").ifBlank { "keepit" }
       if (aspect == "9:16") {
         val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
           shader = LinearGradient(
-            0f, 0f, 0f, outH.toFloat(),
-            Color.parseColor(themeTop),
-            Color.parseColor(themeBottom),
+            0f, 0f, outW * 0.25f, outH.toFloat(),
+            intArrayOf(
+              Color.parseColor(themeTop),
+              Color.parseColor(themeMid),
+              Color.parseColor(themeBottom)
+            ),
+            floatArrayOf(0f, 0.52f, 1f),
             Shader.TileMode.CLAMP
           )
         }
         canvas.drawRect(0f, 0f, outW.toFloat(), outH.toFloat(), bgPaint)
+
+        val glowTopPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor(themeAccent)
+          alpha = 41
+        }
+        canvas.drawCircle(910f, 210f, 240f, glowTopPaint)
+        val glowBottomPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor(filterHex)
+          alpha = 36
+        }
+        canvas.drawCircle(170f, 1660f, 290f, glowBottomPaint)
+
+        // Top Header Pill matching preview
+        val headerRect = RectF(250f, 96f, 830f, 172f)
+        val headerBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor("#141416")
+          alpha = 224
+        }
+        canvas.drawRoundRect(headerRect, 38f, 38f, headerBg)
+        val headerBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          style = Paint.Style.STROKE
+          strokeWidth = 2f
+          color = Color.argb(46, 255, 255, 255)
+        }
+        canvas.drawRoundRect(headerRect, 38f, 38f, headerBorder)
+        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor(themeAccent) }
+        canvas.drawCircle(302f, 134f, 12f, dotPaint)
+        val headerTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.WHITE
+          textSize = 30f
+          typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+          textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("KeepIt Story · @$safeHandle", 556f, 145f, headerTextPaint)
       } else {
         canvas.drawColor(Color.parseColor("#141416"))
       }
@@ -275,6 +319,13 @@ class KeepItWidgetBridgeModule : Module() {
           42f, 42f, bodyPaint
         )
       }
+      if (filterActive) {
+        val pipTintPaint = Paint().apply {
+          color = Color.parseColor(filterHex)
+          alpha = 52
+        }
+        canvas.drawRect(pipRect, pipTintPaint)
+      }
       canvas.restore()
       val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -310,11 +361,45 @@ class KeepItWidgetBridgeModule : Module() {
         textSize = 22f
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textAlign = Paint.Align.LEFT
-        setShadowLayer(6f, 0f, 2f, Color.argb(210, 0, 0, 0))
       }
       canvas.drawText(timestampLabel, wmX, cardRect.bottom - 44f, wmTimePaint)
+      if (aspect == "9:16") {
+        val filterPillRect = RectF(cardRect.right - 224f, cardRect.top + 38f, cardRect.right - 38f, cardRect.top + 90f)
+        val filterPillBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor("#0B0B0C")
+          alpha = 199
+        }
+        canvas.drawRoundRect(filterPillRect, 26f, 26f, filterPillBg)
+        val filterPillText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor("#FAF7F2")
+          textSize = 24f
+          typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+          textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(filterLabel, cardRect.right - 131f, cardRect.top + 73f, filterPillText)
+      }
       canvas.restore()
       if (aspect == "9:16") {
+        val cardBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          style = Paint.Style.STROKE
+          strokeWidth = 3f
+          color = Color.argb(56, 255, 255, 255)
+        }
+        canvas.drawRoundRect(cardRect, 48f, 48f, cardBorderPaint)
+
+        val footerRect = RectF(90f, 1484f, 990f, 1754f)
+        val footerBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor("#141416")
+          alpha = 224
+        }
+        canvas.drawRoundRect(footerRect, 40f, 40f, footerBg)
+        val footerBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          style = Paint.Style.STROKE
+          strokeWidth = 2f
+          color = Color.argb(36, 255, 255, 255)
+        }
+        canvas.drawRoundRect(footerRect, 40f, 40f, footerBorder)
+
         val footerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
           color = Color.WHITE
           textSize = 34f
@@ -322,7 +407,27 @@ class KeepItWidgetBridgeModule : Module() {
           textAlign = Paint.Align.CENTER
         }
         val label = if (caption.isNotBlank()) "“$caption”" else "$authorName’s KeepIt Moment"
-        canvas.drawText(label, outW / 2f, 1560f, footerPaint)
+        canvas.drawText(label, outW / 2f, 1558f, footerPaint)
+
+        val metaParts = mutableListOf<String>()
+        if (locationLabel.isNotBlank()) metaParts.add(locationLabel)
+        if (musicTitle.isNotBlank()) metaParts.add(musicTitle)
+        val metaLine = metaParts.joinToString(" · ")
+        val metaPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor(if (metaLine.isNotBlank()) themeAccent else "#9A9AA0")
+          textSize = 25f
+          typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+          textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(if (metaLine.isNotBlank()) metaLine else "Dual-camera authentic capture", outW / 2f, 1624f, metaPaint)
+
+        val brandPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = Color.parseColor("#9A9AA0")
+          textSize = 24f
+          typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+          textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("KeepIt · Keep every moment, together", outW / 2f, 1704f, brandPaint)
       }
 
       val outFile = File(context.cacheDir, filename)

@@ -12,12 +12,17 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { deleteAccountAndAllData } from '@/api/extras';
+import { fetchTodayMomentBundle } from '@/api/moments';
 import { unpairCurrentCouple } from '@/api/pairing';
 import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
+import { fetchCoupleStatuses } from '@/api/statuses';
 import { AppPressable, AppSwitch, ConfirmModal, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
+import { WidgetPreviewCard } from '@/components/widget/WidgetPreviewCard';
+import { useWidgetSync } from '@/hooks/useWidgetSync';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, ThemeMode, useKeepItTheme } from '@/theme/tokens';
+import { useQuery } from '@tanstack/react-query';
 
 const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
   { label: 'Dark', value: 'dark' },
@@ -37,7 +42,8 @@ export default function SettingsScreen() {
   const setThemePreference = useSessionStore((s) => s.setThemePreference);
   const motionEnabled = useSessionStore((s) => s.motionEnabled);
   const setMotionEnabled = useSessionStore((s) => s.setMotionEnabled);
-  // Motion speed stays managed via store default; Appearance exposes a clean on/off toggle.
+  const widgetLayout = useSessionStore((s) => s.widgetLayout);
+  const setWidgetLayout = useSessionStore((s) => s.setWidgetLayout);
   const setPairing = useSessionStore((s) => s.setPairing);
   const signOut = useSessionStore((s) => s.signOut);
 
@@ -52,6 +58,24 @@ export default function SettingsScreen() {
   const preferenceSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'your partner';
+  const momentQuery = useQuery({
+    queryKey: ['today-moment', couple?.id, user?.id],
+    enabled: Boolean(couple?.id && user?.id),
+    queryFn: () => fetchTodayMomentBundle({ coupleId: couple!.id, userId: user!.id }),
+  });
+  const statusQuery = useQuery({
+    queryKey: ['couple-statuses', couple?.id, user?.id],
+    enabled: Boolean(couple?.id && user?.id),
+    queryFn: () => fetchCoupleStatuses({ coupleId: couple!.id, userId: user!.id }),
+  });
+  const widgetSync = useWidgetSync({
+    partnerName: partner?.display_name ?? 'Partner',
+    myName: user?.display_name ?? 'You',
+    coupleId: couple?.id,
+    momentBundle: momentQuery.data,
+    statusBundle: statusQuery.data,
+    widgetLayout,
+  });
   useEffect(() => () => {
     clearTimeout(preferenceSavedTimer.current ?? undefined);
   }, []);
@@ -191,10 +215,26 @@ export default function SettingsScreen() {
             <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Motion</Text>
             <AppSwitch accessibilityLabel="Enable motion animations" accessibilityState={{ checked: motionEnabled, disabled: preferenceSaving }} disabled={preferenceSaving} value={motionEnabled} onValueChange={(value) => void updatePreference(() => setMotionEnabled(value))} />
           </View>
+          <View style={styles.switchRow}>
+            <Text style={[styles.body, { color: colors.ink, fontFamily: type.fontSans, fontWeight: '600', flex: 1 }]}>Side-by-side widget photos</Text>
+            <AppSwitch accessibilityLabel="Show my photo and partner photo side by side on widget" accessibilityState={{ checked: widgetLayout === 'side_by_side', disabled: preferenceSaving }} disabled={preferenceSaving} value={widgetLayout === 'side_by_side'} onValueChange={(value) => void updatePreference(() => setWidgetLayout(value ? 'side_by_side' : 'partner_only'))} />
+          </View>
           {preferenceSaving ? <Text accessibilityLiveRegion="polite" style={[styles.muted, { color: colors.inkMuted }]}>Saving…</Text> : null}
           {preferenceSaved ? <InlineNotice tone="success" message="Preferences saved." /> : null}
           {preferenceError ? <View style={{ gap: 8 }}><InlineNotice message={preferenceError} tone="error" /><KeepItButton label="Retry saving preference" variant="secondary" disabled={preferenceSaving} onPress={() => { if (pendingPreference.current) void updatePreference(pendingPreference.current); }} /></View> : null}
         </View>
+
+        <WidgetPreviewCard
+          snapshot={widgetSync.snapshot}
+          lastSyncedAt={widgetSync.lastSyncedAt}
+          widgetLayout={widgetLayout}
+          onChangeWidgetLayout={(nextLayout) => void updatePreference(() => setWidgetLayout(nextLayout))}
+          onPressOpenApp={() => router.navigate('/(tabs)')}
+          onPressCaptureLocked={() => router.push('/camera')}
+          onPressSyncNow={() => widgetSync.forceSync()}
+          loading={momentQuery.isLoading}
+          syncError={widgetSync.error}
+        />
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.md }]}>
           <SectionHeader title="Session" subtitle="Signing out keeps your account. You can sign in again later." />
