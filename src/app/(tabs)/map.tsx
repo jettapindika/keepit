@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -14,6 +14,7 @@ import {
   formatRelativeTimeAgo,
   updateMyLocationShare,
 } from '@/api/locations';
+import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { InteractiveCoupleMap } from '@/components/map/InteractiveCoupleMap';
 import {
@@ -158,6 +159,7 @@ export default function MapScreen() {
   );
   const [pendingPlace, setPendingPlace] = useState<QuickCheckInOption | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const [notice, setNotice] = useState<{
     text: string;
     tone: 'info' | 'error' | 'success';
@@ -347,11 +349,45 @@ export default function MapScreen() {
           ? 'Waiting for Moment photo'
           : 'No pin yet';
 
+  const handlePullRefresh = async () => {
+    if (pullRefreshing) return;
+    setPullRefreshing(true);
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync().catch(() => {});
+    }
+    try {
+      await Promise.all([
+        useSessionStore.getState().refreshPairing(),
+        requestRealtimeCatchUpSync({ userId: user?.id, coupleId: couple?.id }),
+      ]);
+      const { promise: delayPromise, resolve: resolveDelay } = Promise.withResolvers<void>();
+      setTimeout(resolveDelay, 200);
+      await delayPromise;
+      await Promise.all([
+        locationQuery.refetch(),
+        queryClient.invalidateQueries({ queryKey: ['friends-list'] }),
+      ]);
+    } finally {
+      if (mounted.current) setPullRefreshing(false);
+    }
+  };
+
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <ScrollView
         ref={scroll}
         contentInsetAdjustmentBehavior="automatic"
+        alwaysBounceVertical
+        overScrollMode="always"
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void handlePullRefresh()}
+            tintColor={colors.ink}
+            colors={[colors.ink]}
+            progressBackgroundColor={colors.surfaceElevated}
+          />
+        }
         contentContainerStyle={styles.content}
       >
         <PageHeader

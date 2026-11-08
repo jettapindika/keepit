@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,6 +20,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
@@ -421,6 +423,8 @@ export default function ProfileScreen() {
     router.push('/camera');
   };
 
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+
   const handleRefreshPosts = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['user-posts'] }),
@@ -429,6 +433,28 @@ export default function ProfileScreen() {
     ]);
   };
 
+  const handlePullRefresh = async () => {
+    if (pullRefreshing) return;
+    setPullRefreshing(true);
+    setProfileError(null);
+    triggerHaptic();
+    try {
+      await Promise.all([
+        useSessionStore.getState().refreshPairing(),
+        requestRealtimeCatchUpSync({ userId, coupleId }),
+      ]);
+      const { promise: delayPromise, resolve: resolveDelay } = Promise.withResolvers<void>();
+      setTimeout(resolveDelay, 200);
+      await delayPromise;
+      await Promise.all([
+        bundleQuery.refetch(),
+        userPostsQuery.refetch(),
+        friendsQuery.refetch(),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  };
   const handleAddFriend = async () => {
     if (!friendInput.trim() || addingFriend) return;
     setProfileError(null);
@@ -551,6 +577,17 @@ export default function ProfileScreen() {
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        alwaysBounceVertical
+        overScrollMode="always"
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void handlePullRefresh()}
+            tintColor={colors.ink}
+            colors={[colors.ink]}
+            progressBackgroundColor={colors.surfaceElevated}
+          />
+        }
         contentContainerStyle={{
           paddingBottom: keyboardVisible ? Math.max(20, insets.bottom) : 148,
           maxWidth: 640,

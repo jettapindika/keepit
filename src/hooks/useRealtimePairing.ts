@@ -27,7 +27,13 @@ import {
 import { fetchFriendsCircle, matchesUserByQuery } from '@/api/social';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
-import { UserProfile } from '@/types/database';
+import { safeGetStorageItem } from '@/utils/safeAsyncStorage';
+import {
+  DirectMessageRecord,
+  LocationShareRecord,
+  StatusRecord,
+  UserProfile,
+} from '@/types/database';
 export function useRealtimePairing() {
   const queryClient = useQueryClient();
   const user = useSessionStore((s) => s.user);
@@ -215,6 +221,31 @@ export function useRealtimePairing() {
               })
               .catch(() => {});
           }
+          if (payload?.requesterId) {
+            const rawMsgs = await safeGetStorageItem('keepit.local_messages.v1');
+            if (rawMsgs) {
+              try {
+                const allMsgs = JSON.parse(rawMsgs) as DirectMessageRecord[];
+                const myDmsToRequester = allMsgs.filter(
+                  (dm) =>
+                    dm?.id &&
+                    dm.sender_id === currentUser.id &&
+                    dm.recipient_id === payload.requesterId
+                );
+                for (const dm of myDmsToRequester.slice(-15)) {
+                  await directoryChannel
+                    .send({
+                      type: 'broadcast',
+                      event: 'couple_packet',
+                      payload: { kind: 'dm_upsert', message: dm } satisfies CoupleSyncPacket,
+                    })
+                    .catch(() => {});
+                }
+              } catch {
+                // Ignore malformed local messages
+              }
+            }
+          }
         })();
       })
       .on('broadcast', { event: 'couple_packet' }, (msg) => {
@@ -236,6 +267,12 @@ export function useRealtimePairing() {
           ) {
             void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
             void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
+          } else if (
+            packet.kind === 'dm_upsert' ||
+            packet.kind === 'dm_reaction' ||
+            packet.kind === 'dm_snap_viewed'
+          ) {
+            void queryClient.invalidateQueries({ queryKey: ['direct-messages'] });
           }
         });
       })
@@ -367,6 +404,62 @@ export function useRealtimePairing() {
                 payload: { kind: 'moment_upsert', moment: shareable } satisfies CoupleSyncPacket,
               })
               .catch(() => {});
+          }
+          const [rawStatuses, rawLocations, rawMsgs] = await Promise.all([
+            safeGetStorageItem('keepit.local_statuses.v1'),
+            safeGetStorageItem('keepit.local_locations.v1'),
+            safeGetStorageItem('keepit.local_messages.v1'),
+          ]);
+          if (rawStatuses) {
+            try {
+              const statusMap = JSON.parse(rawStatuses) as Record<string, StatusRecord>;
+              const myStatus = statusMap[currentUser.id];
+              if (myStatus && new Date(myStatus.expires_at).getTime() > Date.now()) {
+                await syncChannel
+                  .send({
+                    type: 'broadcast',
+                    event: 'couple_packet',
+                    payload: { kind: 'status_upsert', status: myStatus } satisfies CoupleSyncPacket,
+                  })
+                  .catch(() => {});
+              }
+            } catch {
+              // Ignore malformed status cache
+            }
+          }
+          if (rawLocations) {
+            try {
+              const locMap = JSON.parse(rawLocations) as Record<string, LocationShareRecord>;
+              const myLoc = locMap[`${coupleId}:${currentUser.id}`];
+              if (myLoc) {
+                await syncChannel
+                  .send({
+                    type: 'broadcast',
+                    event: 'couple_packet',
+                    payload: { kind: 'location_upsert', location: myLoc } satisfies CoupleSyncPacket,
+                  })
+                  .catch(() => {});
+              }
+            } catch {
+              // Ignore malformed location cache
+            }
+          }
+          if (rawMsgs) {
+            try {
+              const allMsgs = JSON.parse(rawMsgs) as DirectMessageRecord[];
+              const myDms = allMsgs.filter((dm) => dm?.id && dm.sender_id === currentUser.id);
+              for (const dm of myDms.slice(-15)) {
+                await syncChannel
+                  .send({
+                    type: 'broadcast',
+                    event: 'couple_packet',
+                    payload: { kind: 'dm_upsert', message: dm } satisfies CoupleSyncPacket,
+                  })
+                  .catch(() => {});
+              }
+            } catch {
+              // Ignore malformed messages cache
+            }
           }
         })();
       })

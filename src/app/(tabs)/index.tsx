@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { fetchRecentNudges, sendPartnerNudge } from '@/api/extras';
@@ -11,6 +12,7 @@ import {
   isMomentPromptCheckIn,
   updateMomentCaption,
 } from '@/api/moments';
+import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import { fetchCoupleStatuses } from '@/api/statuses';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { DualMomentCard, LockedMomentCard } from '@/components/moment/MomentCards';
@@ -48,8 +50,8 @@ export default function HomeScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [nudging, setNudging] = useState(false);
   const [nudgeFeedback, setNudgeFeedback] = useState<string | null>(null);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const partnerName = partner?.display_name ?? 'Partner';
-
   const bundleQuery = useQuery({
     queryKey: ['today-moment', couple?.id, user?.id],
     enabled: Boolean(couple?.id && user?.id),
@@ -169,6 +171,33 @@ export default function HomeScreen() {
     await queryClient.invalidateQueries({ queryKey: ['user-posts'] });
   };
 
+  const handlePullRefresh = async () => {
+    if (pullRefreshing) return;
+    setPullRefreshing(true);
+    setActionError(null);
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync().catch(() => {});
+    }
+    try {
+      await Promise.all([
+        useSessionStore.getState().refreshPairing(),
+        requestRealtimeCatchUpSync({ userId: user?.id, coupleId: couple?.id }),
+      ]);
+      // Allow brief window for Realtime peer catch-up packets to land before reading cache
+      const { promise: delayPromise, resolve: resolveDelay } = Promise.withResolvers<void>();
+      setTimeout(resolveDelay, 220);
+      await delayPromise;
+      await Promise.all([
+        bundleQuery.refetch(),
+        statusQuery.refetch(),
+        nudgesQuery.refetch(),
+        queryClient.invalidateQueries({ queryKey: ['friends-list'] }),
+        queryClient.invalidateQueries({ queryKey: ['user-posts'] }),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  };
   const openCameraModal = (options?: {
     initialLens?: 'back' | 'front';
     initialMode?: 'photo' | 'video';
@@ -230,6 +259,17 @@ export default function HomeScreen() {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
+        alwaysBounceVertical
+        overScrollMode="always"
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void handlePullRefresh()}
+            tintColor={colors.ink}
+            colors={[colors.ink]}
+            progressBackgroundColor={colors.surfaceElevated}
+          />
+        }
         contentContainerStyle={[
           styles.content,
           {

@@ -207,6 +207,52 @@ export async function syncDirectoryPresence(params: {
     })
     .catch(() => {});
 }
+
+export async function requestRealtimeCatchUpSync(params?: {
+  userId?: string | null;
+  coupleId?: string | null;
+}): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  const currentUserId = params?.userId ?? useSessionStore.getState().user?.id;
+  if (!currentUserId) return;
+
+  const tasks: Promise<unknown>[] = [];
+
+  if (activeDirectoryChannel) {
+    tasks.push(
+      activeDirectoryChannel
+        .send({
+          type: 'broadcast',
+          event: 'RequestRecentMoments',
+          payload: { requesterId: currentUserId },
+        })
+        .catch(() => {})
+    );
+  }
+
+  const effectiveCoupleId = params?.coupleId ?? useSessionStore.getState().couple?.id;
+  if (
+    activeCoupleChannel &&
+    effectiveCoupleId &&
+    !effectiveCoupleId.startsWith('solo_') &&
+    activeCoupleChannelId === effectiveCoupleId
+  ) {
+    tasks.push(
+      activeCoupleChannel
+        .send({
+          type: 'broadcast',
+          event: 'RequestCoupleMoments',
+          payload: { requesterId: currentUserId },
+        })
+        .catch(() => {})
+    );
+  }
+
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+}
+
 export async function broadcastCoupleSync(
   coupleId: string,
   packet: CoupleSyncPacket

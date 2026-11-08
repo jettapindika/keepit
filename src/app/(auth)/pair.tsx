@@ -8,6 +8,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
   ScrollView,
   Share,
   StyleSheet,
@@ -67,6 +68,7 @@ export default function PairScreen() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [screenError, setScreenError] = useState<string | null>(null);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const incomingCodeParam = (() => {
     const rawCode =
@@ -316,10 +318,41 @@ export default function PairScreen() {
     }
   };
 
+  const handlePullRefresh = async () => {
+    if (pullRefreshing || busy) return;
+    setPullRefreshing(true);
+    try {
+      await useSessionStore.getState().refreshPairing();
+      const latestCouple = useSessionStore.getState().couple;
+      if (latestCouple && !latestCouple.id.startsWith('solo_') && latestCouple.state === 'active') {
+        if (mounted.current) router.navigate('/(tabs)');
+        return;
+      }
+      await loadInvite(false);
+    } finally {
+      if (mounted.current) setPullRefreshing(false);
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined} style={styles.flex}>
-        <ScrollView contentInsetAdjustmentBehavior="automatic" keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          alwaysBounceVertical
+          overScrollMode="always"
+          refreshControl={
+            <RefreshControl
+              refreshing={pullRefreshing}
+              onRefresh={() => void handlePullRefresh()}
+              tintColor={colors.ink}
+              colors={[colors.ink]}
+              progressBackgroundColor={colors.surface}
+            />
+          }
+          contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
             <AppPressable accessibilityRole="button" accessibilityLabel="Back" accessibilityState={{ disabled: navigationBusy }} disabled={navigationBusy} onPress={leavePairing} style={styles.back}>
               <Text style={[styles.actionText, { color: colors.inkMuted, fontFamily: type.fontSans }]}>Back</Text>

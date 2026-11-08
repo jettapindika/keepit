@@ -4,11 +4,12 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { fetchMonthMemories } from '@/api/extras';
 import { DEFAULT_WARM_BLURHASH } from '@/api/moments';
+import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
@@ -61,6 +62,7 @@ export default function MemoriesScreen() {
   const [cursorMonth, setCursorMonth] = useState(currentMonth);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [recapOpen, setRecapOpen] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const myName = user?.display_name ?? 'You';
   const partnerName = partner?.display_name ?? 'Partner';
@@ -169,11 +171,44 @@ export default function MemoriesScreen() {
     : memoriesQuery.isError && !streak
       ? '?'
       : streak?.longest_count ?? 0;
+  const handlePullRefresh = async () => {
+    if (pullRefreshing) return;
+    setPullRefreshing(true);
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync().catch(() => {});
+    }
+    try {
+      await Promise.all([
+        useSessionStore.getState().refreshPairing(),
+        requestRealtimeCatchUpSync({ userId: user?.id, coupleId: couple?.id }),
+      ]);
+      const { promise: delayPromise, resolve: resolveDelay } = Promise.withResolvers<void>();
+      setTimeout(resolveDelay, 200);
+      await delayPromise;
+      await Promise.all([
+        memoriesQuery.refetch(),
+        queryClient.invalidateQueries({ queryKey: ['today-moment', couple?.id] }),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        alwaysBounceVertical
+        overScrollMode="always"
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void handlePullRefresh()}
+            tintColor={colors.ink}
+            colors={[colors.ink]}
+            progressBackgroundColor={colors.surfaceElevated}
+          />
+        }
         contentContainerStyle={[
           styles.content,
           { paddingBottom: APP_LAYOUT.tabBarClearance + insets.bottom },

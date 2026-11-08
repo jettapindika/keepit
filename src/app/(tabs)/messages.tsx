@@ -6,6 +6,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import {
   fetchConversationMessages,
   fetchFriendsCircle,
@@ -157,7 +159,31 @@ export default function MessagesScreen() {
   const [sending, setSending] = useState(false);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
+  const handlePullRefresh = async () => {
+    if (pullRefreshing) return;
+    setPullRefreshing(true);
+    setErrorMsg(null);
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync().catch(() => {});
+    }
+    try {
+      await Promise.all([
+        useSessionStore.getState().refreshPairing(),
+        requestRealtimeCatchUpSync({ userId, coupleId: couple?.id }),
+      ]);
+      const { promise: delayPromise, resolve: resolveDelay } = Promise.withResolvers<void>();
+      setTimeout(resolveDelay, 200);
+      await delayPromise;
+      await Promise.all([
+        friendsQuery.refetch(),
+        messagesQuery.refetch(),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  };
   // Snap Once active 15s countdowns + sender local preview toggle
   const [snapCountdowns, setSnapCountdowns] = useState<Record<string, number>>({});
   const [senderPreviewOpenIds, setSenderPreviewOpenIds] = useState<Record<string, boolean>>({});
@@ -475,6 +501,17 @@ export default function MessagesScreen() {
         {/* Chat Message Thread */}
         <ScrollView
           ref={scrollRef as never}
+          alwaysBounceVertical
+          overScrollMode="always"
+          refreshControl={
+            <RefreshControl
+              refreshing={pullRefreshing}
+              onRefresh={() => void handlePullRefresh()}
+              tintColor={colors.ink}
+              colors={[colors.ink]}
+              progressBackgroundColor={colors.surfaceElevated}
+            />
+          }
           contentContainerStyle={[
             styles.threadContent,
             {

@@ -4,6 +4,7 @@ import {
   Alert,
   BackHandler,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,6 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { deleteAccountAndAllData } from '@/api/extras';
 import { unpairCurrentCouple } from '@/api/pairing';
+import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import { AppPressable, AppSwitch, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
@@ -47,10 +49,10 @@ export default function SettingsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [preferenceSaving, setPreferenceSaving] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
   const pendingPreference = useRef<(() => Promise<void>) | null>(null);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const partnerName = partner?.display_name ?? 'your partner';
-
   const updatePreference = async (action: () => Promise<void>) => {
     if (preferenceSaving) return;
     pendingPreference.current = action;
@@ -124,10 +126,36 @@ export default function SettingsScreen() {
     catch (err) { setError(err instanceof Error ? err.message : 'Could not sign out right now. Try again.'); }
     finally { setBusy(null); }
   };
+  const handlePullRefresh = async () => {
+    if (pullRefreshing || busy !== null) return;
+    setPullRefreshing(true);
+    setError(null);
+    try {
+      await Promise.all([
+        useSessionStore.getState().refreshPairing(),
+        requestRealtimeCatchUpSync({ userId: user?.id, coupleId: couple?.id }),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}> 
-      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[styles.content, { paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: spacing.lg, paddingBottom: APP_LAYOUT.tabBarClearance + insets.bottom }]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        alwaysBounceVertical
+        overScrollMode="always"
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void handlePullRefresh()}
+            tintColor={colors.ink}
+            colors={[colors.ink]}
+            progressBackgroundColor={colors.surfaceElevated}
+          />
+        }
+        contentContainerStyle={[styles.content, { paddingHorizontal: APP_LAYOUT.pageInset, paddingTop: spacing.lg, paddingBottom: APP_LAYOUT.tabBarClearance + insets.bottom }]}>
         <PageHeader title="Settings" subtitle="Account, couple space, and how KeepIt feels." onBack={busy ? undefined : () => { if (confirmAction) setConfirmAction(null); else router.replace('/(tabs)'); }} backLabel={confirmAction ? 'Cancel confirmation' : 'Back to Home'} />
 
         <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radii.group, padding: APP_LAYOUT.cardPadding, gap: spacing.sm }]}>

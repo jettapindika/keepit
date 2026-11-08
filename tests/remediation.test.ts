@@ -53,6 +53,7 @@ import {
   buildUserDirectoryChannelTopic,
   emitDirectoryInviteAnnounce,
   emitDirectoryUserAnnounce,
+  requestRealtimeCatchUpSync,
   subscribeDirectoryInviteAnnounce,
   subscribeDirectoryUserAnnounce,
 } from '@/api/realtimeSync';
@@ -637,7 +638,7 @@ describe('P1-2 & P1-3: Friends Circle, Username Uniqueness & Privacy Enforcement
     assert.equal(buildCoupleSyncChannelTopic('c_1'), 'keepit:couple_sync:c_1');
     assert.equal(buildDirectMessageSyncChannelTopic('a::b'), 'keepit:dm_sync:a::b');
     assert.equal(buildUserDirectoryChannelTopic(), 'keepit:user_directory');
-
+    await requestRealtimeCatchUpSync({ userId, coupleId: 'solo_test' });
     await removeFriend({ userId, friendRecordId: maya.id });
     await removeFriend({ userId, friendRecordId: addedRemote.id });
     const afterRemoveAll = await fetchFriendsCircle({ userId });
