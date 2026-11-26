@@ -13,8 +13,12 @@ export interface KeepItPalette {
   sheetSurface: string;
   surface: string;
   surfaceElevated: string;
+  surfaceObject: string;
   surfacePressed: string;
   border: string;
+  borderGlass: string;
+  gridLine: string;
+  topHighlight: string;
   chromeGlass: string;
   chromeOutline: string;
   chromeHighlight: string;
@@ -28,88 +32,116 @@ export interface KeepItPalette {
   onAccent: string;
   badgeBg: string;
   badgeFg: string;
+  blue300: string;
+  blue400: string;
+  blue500: string;
+  blue700: string;
+  blue900: string;
+  blueGlow: string;
   success: string;
   warning: string;
   danger: string;
   dangerSoft: string;
 }
 
-// Threads Light System: primary default palette from design.md
+// Dark Bento / Electric Blue Light Counterpart (WCAG AA verified)
 export const LIGHT_PALETTE: KeepItPalette = {
-  primary: '#1876F2',
-  secondary: '#000000',
-  tertiary: '#F5F5F5',
+  primary: '#2F55FF',
+  secondary: '#0A0A0D',
+  tertiary: '#EEF1F8',
   neutral: '#FFFFFF',
-  canvas: '#FFFFFF',
+  canvas: '#F4F5F7',
   sheetSurface: '#FFFFFF',
-  surface: '#F5F5F5',
-  surfaceElevated: '#FFFFFF',
-  surfacePressed: '#EBEBEB',
-  border: '#00000026',
+  surface: '#FFFFFF',
+  surfaceElevated: '#EEF1F8',
+  surfaceObject: '#E5E9F5',
+  surfacePressed: '#E2E7F5',
+  border: 'rgba(10,16,40,0.09)',
+  borderGlass: 'rgba(10,16,40,0.22)',
+  gridLine: 'rgba(10,16,40,0.05)',
+  topHighlight: 'rgba(255,255,255,0.9)',
   chromeGlass: '#FFFFFF',
-  chromeOutline: '#00000026',
-  chromeHighlight: '#F5F5F5',
-  ink: '#000000',
-  inkMuted: '#5C5C5C',
-  placeholder: '#8E8E8E',
-  controlBorder: '#00000026',
-  focusRing: '#1876F2',
-  accent: '#000000',
-  accentSoft: '#F5F5F5',
+  chromeOutline: 'rgba(10,16,40,0.14)',
+  chromeHighlight: '#EEF1F8',
+  ink: '#0A0A0D',
+  inkMuted: '#52525B',
+  placeholder: '#6B7280',
+  controlBorder: 'rgba(10,16,40,0.16)',
+  focusRing: '#2F55FF',
+  accent: '#2F55FF',
+  accentSoft: 'rgba(47,85,255,0.10)',
   onAccent: '#FFFFFF',
-  badgeBg: '#000000',
+  badgeBg: '#0A0A0D',
   badgeFg: '#FFFFFF',
-  success: '#1876F2',
-  warning: '#000000',
+  blue300: '#2F55FF',
+  blue400: '#2F55FF',
+  blue500: '#2F55FF',
+  blue700: '#122A9E',
+  blue900: '#0A1650',
+  blueGlow: 'rgba(47,85,255,0.25)',
+  success: '#2F55FF',
+  warning: '#122A9E',
   danger: '#D92D20',
   dangerSoft: '#FEF3F2',
 };
 
-// Threads Dark Counterpart: preserves the same system-ui hierarchy, radii, and #1876F2 blue focus/active accent
+// Dark Bento / Electric Blue Default Palette (black-first, blue-only chroma, WCAG AA verified)
 export const DARK_PALETTE: KeepItPalette = {
-  primary: '#1876F2',
+  primary: '#2F55FF',
   secondary: '#FFFFFF',
-  tertiary: '#181818',
-  neutral: '#101010',
-  canvas: '#0A0A0A',
-  sheetSurface: '#121212',
-  surface: '#181818',
-  surfaceElevated: '#121212',
-  surfacePressed: '#242424',
-  border: '#FFFFFF26',
-  chromeGlass: '#121212',
-  chromeOutline: '#FFFFFF26',
-  chromeHighlight: '#1E1E1E',
+  tertiary: '#141414',
+  neutral: '#0D0D0D',
+  canvas: '#000000',
+  sheetSurface: '#0D0D0D',
+  surface: '#0D0D0D',
+  surfaceElevated: '#141414',
+  surfaceObject: '#1C1C1E',
+  surfacePressed: '#1F1F24',
+  border: 'rgba(255,255,255,0.08)',
+  borderGlass: 'rgba(255,255,255,0.22)',
+  gridLine: 'rgba(255,255,255,0.05)',
+  topHighlight: 'rgba(255,255,255,0.12)',
+  chromeGlass: '#0D0D0D',
+  chromeOutline: 'rgba(255,255,255,0.10)',
+  chromeHighlight: '#1C1C1E',
   ink: '#FFFFFF',
-  inkMuted: '#A3A3A3',
-  placeholder: '#8E8E8E',
-  controlBorder: '#FFFFFF26',
-  focusRing: '#1876F2',
-  accent: '#FFFFFF',
-  accentSoft: '#222222',
-  onAccent: '#000000',
-  badgeBg: '#FFFFFF',
-  badgeFg: '#0A0A0A',
-  success: '#4796FF',
-  warning: '#E5E5E5',
-  danger: '#F04438',
-  dangerSoft: '#2C1514',
+  inkMuted: '#999999',
+  placeholder: '#8A8A8E',
+  controlBorder: 'rgba(255,255,255,0.14)',
+  focusRing: '#4B73FF',
+  accent: '#2F55FF',
+  accentSoft: 'rgba(47,85,255,0.16)',
+  onAccent: '#FFFFFF',
+  badgeBg: '#1C1C1E',
+  badgeFg: '#FFFFFF',
+  blue300: '#8FA8FF',
+  blue400: '#4B73FF',
+  blue500: '#2F55FF',
+  blue700: '#122A9E',
+  blue900: '#0A1650',
+  blueGlow: 'rgba(47,85,255,0.45)',
+  success: '#4B73FF',
+  warning: '#8FA8FF',
+  danger: '#FF6B6B',
+  dangerSoft: '#1C1011',
 };
 
 export const RADII = {
   none: 0,
-  sm: 4,
-  md: 8,
-  lg: 20,
+  sm: 6,
+  tile: 6,
+  md: 10,
+  navItem: 12,
+  buttonSm: 12,
+  input: 14,
+  button: 14,
+  group: 12,
+  card: 16,
+  photo: 18,
+  lg: 18,
   xl: 24,
+  pill: 999,
   full: 9999,
-  group: 24,
-  photo: 20,
-  card: 24,
-  button: 20,
-  input: 20,
-  navItem: 8,
-  pill: 9999,
 } as const;
 
 export const SPACING = {
@@ -143,44 +175,44 @@ export const APP_LAYOUT = {
 
 const SYSTEM_UI_STACK =
   Platform.OS === 'web'
-    ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    ? '"Inter Tight", "Inter", "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     : undefined;
 
 export const THREADS_TYPOGRAPHY = {
   headlineDisplay: {
     fontFamily: SYSTEM_UI_STACK,
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: '600' as const,
-    lineHeight: 35,
-    letterSpacing: 0,
+    lineHeight: 36,
+    letterSpacing: -0.8,
   },
   headlineLg: {
     fontFamily: SYSTEM_UI_STACK,
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '600' as const,
     lineHeight: 28,
-    letterSpacing: 0,
+    letterSpacing: -0.6,
   },
   headlineMd: {
     fontFamily: SYSTEM_UI_STACK,
     fontSize: 22,
     fontWeight: '600' as const,
-    lineHeight: 26,
-    letterSpacing: 0,
+    lineHeight: 24,
+    letterSpacing: -0.6,
   },
   headlineSm: {
     fontFamily: SYSTEM_UI_STACK,
     fontSize: 20,
     fontWeight: '600' as const,
-    lineHeight: 24,
-    letterSpacing: 0,
+    lineHeight: 22,
+    letterSpacing: -0.4,
   },
   titleMd: {
     fontFamily: SYSTEM_UI_STACK,
     fontSize: 18,
     fontWeight: '600' as const,
     lineHeight: 22,
-    letterSpacing: 0,
+    letterSpacing: -0.4,
   },
   bodyLg: {
     fontFamily: SYSTEM_UI_STACK,
@@ -208,14 +240,14 @@ export const THREADS_TYPOGRAPHY = {
     fontSize: 16,
     fontWeight: '600' as const,
     lineHeight: 20,
-    letterSpacing: 0,
+    letterSpacing: -0.2,
   },
   labelMd: {
     fontFamily: SYSTEM_UI_STACK,
     fontSize: 15,
     fontWeight: '600' as const,
     lineHeight: 18,
-    letterSpacing: 0,
+    letterSpacing: -0.15,
   },
   labelSm: {
     fontFamily: SYSTEM_UI_STACK,
@@ -228,13 +260,13 @@ export const THREADS_TYPOGRAPHY = {
     fontFamily: SYSTEM_UI_STACK,
     fontSize: 12,
     fontWeight: '400' as const,
-    lineHeight: 15,
+    lineHeight: 16,
     letterSpacing: 0,
   },
 } as const;
 
 export const MOCHY_TYPE = {
-  titleTracking: 0,
+  titleTracking: -0.6,
   bodyTracking: 0,
   fontSans: SYSTEM_UI_STACK,
   fontMono: SYSTEM_UI_STACK,
@@ -244,10 +276,10 @@ export const MAX_WALLET_LAYOUT = {
   viewportInset: 16,
   sheetHeight: 420,
   sheetBottom: 24,
-  sheetRadius: 24,
+  sheetRadius: 16,
   contentInset: 24,
   contentWidth: 342,
-  buttonRadius: 20,
+  buttonRadius: 14,
   primaryButtonHeight: 56,
   secondaryButtonHeight: 52,
   artWidth: 302,
@@ -258,8 +290,8 @@ export const MAX_WALLET_LAYOUT = {
 export const MAX_WALLET_TYPE = {
   sansFamily: SYSTEM_UI_STACK,
   monoFamily: SYSTEM_UI_STACK,
-  titleSize: 32,
-  titleLineHeight: 35,
+  titleSize: 34,
+  titleLineHeight: 37,
   bodySize: 16,
   bodyLineHeight: 23,
   primarySize: 15,

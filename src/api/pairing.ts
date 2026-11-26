@@ -8,7 +8,12 @@ import {
   syncDirectoryPresence,
 } from '@/api/realtimeSync';
 import { buildDefaultUsername, buildFriendCode } from '@/api/social';
-import { isSchemaNotMigratedError, isSupabaseConfigured, supabase } from '@/api/supabase';
+import {
+  isNetworkOrTransientError,
+  isSchemaNotMigratedError,
+  isSupabaseConfigured,
+  supabase,
+} from '@/api/supabase';
 import {
   MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS,
   safeGetStorageItem,
@@ -122,6 +127,12 @@ function mapRpcError(err: unknown): PairingError {
   }
   if (err instanceof PairingError) {
     return err;
+  }
+  if (isNetworkOrTransientError(err)) {
+    return new PairingError('NETWORK_ERROR', KNOWN_ERROR_MESSAGES.NETWORK_ERROR);
+  }
+  if (rawMessage) {
+    return new PairingError('NETWORK_ERROR', rawMessage);
   }
   return new PairingError('NETWORK_ERROR', KNOWN_ERROR_MESSAGES.NETWORK_ERROR);
 }

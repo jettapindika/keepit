@@ -1,12 +1,14 @@
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
 import { AppPressable, SectionHeader } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { WidgetLayoutMode, WidgetSnapshotPayload } from '@/types/database';
+import { handleRovingKeyDown } from '@/utils/a11y';
 import { formatMomentWatermarkTimestamp } from '@/utils/momentExport';
 import { isKeepItWidgetPinned, requestPinKeepItWidgetDetailed } from '../../../modules/keepit-widget-bridge';
 
@@ -60,6 +62,7 @@ export function WidgetPreviewCard({
   const [error, setError] = useState<string | null>(null);
   const [failedPhotoUri, setFailedPhotoUri] = useState<string | null>(null);
   const [failedMyPhotoUri, setFailedMyPhotoUri] = useState<string | null>(null);
+  const layoutOptionRefs = useRef<(View | null)[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -153,7 +156,7 @@ export function WidgetPreviewCard({
   );
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.group }]}>
+    <BentoTile variant="spotlight" pattern="dots" radius={radii.card} style={styles.card}>
       <SectionHeader
         title="Home Screen widget"
         subtitle={
@@ -180,19 +183,34 @@ export function WidgetPreviewCard({
             { value: 'side_by_side', label: 'Side by Side' },
             { value: 'partner_only', label: 'Single Photo' },
           ] as const
-        ).map((opt) => {
+        ).map((opt, idx, arr) => {
           const selected = effectiveLayout === opt.value;
           return (
             <AppPressable
               key={opt.value}
+              ref={(el) => {
+                layoutOptionRefs.current[idx] = el as View | null;
+              }}
               accessibilityRole="radio"
               accessibilityLabel={`${opt.label} widget layout`}
               accessibilityState={{ checked: selected }}
               onPress={() => handleSelectLayout(opt.value)}
+              {...(Platform.OS === 'web'
+                ? ({
+                    onKeyDown: (event: unknown) =>
+                      handleRovingKeyDown(event, idx, arr.length, (nextIndex) => {
+                        const nextOpt = arr[nextIndex];
+                        if (nextOpt) {
+                          handleSelectLayout(nextOpt.value);
+                          (layoutOptionRefs.current[nextIndex] as unknown as { focus?: () => void } | null)?.focus?.();
+                        }
+                      }),
+                  } as Record<string, unknown>)
+                : {})}
               style={[
                 styles.segmentedOption,
                 {
-                  backgroundColor: selected ? colors.ink : 'transparent',
+                  backgroundColor: selected ? colors.primary : 'transparent',
                   borderRadius: radii.input - 2,
                 },
               ]}
@@ -200,7 +218,7 @@ export function WidgetPreviewCard({
               <Text
                 style={[
                   styles.segmentedText,
-                  { color: selected ? colors.canvas : colors.inkMuted },
+                  { color: selected ? colors.onAccent : colors.inkMuted },
                 ]}
               >
                 {opt.label}
@@ -342,7 +360,7 @@ export function WidgetPreviewCard({
           />
         ) : null}
       </View>
-    </View>
+    </BentoTile>
   );
 }
 
@@ -361,7 +379,7 @@ const styles = StyleSheet.create({
   },
   segmentedOption: {
     flex: 1,
-    minHeight: 38,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,

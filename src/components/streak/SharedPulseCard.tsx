@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import React, { useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { BentoTile, BentoToggleGlyph, BentoWatchStat } from '@/components/ui/BentoPrimitives';
 import { KeepItButton, RevealOnAppear } from '@/components/ui/Primitives';
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -79,15 +80,12 @@ export function SharedPulseCard({
 
   return (
     <RevealOnAppear revealKey={`shared-pulse-${currentCount}-${myPosted}-${partnerPosted}`}>
-      <View
-        style={[
-          styles.compactCard,
-          {
-            backgroundColor: colors.surface,
-            borderRadius: radii.card,
-            borderColor: goldenToday ? colors.success : colors.border,
-          },
-        ]}>
+      <BentoTile
+        variant={goldenToday ? 'bottomGlow' : 'spotlight'}
+        pattern={goldenToday ? 'none' : 'dots'}
+        grain
+        radius={radii.card}
+        style={styles.compactCard}>
         {/* Single Compact Strip (Tap to toggle 7-day chain & details) */}
         <AppPressable
           accessibilityRole="button"
@@ -280,7 +278,7 @@ export function SharedPulseCard({
             ) : null}
           </View>
         ) : null}
-      </View>
+      </BentoTile>
     </RevealOnAppear>
   );
 }
@@ -303,82 +301,83 @@ export function StreakMilestoneShelf({ streak }: StreakMilestoneShelfProps) {
   const { next: nextChapter } = getCurrentAndNextChapter(currentCount);
 
   return (
-    <View style={[styles.shelfCard, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
-      {/* Single 4-Stat Compact Bar */}
-      <View style={styles.compactStatsRow}>
-        <View style={styles.statCell}>
-          <Text style={[styles.statNum, { color: colors.ink, fontFamily: type.fontSans }]}>
-            {currentCount}d
-          </Text>
-          <Text style={[styles.statCaption, { color: colors.inkMuted }]}>Pulse</Text>
-        </View>
-        <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.statCell}>
-          <Text style={[styles.statNum, { color: colors.ink, fontFamily: type.fontSans }]}>
-            {longestCount}d
-          </Text>
-          <Text style={[styles.statCaption, { color: colors.inkMuted }]}>Best</Text>
-        </View>
-        <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.statCell}>
-          <Text style={[styles.statNum, { color: colors.success, fontFamily: type.fontSans }]}>
-            {goldenSyncCount}
-          </Text>
-          <Text style={[styles.statCaption, { color: colors.inkMuted }]}>On-Time</Text>
-        </View>
-        <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.statCell}>
-          <Text style={[styles.statNum, { color: colors.ink, fontFamily: type.fontSans }]}>
-            {graceShields}/{MAX_GRACE_SHIELDS}
-          </Text>
-          <Text style={[styles.statCaption, { color: colors.inkMuted }]}>Shields</Text>
-        </View>
+    <View style={styles.shelfWrap}>
+      {/* Asymmetric Dark Bento Stats Grid */}
+      <View style={styles.shelfBentoRow}>
+        <BentoTile variant="dark" pattern="dots" grain radius={radii.card} style={styles.shelfWatchTile}>
+          <BentoWatchStat label="Pulse" value={`${currentCount}d`} caption="Current streak" />
+        </BentoTile>
+
+        <BentoTile variant="bottomGlow" grain radius={radii.card} style={styles.shelfDetailTile}>
+          <View style={styles.shelfDetailTop}>
+            <BentoToggleGlyph size={22} tone="blueTile" />
+            <Text style={[styles.shelfDetailEyebrow, { fontFamily: type.fontSans }]}>Pulse Metrics</Text>
+          </View>
+          <View style={styles.shelfDetailGrid}>
+            <View style={styles.shelfMetricCell}>
+              <Text style={[styles.shelfMetricNum, { fontFamily: type.fontSans }]}>{longestCount}d</Text>
+              <Text style={styles.shelfMetricLabel}>Best</Text>
+            </View>
+            <View style={styles.shelfMetricCell}>
+              <Text style={[styles.shelfMetricNum, { fontFamily: type.fontSans }]}>{goldenSyncCount}</Text>
+              <Text style={styles.shelfMetricLabel}>On-Time</Text>
+            </View>
+            <View style={styles.shelfMetricCell}>
+              <Text style={[styles.shelfMetricNum, { fontFamily: type.fontSans }]}>
+                {graceShields}/{MAX_GRACE_SHIELDS}
+              </Text>
+              <Text style={styles.shelfMetricLabel}>Shields</Text>
+            </View>
+          </View>
+        </BentoTile>
       </View>
 
-      {/* Single Horizontal Scrollable Milestone Pill Strip */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chapterStrip}>
-        {STREAK_MILESTONES.map((chapter) => {
-          const unlocked = unlockedSet.has(chapter.days);
-          const isNext = nextChapter?.days === chapter.days;
-          const remaining = Math.max(0, chapter.days - currentCount);
+      {/* Milestone Chapter Strip */}
+      <BentoTile variant="spotlight" radius={radii.card} style={styles.shelfCard}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chapterStrip}>
+          {STREAK_MILESTONES.map((chapter) => {
+            const unlocked = unlockedSet.has(chapter.days);
+            const isNext = nextChapter?.days === chapter.days;
+            const remaining = Math.max(0, chapter.days - currentCount);
 
-          return (
-            <View
-              key={chapter.days}
-              style={[
-                styles.chapterChip,
-                {
-                  backgroundColor: unlocked ? colors.ink : colors.canvas,
-                  borderColor: unlocked
-                    ? colors.ink
-                    : isNext
-                      ? colors.controlBorder
-                      : colors.border,
-                  borderStyle: !unlocked && isNext ? 'dashed' : 'solid',
-                  borderRadius: radii.input,
-                },
-              ]}>
-              <Text
+            return (
+              <View
+                key={chapter.days}
                 style={[
-                  styles.chipDays,
-                  { color: unlocked ? colors.canvas : colors.ink, fontFamily: type.fontMono },
+                  styles.chapterChip,
+                  {
+                    backgroundColor: unlocked ? colors.primary : colors.surfaceElevated,
+                    borderColor: unlocked
+                      ? 'rgba(255,255,255,0.22)'
+                      : isNext
+                        ? colors.blue400
+                        : colors.border,
+                    borderStyle: !unlocked && isNext ? 'dashed' : 'solid',
+                    borderRadius: radii.input,
+                  },
                 ]}>
-                {chapter.days}d · {chapter.title}
-              </Text>
-              <Text
-                style={[
-                  styles.chipMeta,
-                  { color: unlocked ? colors.canvas : colors.inkMuted },
-                ]}>
-                {unlocked ? `#${chapter.stampCode}` : isNext ? `${remaining}d left` : 'Locked'}
-              </Text>
-            </View>
-          );
-        })}
-      </ScrollView>
+                <Text
+                  style={[
+                    styles.chipDays,
+                    { color: unlocked ? '#FFFFFF' : colors.ink, fontFamily: type.fontMono },
+                  ]}>
+                  {chapter.days}d · {chapter.title}
+                </Text>
+                <Text
+                  style={[
+                    styles.chipMeta,
+                    { color: unlocked ? 'rgba(255,255,255,0.78)' : colors.inkMuted },
+                  ]}>
+                  {unlocked ? `#${chapter.stampCode}` : isNext ? `${remaining}d left` : 'Locked'}
+                </Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </BentoTile>
     </View>
   );
 }
@@ -387,8 +386,64 @@ const styles = StyleSheet.create({
   compactCard: {
     paddingHorizontal: 14,
     paddingVertical: 12,
-    borderWidth: 1,
     gap: 10,
+  },
+  shelfWrap: {
+    gap: 10,
+  },
+  shelfBentoRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'stretch',
+  },
+  shelfWatchTile: {
+    flex: 0.9,
+    minWidth: 0,
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shelfDetailTile: {
+    flex: 1.35,
+    minWidth: 0,
+    padding: 16,
+    justifyContent: 'space-between',
+    gap: 14,
+  },
+  shelfDetailTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  shelfDetailEyebrow: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  shelfDetailGrid: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  shelfMetricCell: {
+    gap: 2,
+    minWidth: 0,
+  },
+  shelfMetricNum: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '600',
+    letterSpacing: -0.4,
+    fontVariant: ['tabular-nums'],
+  },
+  shelfMetricLabel: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 11,
+    lineHeight: 15,
   },
   stripRow: {
     flexDirection: 'row',

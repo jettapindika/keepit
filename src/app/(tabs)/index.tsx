@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,6 +9,7 @@ import {
   DEFAULT_WARM_BLURHASH,
   fetchTodayMomentBundle,
   isMomentPromptCheckIn,
+  todayLocalDateString,
   updateMomentCaption,
 } from '@/api/moments';
 import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
@@ -16,6 +17,8 @@ import { fetchCoupleStatuses } from '@/api/statuses';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { DualMomentCard, LockedMomentCard } from '@/components/moment/MomentCards';
 import { StatusHeaderCard } from '@/components/status/StatusHeaderCard';
+import { BentoTile, BentoToggleGlyph, BentoWatchStat } from '@/components/ui/BentoPrimitives';
+import { AppPressable, EmptyState } from '@/components/ui/ScreenKit';
 import {
   DualFrameMark,
   InlineNotice,
@@ -23,13 +26,13 @@ import {
   RevealOnAppear,
   SkeletonBlock,
 } from '@/components/ui/Primitives';
-import { useWidgetSync } from '@/hooks/useWidgetSync';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import {
   MomentRecord,
   PartnerMomentView,
 } from '@/types/database';
+import { announcePolite, handleRovingKeyDown } from '@/utils/a11y';
 
 type FeedPostItem =
   | { kind: 'partner'; moment: PartnerMomentView; postedAt: string }
@@ -48,6 +51,15 @@ export default function HomeScreen() {
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const [actionError, setActionError] = useState<string | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const [feedFilter, setFeedFilter] = useState<'all' | 'partner' | 'friends' | 'mine'>('all');
+  const filterTabRefs = useRef<(View | null)[]>([]);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const partnerName = partner?.display_name ?? 'Partner';
   const bundleQuery = useQuery({
     queryKey: ['today-moment', couple?.id, user?.id],
@@ -111,14 +123,6 @@ export default function HomeScreen() {
 
   const bundle = bundleQuery.data;
 
-  // Keep background widget snapshot sync active without rendering extra cards on Home
-  useWidgetSync({
-    partnerName: isPartnerPaired ? partnerName : 'You',
-    coupleId: couple?.id,
-    momentBundle: bundle,
-    statusBundle: statusQuery.data,
-  });
-
   const myMomentsToday: MomentRecord[] =
     bundle?.myMomentsToday ?? (bundle?.mine ? [bundle.mine] : []);
   const partnerMomentsToday: PartnerMomentView[] =
@@ -126,6 +130,10 @@ export default function HomeScreen() {
   const friendMomentsToday: MomentRecord[] = bundle?.friendMomentsToday ?? [];
 
   const myMoment = bundle?.mine ?? myMomentsToday[0] ?? null;
+  const myPostedToday = myMomentsToday.length > 0;
+  const partnerPostedToday = partnerMomentsToday.length > 0;
+  const bothPostedToday = myPostedToday && partnerPostedToday;
+  const streakCount = bundle?.streak?.current_count ?? 0;
   const feedPosts: FeedPostItem[] = [
     ...partnerMomentsToday.map((pm): FeedPostItem => ({
       kind: 'partner',
@@ -143,6 +151,26 @@ export default function HomeScreen() {
       postedAt: mm.posted_at,
     })),
   ].sort((a, b) => (a.postedAt < b.postedAt ? 1 : -1));
+  const effectiveFeedFilter =
+    feedFilter === 'partner' && !isPartnerPaired ? 'all' : feedFilter;
+  const feedFilterOptions: {
+    key: 'all' | 'partner' | 'friends' | 'mine';
+    label: string;
+    count: number;
+  }[] = [
+    { key: 'all', label: 'All', count: feedPosts.length },
+    ...(isPartnerPaired
+      ? [{ key: 'partner' as const, label: partnerName, count: partnerMomentsToday.length }]
+      : []),
+    { key: 'friends', label: 'Friends', count: friendMomentsToday.length },
+    { key: 'mine', label: 'Yours', count: myMomentsToday.length },
+  ];
+  const displayedFeedPosts = feedPosts.filter((entry) => {
+    if (effectiveFeedFilter === 'partner') return entry.kind === 'partner';
+    if (effectiveFeedFilter === 'friends') return entry.kind === 'friend';
+    if (effectiveFeedFilter === 'mine') return entry.kind === 'mine';
+    return true;
+  });
 
   const refreshMoments = async () => {
     if (!couple?.id) return;
@@ -174,7 +202,7 @@ export default function HomeScreen() {
         queryClient.invalidateQueries({ queryKey: ['user-posts'] }),
       ]);
     } finally {
-      setPullRefreshing(false);
+      if (isMountedRef.current) setPullRefreshing(false);
     }
   };
   const openCameraModal = (options?: {
@@ -183,7 +211,7 @@ export default function HomeScreen() {
     replaceMomentId?: string;
     retakesUsed?: number;
   }) => {
-    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayDate = todayLocalDateString();
     const fallbackPromptId = couple?.id ? `prompt_${couple.id}_${todayDate}` : `prompt_${todayDate}`;
     router.push({
       pathname: '/camera',
@@ -256,6 +284,104 @@ export default function HomeScreen() {
           onOpenStatusSheet={() => router.push('/status-sheet')}
         />
 
+        {bundle ? (
+          <View style={styles.bentoRow}>
+            <AppPressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                bothPostedToday
+                  ? 'Both synced today. Open Memories'
+                  : partnerPostedToday && !myPostedToday
+                    ? `${partnerName} posted. Capture your Moment to unlock`
+                    : 'Capture today’s dual-camera Moment'
+              }
+              onPress={() =>
+                bothPostedToday ? router.navigate('/(tabs)/memories') : openCameraModal()
+              }
+              style={styles.bentoHeroCol}>
+              <BentoTile
+                variant={partnerPostedToday || bothPostedToday ? 'bottomGlow' : 'spotlight'}
+                pattern={partnerPostedToday || bothPostedToday ? 'none' : 'dots'}
+                grain
+                radius={radii.card}
+                style={styles.bentoHeroTile}>
+                <View style={styles.bentoTopMeta}>
+                  <BentoToggleGlyph
+                    size={22}
+                    tone={partnerPostedToday || bothPostedToday ? 'blueTile' : 'auto'}
+                  />
+                  <Text
+                    style={[
+                      styles.bentoEyebrow,
+                      {
+                        color:
+                          partnerPostedToday || bothPostedToday
+                            ? 'rgba(255,255,255,0.72)'
+                            : colors.inkMuted,
+                      },
+                    ]}>
+                    {bothPostedToday ? 'Synced' : 'Today'}
+                  </Text>
+                </View>
+                <View style={styles.bentoHeroCopy}>
+                  <Text
+                    numberOfLines={2}
+                    style={[
+                      styles.bentoHeroTitle,
+                      {
+                        color:
+                          partnerPostedToday || bothPostedToday ? '#FFFFFF' : colors.ink,
+                      },
+                    ]}>
+                    {bothPostedToday
+                      ? 'Both synced today.'
+                      : !myPostedToday && partnerPostedToday
+                        ? `${partnerName} posted.`
+                        : myPostedToday && isPartnerPaired
+                          ? `Waiting on ${partnerName}.`
+                          : myPostedToday
+                            ? 'Captured today.'
+                            : 'Capture today’s Moment.'}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.bentoHeroSub,
+                      {
+                        color:
+                          partnerPostedToday || bothPostedToday
+                            ? 'rgba(255,255,255,0.72)'
+                            : colors.inkMuted,
+                      },
+                    ]}>
+                    {bothPostedToday
+                      ? 'View archive in Memories'
+                      : !myPostedToday && partnerPostedToday
+                        ? 'Post yours to unlock'
+                        : myPostedToday
+                          ? `${myMomentsToday.length} ${myMomentsToday.length === 1 ? 'post' : 'posts'} shared`
+                          : 'Dual-camera capture'}
+                  </Text>
+                </View>
+              </BentoTile>
+            </AppPressable>
+
+            <AppPressable
+              accessibilityRole="button"
+              accessibilityLabel={`Current streak: ${streakCount} days. Open Memories`}
+              onPress={() => router.navigate('/(tabs)/memories')}
+              style={styles.bentoStatCol}>
+              <BentoTile variant="dark" pattern="dots" grain radius={radii.card} style={styles.bentoStatTile}>
+                <BentoWatchStat
+                  label="Pulse"
+                  value={`${streakCount}d`}
+                  caption={streakCount === 1 ? 'Day synced' : 'Days synced'}
+                />
+              </BentoTile>
+            </AppPressable>
+          </View>
+        ) : null}
+
         {actionError ? <InlineNotice message={actionError} tone="error" /> : null}
         {bundleQuery.isError ? (
           <View style={{ gap: spacing.xs }}>
@@ -285,7 +411,61 @@ export default function HomeScreen() {
           </Text>
         ) : feedPosts.length > 0 ? (
           <View style={styles.feedStack}>
-            {feedPosts.map((entry) => {
+            <ScrollView
+              horizontal
+              accessibilityRole="tablist"
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterTabsRow}>
+              {feedFilterOptions.map((opt, idx) => {
+                const selected = effectiveFeedFilter === opt.key;
+                return (
+                  <AppPressable
+                    key={opt.key}
+                    ref={(el) => {
+                      filterTabRefs.current[idx] = el as View | null;
+                    }}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${opt.label} posts (${opt.count})`}
+                    onPress={() => {
+                      setFeedFilter(opt.key);
+                      announcePolite(`Showing ${opt.label} posts (${opt.count}).`);
+                    }}
+                    {...(Platform.OS === 'web'
+                      ? ({
+                          onKeyDown: (event: unknown) =>
+                            handleRovingKeyDown(event, idx, feedFilterOptions.length, (nextIndex) => {
+                              const nextOpt = feedFilterOptions[nextIndex];
+                              if (nextOpt) {
+                                setFeedFilter(nextOpt.key);
+                                announcePolite(`Showing ${nextOpt.label} posts (${nextOpt.count}).`);
+                                (filterTabRefs.current[nextIndex] as unknown as { focus?: () => void } | null)?.focus?.();
+                              }
+                            }),
+                        } as Record<string, unknown>)
+                      : {})}
+                    style={[
+                      styles.filterTabBtn,
+                      {
+                        backgroundColor: selected ? colors.primary : colors.surface,
+                        borderColor: selected ? colors.primary : colors.border,
+                        borderRadius: radii.pill,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.filterTabLabel,
+                        { color: selected ? '#FFFFFF' : colors.ink },
+                      ]}>
+                      {opt.label} ({opt.count})
+                    </Text>
+                  </AppPressable>
+                );
+              })}
+            </ScrollView>
+
+            {displayedFeedPosts.length > 0 ? (
+              displayedFeedPosts.map((entry) => {
               if (entry.kind === 'partner') {
                 const pm = entry.moment;
                 return pm.locked ? (
@@ -381,16 +561,28 @@ export default function HomeScreen() {
                   />
                 </RevealOnAppear>
               );
-            })}
+            })
+            ) : (
+              <EmptyState
+                title="No matching posts today"
+                message={`No posts found under this filter yet. Switch back to All to see all ${feedPosts.length} ${feedPosts.length === 1 ? 'post' : 'posts'}.`}
+                actionLabel="Show all posts"
+                onAction={() => {
+                  setFeedFilter('all');
+                  announcePolite('Showing all posts.');
+                }}
+              />
+            )}
           </View>
         ) : (
-          <View
+          <BentoTile
+            variant="spotlight"
+            pattern="dots"
+            grain
+            radius={radii.card}
             style={[
               styles.emptyCard,
               {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderRadius: radii.group,
                 paddingTop: APP_LAYOUT.cardPaddingTop,
                 paddingHorizontal: APP_LAYOUT.cardPadding,
                 paddingBottom: APP_LAYOUT.cardPaddingBottom,
@@ -418,7 +610,7 @@ export default function HomeScreen() {
                 />
               ) : null}
             </View>
-          </View>
+          </BentoTile>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -437,11 +629,80 @@ const styles = StyleSheet.create({
   feedStack: {
     gap: 16,
   },
+  filterTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  filterTabBtn: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderCurve: 'continuous',
+  },
+  filterTabLabel: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    letterSpacing: -0.1,
+  },
+  bentoRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'stretch',
+  },
+  bentoHeroCol: {
+    flex: 1.45,
+    minWidth: 0,
+  },
+  bentoHeroTile: {
+    flex: 1,
+    minHeight: 148,
+    padding: 18,
+    justifyContent: 'space-between',
+    gap: 14,
+  },
+  bentoTopMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  bentoEyebrow: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  bentoHeroCopy: {
+    gap: 4,
+  },
+  bentoHeroTitle: {
+    fontSize: 20,
+    lineHeight: 23,
+    fontWeight: '600',
+    letterSpacing: -0.5,
+  },
+  bentoHeroSub: {
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  bentoStatCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  bentoStatTile: {
+    flex: 1,
+    minHeight: 148,
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   emptyCard: {
     alignItems: 'center',
     gap: 12,
-    borderWidth: 1,
-    borderCurve: 'continuous',
   },
   emptyTitle: {
     fontSize: 18,

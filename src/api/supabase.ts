@@ -45,6 +45,55 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
+const NETWORK_ERROR_MESSAGE = 'Could not reach KeepIt servers. Check your connection and try again.';
+
+/**
+ * True when a Supabase failure means "the request never got an answer" (offline,
+ * DNS, TLS, aborted radio, gateway 5xx) rather than "the server answered no".
+ * Auth transport failures surface as `AuthRetryableFetchError` (status 0 for
+ * fetch/TLS/abort failures, 5xx for gateway errors); PostgREST/Realtime failures
+ * surface as fetch TypeErrors or PGRST 5xx codes.
+ */
+export function isNetworkOrTransientError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = 'name' in err && typeof err.name === 'string' ? err.name : '';
+  const status = 'status' in err && typeof err.status === 'number' ? err.status : undefined;
+  const code = 'code' in err && typeof err.code === 'string' ? err.code : '';
+  const message = 'message' in err && typeof err.message === 'string' ? err.message : '';
+  const cause = 'cause' in err ? err.cause : undefined;
+
+  if (name === 'AuthRetryableFetchError' || name === 'AbortError') return true;
+  if (typeof status === 'number' && status >= 500 && status <= 599) return true;
+  if (/^PGRST[0-9]*5[0-9][0-9]$/.test(code)) return true;
+  if (
+    /fetch failed|network request failed|networkerror|failed to fetch|unable to resolve host|connection (?:reset|refused|closed)|timed out|timeout|socket hang up|no address associated|offline/i.test(
+      message
+    )
+  ) {
+    return true;
+  }
+  if (
+    cause &&
+    typeof cause === 'object' &&
+    'code' in cause &&
+    typeof cause.code === 'string' &&
+    /^(EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ENETUNREACH|UND_ERR_)/.test(cause.code)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A reachability failure must reach the user as "check your connection", never as
+ * a wrong-credentials or generic failure that sends them retyping a password.
+ */
+export function describeSupabaseError(err: unknown, fallback: string): string {
+  if (isNetworkOrTransientError(err)) return NETWORK_ERROR_MESSAGE;
+  const message = err instanceof Error ? err.message : '';
+  return message || fallback;
+}
+
 /**
  * Returns true when a PostgREST / Supabase RPC error indicates the SQL migration
  * tables/functions have not yet been applied to the remote project (PGRST205 / PGRST202 / 42P01),

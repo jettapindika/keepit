@@ -381,10 +381,26 @@ export function matchesUserByQuery(user: UserProfile, rawQuery: string): boolean
 async function saveDiscoveredUserToLocalDb(profile: UserProfile): Promise<void> {
   if (!profile?.id) return;
   const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
-  const db = rawDb
-    ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
-    : { users: {}, couples: {} };
-  db.users = db.users ?? {};
+  let db: { users: Record<string, UserProfile>; couples: Record<string, unknown> } = {
+    users: {},
+    couples: {},
+  };
+  if (rawDb) {
+    try {
+      const parsed = JSON.parse(rawDb) as {
+        users?: Record<string, UserProfile>;
+        couples?: Record<string, unknown>;
+      };
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        db = {
+          users: parsed.users && typeof parsed.users === 'object' ? parsed.users : {},
+          couples: parsed.couples && typeof parsed.couples === 'object' ? parsed.couples : {},
+        };
+      }
+    } catch {
+      db = { users: {}, couples: {} };
+    }
+  }
   db.users[profile.id] = {
     ...(db.users[profile.id] ?? {}),
     ...profile,
@@ -775,6 +791,65 @@ export async function removeFriend(params: {
   }
 }
 
+export async function updateFriendRelationship(params: {
+  userId: string;
+  friendRecordId: string;
+  relationship: 'bestie' | 'friend';
+}): Promise<FriendRecord> {
+  const existing = await readLocalFriends();
+  let updatedRecord: FriendRecord | null = null;
+  const next = existing.map((f) => {
+    if (
+      f.user_id === params.userId &&
+      (f.id === params.friendRecordId || f.friend_id === params.friendRecordId)
+    ) {
+      updatedRecord = { ...f, relationship: params.relationship };
+      return updatedRecord;
+    }
+    return f;
+  });
+  if (!updatedRecord) {
+    throw new Error('Friend not found in your circle.');
+  }
+  const updated: FriendRecord = updatedRecord;
+  await writeLocalFriends(next);
+
+  if (isSupabaseConfigured && supabase) {
+    const myFriendsCompact = next
+      .filter((f) => f.user_id === params.userId)
+      .slice(-25)
+      .map((f) => ({
+        ...f,
+        friend_profile: {
+          ...f.friend_profile,
+          avatar_path:
+            f.friend_profile.avatar_path && f.friend_profile.avatar_path.length < 24_000
+              ? f.friend_profile.avatar_path
+              : null,
+          banner_path: null,
+        },
+      }));
+    await supabase.auth
+      .updateUser({ data: { friends_circle: myFriendsCompact } })
+      .catch(() => {});
+    try {
+      await supabase
+        .from('friendships')
+        .update({ relationship: params.relationship })
+        .eq('user_id', params.userId)
+        .eq('friend_id', updated.friend_id);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
+  void broadcastCoupleSync(buildUserDirectoryChannelTopic(), {
+    kind: 'friend_added',
+    friend: updated,
+  });
+  return updated;
+}
+
 // Direct Messages (DMs)
 async function readLocalMessages(): Promise<DirectMessageRecord[]> {
   const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
@@ -1003,6 +1078,44 @@ export async function sendDirectMessage(params: {
   const syncChannelKey = params.coupleId || buildDirectMessageSyncChannelTopic(convId);
   void broadcastCoupleSync(syncChannelKey, { kind: 'dm_upsert', message: record });
   return record;
+}
+
+export async function deleteDirectMessage(params: {
+  coupleId?: string | null;
+  messageId: string;
+  userId: string;
+}): Promise<void> {
+  const all = await readLocalMessages();
+  const target = all.find((m) => m.id === params.messageId);
+  if (!target) return;
+  if (target.sender_id !== params.userId) {
+    throw new Error('You can only unsend your own messages.');
+  }
+
+  const next = all.filter((m) => m.id !== params.messageId);
+  await writeLocalMessages(next);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase
+        .from('direct_messages')
+        .delete()
+        .eq('id', params.messageId)
+        .eq('sender_id', params.userId);
+    } catch {
+      // Ignore when offline
+    }
+  }
+
+  const packet = {
+    kind: 'dm_delete' as const,
+    messageId: params.messageId,
+    senderId: params.userId,
+  };
+  if (params.coupleId) {
+    void broadcastCoupleSync(params.coupleId, packet);
+  }
+  void broadcastCoupleSync(buildDirectMessageSyncChannelTopic(target.conversation_id), packet);
 }
 
 export async function toggleDirectMessageReaction(params: {

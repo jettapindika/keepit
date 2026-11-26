@@ -156,9 +156,22 @@ struct KeepItTimelineProvider: TimelineProvider {
       return UIImage(data: data)
     }
 
-    if (url.scheme == "http" || url.scheme == "https"),
-       let data = try? Data(contentsOf: url) {
-      return UIImage(data: data)
+    if url.scheme == "http" || url.scheme == "https" {
+      let config = URLSessionConfiguration.ephemeral
+      config.timeoutIntervalForRequest = 8
+      config.timeoutIntervalForResource = 8
+      let session = URLSession(configuration: config)
+      let semaphore = DispatchSemaphore(value: 0)
+      var loadedImage: UIImage?
+      session.dataTask(with: url) { data, _, _ in
+        if let data = data {
+          loadedImage = UIImage(data: data)
+        }
+        semaphore.signal()
+      }.resume()
+      _ = semaphore.wait(timeout: .now() + 8)
+      session.invalidateAndCancel()
+      return loadedImage
     }
 
     return nil

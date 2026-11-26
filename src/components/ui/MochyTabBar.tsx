@@ -1,12 +1,13 @@
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import React, { useEffect, useMemo, useState } from 'react';
-import { Keyboard, Platform, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
+import { handleRovingKeyDown } from '@/utils/a11y';
 
 export interface MochyTabBarProps {
   state: {
@@ -41,6 +42,7 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
   const { width, fontScale } = useWindowDimensions();
   const compactLabels = fontScale > 1.3 || width < 320;
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const tabRefs = useRef<(React.ComponentRef<typeof Pressable> | null)[]>([]);
   const routes = useMemo(() => tabOrder.flatMap((name) => {
     const route = state.routes.find((item) => item.name === name);
     return route ? [route] : [];
@@ -52,6 +54,13 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
     if (Platform.OS !== 'web') return () => { show.remove(); hide.remove(); };
 
     const update = () => {
+      if (
+        typeof document === 'undefined' ||
+        typeof window === 'undefined' ||
+        typeof window.matchMedia !== 'function'
+      ) {
+        return;
+      }
       const node = document.activeElement;
       const isTextEntry = node instanceof HTMLElement && (
         node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
@@ -72,13 +81,49 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
   if (keyboardVisible) return null;
 
   const activeName = state.routes[state.index]?.name;
+  const activeTabIdx = Math.max(0, routes.findIndex((route) => route.name === activeName));
+  const activateTab = (route: (typeof routes)[number]) => {
+    const emit = emitter?.emit ?? navigation?.emit;
+    const event = emit?.({ type: 'tabPress', target: route.key, canPreventDefault: true });
+    if (event?.defaultPrevented) return;
+    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    if (navigateToTab) navigateToTab(route.key);
+    else if (navigation?.navigate) navigation.navigate(route.name, route.params);
+    else router.navigate(route.name === 'index' ? '/(tabs)' : `/(tabs)/${route.name}` as never);
+  };
+
   return (
-    <View pointerEvents="box-none" style={[styles.wrapper, { paddingBottom: Math.max(12, insets.bottom) }]}>
+    <View
+      pointerEvents="box-none"
+      {...(Platform.OS === 'web'
+        ? ({ role: 'navigation', 'aria-label': 'Main navigation' } as Record<string, unknown>)
+        : {})}
+      style={[styles.wrapper, { paddingBottom: Math.max(12, insets.bottom) }]}>
       <View
         pointerEvents="auto"
         accessibilityRole="tablist"
         accessibilityLabel="Main navigation"
-        style={[styles.dock, { backgroundColor: colors.sheetSurface, borderColor: colors.border, borderRadius: radii.xl }]}
+        {...(Platform.OS === 'web'
+          ? ({
+              onKeyDown: (event: unknown) => {
+                handleRovingKeyDown(event, activeTabIdx, routes.length, (nextIndex) => {
+                  const target = routes[nextIndex];
+                  if (!target) return;
+                  activateTab(target);
+                  const node = tabRefs.current[nextIndex] as unknown as { focus?: () => void } | null;
+                  node?.focus?.();
+                });
+              },
+            } as Record<string, unknown>)
+          : {})}
+        style={[
+          styles.dock,
+          {
+            backgroundColor: colors.sheetSurface,
+            borderColor: colors.chromeOutline,
+            borderRadius: 18,
+          },
+        ]}
       >
         {routes.map((route, index) => {
           const focused = activeName === route.name;
@@ -94,38 +139,53 @@ export function MochyTabBar({ state, descriptors, emitter, navigateToTab, naviga
                   accessibilityLargeContentTitle="Capture"
                   accessibilityHint="Capture a new Moment"
                   onPress={() => router.push('/camera')}
-                  style={[styles.capture, { backgroundColor: colors.accent, borderRadius: 14 }]}
+                  style={[
+                    styles.capture,
+                    {
+                      backgroundColor: colors.primary,
+                      borderColor: 'rgba(255,255,255,0.20)',
+                      borderWidth: 1,
+                      borderRadius: radii.navItem,
+                    },
+                  ]}
                 >
                   <SymbolView name={{ ios: 'camera', android: 'photo_camera', web: 'photo_camera' }} tintColor={colors.onAccent} size={17} />
                   {!compactLabels ? <Text style={[styles.label, { color: colors.onAccent }]}>Capture</Text> : null}
                 </AppPressable>
               ) : null}
               <AppPressable
+                ref={(el) => {
+                  tabRefs.current[index] = el;
+                }}
                 accessibilityRole="tab"
                 accessibilityLabel={label}
                 accessibilityShowsLargeContentViewer
                 accessibilityLargeContentTitle={label}
                 accessibilityState={{ selected: focused }}
-                onPress={() => {
-                  const emit = emitter?.emit ?? navigation?.emit;
-                  const event = emit?.({ type: 'tabPress', target: route.key, canPreventDefault: true });
-                  if (event?.defaultPrevented) return;
-                  if (Platform.OS !== 'web') void Haptics.selectionAsync();
-                  if (navigateToTab) navigateToTab(route.key);
-                  else if (navigation?.navigate) navigation.navigate(route.name, route.params);
-                  else router.navigate(route.name === 'index' ? '/(tabs)' : `/(tabs)/${route.name}` as never);
-                }}
+                onPress={() => activateTab(route)}
                 style={[
                   styles.tab,
                   {
-                    backgroundColor: focused ? colors.surface : 'transparent',
+                    backgroundColor: focused ? colors.surfaceObject : 'transparent',
                     borderRadius: radii.navItem,
                   },
                 ]}
               >
                 <View pointerEvents="none" style={styles.tabContent}>
-                  <SymbolView name={icons[route.name as keyof typeof icons]} tintColor={focused ? colors.ink : colors.inkMuted} size={17} />
-                  {!compactLabels ? <Text style={[styles.label, { color: focused ? colors.ink : colors.inkMuted, fontWeight: focused ? '600' : '500' }]}>{label}</Text> : null}
+                  <SymbolView
+                    name={icons[route.name as keyof typeof icons]}
+                    tintColor={focused ? colors.blue300 : colors.placeholder}
+                    size={17}
+                  />
+                  {!compactLabels ? (
+                    <Text
+                      style={[
+                        styles.label,
+                        { color: focused ? colors.ink : colors.placeholder, fontWeight: focused ? '600' : '500' },
+                      ]}>
+                      {label}
+                    </Text>
+                  ) : null}
                 </View>
               </AppPressable>
             </React.Fragment>

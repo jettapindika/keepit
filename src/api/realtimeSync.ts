@@ -7,11 +7,16 @@ import type { RealtimeChannel, RealtimeChannelOptions, SupabaseClient } from '@s
 import {
   computeDeterministicPromptTriggerIso,
   readLocalMoments,
+  todayLocalDateString,
   writeLocalMoments,
 } from '@/api/moments';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
 import { useSessionStore } from '@/store/sessionStore';
-import { safeGetStorageItem, safeSetStorageItem } from '@/utils/safeAsyncStorage';
+import {
+  safeGetStorageItem,
+  safeSetStorageItem,
+  spillDataUriToFileIfLarge,
+} from '@/utils/safeAsyncStorage';
 import {
   CoupleEventRecord,
   DirectMessageRecord,
@@ -49,6 +54,7 @@ export type CoupleSyncPacket =
   | { kind: 'location_upsert'; location: LocationShareRecord; event?: CoupleEventRecord }
   | { kind: 'nudge_sent'; event: CoupleEventRecord }
   | { kind: 'dm_upsert'; message: DirectMessageRecord }
+  | { kind: 'dm_delete'; messageId: string; senderId: string }
   | { kind: 'dm_reaction'; messageId: string; userId: string; emoji: string | null }
   | {
       kind: 'dm_snap_viewed';
@@ -377,6 +383,51 @@ export async function broadcastCoupleSync(
   }
 }
 
+function safeParseJsonRecord<T>(raw: string | null): Record<string, T> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, T>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function safeParseJsonArray<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeParseLocalDb(raw: string | null): {
+  users: Record<string, UserProfile>;
+  couples: Record<string, unknown>;
+} {
+  if (!raw) return { users: {}, couples: {} };
+  try {
+    const parsed = JSON.parse(raw) as {
+      users?: Record<string, UserProfile>;
+      couples?: Record<string, unknown>;
+    };
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        users: parsed.users && typeof parsed.users === 'object' ? parsed.users : {},
+        couples: parsed.couples && typeof parsed.couples === 'object' ? parsed.couples : {},
+      };
+    }
+    return { users: {}, couples: {} };
+  } catch {
+    return { users: {}, couples: {} };
+  }
+}
+
 export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promise<void> {
   if (packet.kind === 'moment_upsert') {
     const state = await readLocalMoments();
@@ -402,7 +453,11 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
           front_photo_url: m.front_photo_url || m.front_photo_path,
         };
     state.moments[m.id] = mergedMoment;
-    const mDate = (mergedMoment.captured_at || mergedMoment.posted_at || new Date().toISOString()).slice(0, 10);
+    const rawIso = mergedMoment.captured_at || mergedMoment.posted_at;
+    const parsedDate = rawIso ? new Date(rawIso) : new Date();
+    const mDate = Number.isNaN(parsedDate.getTime())
+      ? (rawIso?.slice(0, 10) || todayLocalDateString())
+      : todayLocalDateString(parsedDate);
     const effectiveCoupleId =
       mergedMoment.couple_id || `solo_${mergedMoment.user_id}`;
     const effectivePromptId =
@@ -425,15 +480,19 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
       };
     }
     const promptMoments = Object.values(state.moments).filter(
-      (item) => item.prompt_id === m.prompt_id && !item.user_id.startsWith('friend_')
+      (item) => item.prompt_id === effectivePromptId && !item.user_id.startsWith('friend_')
     );
     const distinctUsers = new Set(promptMoments.map((item) => item.user_id));
     if (distinctUsers.size >= 2) {
-      const today = (m.posted_at || new Date().toISOString()).slice(0, 10);
+      const postedIso = mergedMoment.posted_at || mergedMoment.captured_at;
+      const postedDateObj = postedIso ? new Date(postedIso) : new Date();
+      const today = Number.isNaN(postedDateObj.getTime())
+        ? todayLocalDateString()
+        : todayLocalDateString(postedDateObj);
       const bothOnTime = promptMoments.every((item) => !item.is_late);
-      state.streaks[m.couple_id] = advanceStreakOnDualPost({
-        previous: state.streaks[m.couple_id],
-        coupleId: m.couple_id,
+      state.streaks[effectiveCoupleId] = advanceStreakOnDualPost({
+        previous: state.streaks[effectiveCoupleId],
+        coupleId: effectiveCoupleId,
         todayDate: today,
         bothOnTime,
       });
@@ -542,7 +601,7 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'status_upsert') {
     const raw = await safeGetStorageItem(LOCAL_STATUS_KEY);
-    const map = raw ? (JSON.parse(raw) as Record<string, StatusRecord>) : {};
+    const map = safeParseJsonRecord<StatusRecord>(raw);
     map[packet.status.user_id] = packet.status;
     await safeSetStorageItem(LOCAL_STATUS_KEY, JSON.stringify(map));
     return;
@@ -550,7 +609,7 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'status_clear') {
     const raw = await safeGetStorageItem(LOCAL_STATUS_KEY);
-    const map = raw ? (JSON.parse(raw) as Record<string, StatusRecord>) : {};
+    const map = safeParseJsonRecord<StatusRecord>(raw);
     delete map[packet.userId];
     await safeSetStorageItem(LOCAL_STATUS_KEY, JSON.stringify(map));
     return;
@@ -558,14 +617,14 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'location_upsert') {
     const raw = await safeGetStorageItem(LOCAL_LOCATIONS_KEY);
-    const map = raw ? (JSON.parse(raw) as Record<string, LocationShareRecord>) : {};
+    const map = safeParseJsonRecord<LocationShareRecord>(raw);
     const loc = packet.location;
     map[`${loc.couple_id}:${loc.user_id}`] = loc;
     await safeSetStorageItem(LOCAL_LOCATIONS_KEY, JSON.stringify(map));
 
     if (packet.event) {
       const rawEvents = await safeGetStorageItem(LOCAL_EVENTS_KEY);
-      const events = rawEvents ? (JSON.parse(rawEvents) as CoupleEventRecord[]) : [];
+      const events = safeParseJsonArray<CoupleEventRecord>(rawEvents);
       await safeSetStorageItem(
         LOCAL_EVENTS_KEY,
         JSON.stringify([packet.event, ...events].slice(0, 60))
@@ -576,7 +635,7 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'nudge_sent') {
     const rawEvents = await safeGetStorageItem(LOCAL_EVENTS_KEY);
-    const events = rawEvents ? (JSON.parse(rawEvents) as CoupleEventRecord[]) : [];
+    const events = safeParseJsonArray<CoupleEventRecord>(rawEvents);
     await safeSetStorageItem(
       LOCAL_EVENTS_KEY,
       JSON.stringify([packet.event, ...events].slice(0, 60))
@@ -586,21 +645,43 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'dm_upsert') {
     const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
-    const list = raw ? (JSON.parse(raw) as DirectMessageRecord[]) : [];
-    const idx = list.findIndex((m) => m.id === packet.message.id);
+    const list = safeParseJsonArray<DirectMessageRecord>(raw);
+    let incomingMessage = packet.message;
+    if (incomingMessage.media_uri?.startsWith('data:') && incomingMessage.media_uri.length > 90_000) {
+      incomingMessage = {
+        ...incomingMessage,
+        media_uri: await spillDataUriToFileIfLarge(
+          incomingMessage.media_uri,
+          `dm-${incomingMessage.id}`
+        ),
+      };
+    }
+    const idx = list.findIndex((m) => m.id === incomingMessage.id);
     if (idx >= 0) {
-      list[idx] = packet.message;
+      list[idx] = incomingMessage;
     } else {
-      list.push(packet.message);
+      list.push(incomingMessage);
     }
     await safeSetStorageItem(LOCAL_MESSAGES_KEY, JSON.stringify(list.slice(-300)));
     return;
   }
 
+  if (packet.kind === 'dm_delete') {
+    const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
+    const list = safeParseJsonArray<DirectMessageRecord>(raw);
+    const next = list.filter(
+      (m) => !(m.id === packet.messageId && m.sender_id === packet.senderId)
+    );
+    if (next.length !== list.length) {
+      await safeSetStorageItem(LOCAL_MESSAGES_KEY, JSON.stringify(next));
+    }
+    return;
+  }
+
   if (packet.kind === 'dm_reaction') {
     const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
-    if (!raw) return;
-    const list = JSON.parse(raw) as DirectMessageRecord[];
+    const list = safeParseJsonArray<DirectMessageRecord>(raw);
+    if (list.length === 0) return;
     const next = list.map((m) => {
       if (m.id !== packet.messageId) return m;
       const nextReactions = { ...(m.reactions ?? {}) };
@@ -620,8 +701,8 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'dm_snap_viewed') {
     const raw = await safeGetStorageItem(LOCAL_MESSAGES_KEY);
-    if (!raw) return;
-    const list = JSON.parse(raw) as DirectMessageRecord[];
+    const list = safeParseJsonArray<DirectMessageRecord>(raw);
+    if (list.length === 0) return;
     const next = list.map((m) => {
       if (m.id !== packet.messageId) return m;
       if (m.sender_id === packet.viewerId) return m;
@@ -649,39 +730,74 @@ export async function applyIncomingCouplePacket(packet: CoupleSyncPacket): Promi
 
   if (packet.kind === 'profile_upsert') {
     const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
-    const db = rawDb
-      ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
-      : { users: {}, couples: {} };
-    db.users[packet.profile.id] = packet.profile;
+    const db = safeParseLocalDb(rawDb);
+    let incomingProfile = packet.profile;
+    if (
+      (incomingProfile.avatar_path?.startsWith('data:') && incomingProfile.avatar_path.length > 90_000) ||
+      (incomingProfile.banner_path?.startsWith('data:') && incomingProfile.banner_path.length > 90_000)
+    ) {
+      incomingProfile = {
+        ...incomingProfile,
+        avatar_path:
+          incomingProfile.avatar_path?.startsWith('data:') && incomingProfile.avatar_path.length > 90_000
+            ? await spillDataUriToFileIfLarge(incomingProfile.avatar_path, `avatar-${incomingProfile.id}`)
+            : incomingProfile.avatar_path,
+        banner_path:
+          incomingProfile.banner_path?.startsWith('data:') && incomingProfile.banner_path.length > 90_000
+            ? await spillDataUriToFileIfLarge(incomingProfile.banner_path, `banner-${incomingProfile.id}`)
+            : incomingProfile.banner_path,
+      };
+    }
+    db.users[incomingProfile.id] = incomingProfile;
     await safeSetStorageItem(LOCAL_DB_KEY, JSON.stringify(db));
     return;
   }
 
   if (packet.kind === 'friend_added') {
     const raw = await safeGetStorageItem(LOCAL_FRIENDS_KEY);
-    const list = raw ? (JSON.parse(raw) as FriendRecord[]) : [];
+    const list = safeParseJsonArray<FriendRecord>(raw);
+    let friendRecord = packet.friend;
+    if (friendRecord.friend_profile?.id) {
+      const fp = friendRecord.friend_profile;
+      const spilledAvatar =
+        fp.avatar_path?.startsWith('data:') && fp.avatar_path.length > 90_000
+          ? await spillDataUriToFileIfLarge(fp.avatar_path, `avatar-${fp.id}`)
+          : fp.avatar_path;
+      const spilledBanner =
+        fp.banner_path?.startsWith('data:') && fp.banner_path.length > 90_000
+          ? await spillDataUriToFileIfLarge(fp.banner_path, `banner-${fp.id}`)
+          : fp.banner_path;
+      if (spilledAvatar !== fp.avatar_path || spilledBanner !== fp.banner_path) {
+        friendRecord = {
+          ...friendRecord,
+          friend_profile: {
+            ...fp,
+            avatar_path: spilledAvatar,
+            banner_path: spilledBanner,
+          },
+        };
+      }
+    }
     const existingIdx = list.findIndex(
-      (f) => f.id === packet.friend.id || (f.user_id === packet.friend.user_id && f.friend_id === packet.friend.friend_id)
+      (f) => f.id === friendRecord.id || (f.user_id === friendRecord.user_id && f.friend_id === friendRecord.friend_id)
     );
     if (existingIdx >= 0) {
-      list[existingIdx] = packet.friend;
+      list[existingIdx] = friendRecord;
     } else {
-      list.push(packet.friend);
+      list.push(friendRecord);
     }
     await safeSetStorageItem(LOCAL_FRIENDS_KEY, JSON.stringify(list));
 
-    if (packet.friend.friend_profile?.id) {
+    if (friendRecord.friend_profile?.id) {
       const rawDb = await safeGetStorageItem(LOCAL_DB_KEY);
-      const db = rawDb
-        ? (JSON.parse(rawDb) as { users: Record<string, UserProfile>; couples: Record<string, unknown> })
-        : { users: {}, couples: {} };
-      db.users[packet.friend.friend_profile.id] = packet.friend.friend_profile;
+      const db = safeParseLocalDb(rawDb);
+      db.users[friendRecord.friend_profile.id] = friendRecord.friend_profile;
       await safeSetStorageItem(LOCAL_DB_KEY, JSON.stringify(db));
     }
   }
   if (packet.kind === 'friend_removed') {
     const raw = await safeGetStorageItem(LOCAL_FRIENDS_KEY);
-    const list = raw ? (JSON.parse(raw) as FriendRecord[]) : [];
+    const list = safeParseJsonArray<FriendRecord>(raw);
     const next = list.filter(
       (f) => !(f.user_id === packet.userId && f.friend_id === packet.friendId)
     );

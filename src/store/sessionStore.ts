@@ -1,11 +1,19 @@
 import { create } from 'zustand';
 
+import { buildDefaultUsername } from '@/api/social';
 import { fetchPairingSnapshot, upsertUserProfile } from '@/api/pairing';
 import { syncDirectoryPresence } from '@/api/realtimeSync';
-import { getAuthRedirectUrl, isSupabaseConfigured, supabase } from '@/api/supabase';
+import {
+  describeSupabaseError,
+  getAuthRedirectUrl,
+  isNetworkOrTransientError,
+  isSupabaseConfigured,
+  supabase,
+} from '@/api/supabase';
 import { AnimationSpeed } from '@/theme/motion';
 import { ThemeMode } from '@/theme/tokens';
-import { CoupleRecord, UserProfile, WidgetLayoutMode } from '@/types/database';
+import { CoupleRecord, PairingSnapshot, UserProfile, WidgetLayoutMode } from '@/types/database';
+import { stopMusicPreview } from '@/utils/audioPreview';
 import {
   safeClearAllStorage,
   safeGetStorageItem,
@@ -196,8 +204,11 @@ interface PersistedSessionSlice {
   themePreference: ThemeMode;
   motionEnabled: boolean;
   motionSpeed: AnimationSpeed;
-  widgetLayout?: WidgetLayoutMode;
-  mirrorFrontCamera?: boolean;
+  widgetLayout: WidgetLayoutMode;
+  mirrorFrontCamera: boolean;
+  /** Last known couple space, so first paint renders the real space offline. */
+  couple?: CoupleRecord | null;
+  partner?: UserProfile | null;
 }
 
 interface SessionState {
@@ -250,32 +261,133 @@ interface SessionState {
   wipeLocalAccount: () => Promise<void>;
 }
 
-async function persistSessionSlice(slice: PersistedSessionSlice): Promise<void> {
-  let effectiveUser = slice.user;
-  if (effectiveUser) {
-    const nextAvatar =
-      effectiveUser.avatar_path?.startsWith('data:') && effectiveUser.avatar_path.length > 90_000
-        ? await spillDataUriToFileIfLarge(effectiveUser.avatar_path, `session-avatar-${effectiveUser.id}`)
-        : effectiveUser.avatar_path;
-    const nextBanner =
-      effectiveUser.banner_path?.startsWith('data:') && effectiveUser.banner_path.length > 90_000
-        ? await spillDataUriToFileIfLarge(effectiveUser.banner_path, `session-banner-${effectiveUser.id}`)
-        : effectiveUser.banner_path;
-    if (nextAvatar !== effectiveUser.avatar_path || nextBanner !== effectiveUser.banner_path) {
-      effectiveUser = {
-        ...effectiveUser,
-        avatar_path: nextAvatar,
-        banner_path: nextBanner,
+type PersistedStateSource = Pick<
+  SessionState,
+  | 'user'
+  | 'email'
+  | 'themePreference'
+  | 'motionEnabled'
+  | 'motionSpeed'
+  | 'widgetLayout'
+  | 'mirrorFrontCamera'
+  | 'couple'
+  | 'partner'
+>;
+
+/**
+ * Builds the persisted slice from live store state. Preferences are never
+ * enumerated per call site: a missing field silently erased the others, which is
+ * how a theme change used to wipe the widget layout and camera mirror setting.
+ */
+function collectPersistedSlice(state: PersistedStateSource): PersistedSessionSlice {
+  return {
+    user: state.user,
+    email: state.email,
+    themePreference: state.themePreference,
+    motionEnabled: state.motionEnabled,
+    motionSpeed: state.motionSpeed,
+    widgetLayout: state.widgetLayout,
+    mirrorFrontCamera: state.mirrorFrontCamera,
+    couple: state.couple,
+    partner: state.partner,
+  };
+}
+
+/**
+ * Remote pairing wins when it exists, but an unreachable or partial answer must not
+ * blank a cached space: a transient failure would otherwise unpair the screen.
+ */
+async function mergeRemotePairingWithCache(
+  userId: string,
+  cached: Partial<PersistedSessionSlice> | null
+): Promise<PairingSnapshot> {
+  const cachedCouple =
+    cached?.couple && (cached.couple.user_a_id === userId || cached.couple.user_b_id === userId)
+      ? cached.couple
+      : null;
+  const cachedPartner =
+    cached?.partner && cachedPartnerBelongsTo(cachedCouple, cached.partner, userId)
+      ? cached.partner
+      : null;
+  try {
+    const remote = await fetchPairingSnapshot(userId);
+    return {
+      couple: remote.couple ?? cachedCouple,
+      partner: remote.partner ?? (remote.couple ? null : cachedPartner),
+    };
+  } catch {
+    return { couple: cachedCouple, partner: cachedPartner };
+  }
+}
+
+function cachedPartnerBelongsTo(
+  couple: CoupleRecord | null,
+  partner: UserProfile,
+  userId: string
+): boolean {
+  if (couple) {
+    return couple.user_a_id === partner.id || couple.user_b_id === partner.id;
+  }
+  return partner.id !== userId;
+}
+
+let pendingSessionWrite: Promise<void> = Promise.resolve();
+let sessionGeneration = 0;
+
+/**
+ * Serializes the session slice to AsyncStorage. Writes are chained because the
+ * avatar/banner spill step is async: two concurrent writes could otherwise land
+ * out of order and commit an older snapshot over a newer one.
+ */
+function persistSessionSlice(slice: PersistedSessionSlice): Promise<void> {
+  const write = pendingSessionWrite.then(async () => {
+    let effectiveUser = slice.user;
+    let effectivePartner = slice.partner;
+    if (effectiveUser) {
+      const nextAvatar =
+        effectiveUser.avatar_path?.startsWith('data:') &&
+        effectiveUser.avatar_path.length > 90_000
+          ? await spillDataUriToFileIfLarge(
+              effectiveUser.avatar_path,
+              `session-avatar-${effectiveUser.id}`
+            )
+          : effectiveUser.avatar_path;
+      const nextBanner =
+        effectiveUser.banner_path?.startsWith('data:') &&
+        effectiveUser.banner_path.length > 90_000
+          ? await spillDataUriToFileIfLarge(
+              effectiveUser.banner_path,
+              `session-banner-${effectiveUser.id}`
+            )
+          : effectiveUser.banner_path;
+      if (nextAvatar !== effectiveUser.avatar_path || nextBanner !== effectiveUser.banner_path) {
+        effectiveUser = {
+          ...effectiveUser,
+          avatar_path: nextAvatar,
+          banner_path: nextBanner,
+        };
+      }
+    }
+    if (effectivePartner?.avatar_path?.startsWith('data:') && effectivePartner.avatar_path.length > 90_000) {
+      effectivePartner = {
+        ...effectivePartner,
+        avatar_path: await spillDataUriToFileIfLarge(
+          effectivePartner.avatar_path,
+          `session-partner-avatar-${effectivePartner.id}`
+        ),
       };
     }
-  }
-  await safeSetStorageItem(
-    SESSION_STORAGE_KEY,
-    JSON.stringify({
-      ...slice,
-      user: effectiveUser,
-    })
-  );
+    await safeSetStorageItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        ...slice,
+        user: effectiveUser,
+        partner: effectivePartner ?? null,
+      })
+    );
+  });
+  pendingSessionWrite = write.catch(() => {});
+  return write;
 }
 
 async function clearAccountSpecificCacheKeys(): Promise<void> {
@@ -329,7 +441,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   email: null,
   couple: null,
   partner: null,
-  themePreference: 'light',
+  themePreference: 'dark',
   motionEnabled: true,
   motionSpeed: 1,
   widgetLayout: 'side_by_side',
@@ -337,6 +449,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingInviteCode: null,
 
   hydrate: async () => {
+    const hydrateGen = sessionGeneration;
+    let saved: Partial<PersistedSessionSlice> | null = null;
     try {
       await safeRemoveStorageItem(LEGACY_LOCAL_ACCOUNTS_KEY);
       const storedEpoch = await safeGetStorageItem(STORAGE_SCHEMA_EPOCH_KEY);
@@ -353,138 +467,175 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         await safeSetStorageItem(STORAGE_SCHEMA_EPOCH_KEY, CURRENT_STORAGE_SCHEMA_EPOCH);
       }
       const raw = await safeGetStorageItem(SESSION_STORAGE_KEY);
-      const saved: Partial<PersistedSessionSlice> | null = raw ? JSON.parse(raw) : null;
-      if (saved?.themePreference) {
-        set({ themePreference: saved.themePreference });
-      }
-      if (typeof saved?.motionEnabled === 'boolean') {
-        set({ motionEnabled: saved.motionEnabled });
-      }
-      if (saved?.motionSpeed) {
-        set({ motionSpeed: saved.motionSpeed });
-      }
-      if (saved?.widgetLayout === 'partner_only' || saved?.widgetLayout === 'side_by_side') {
-        set({ widgetLayout: saved.widgetLayout });
-      }
-      if (typeof saved?.mirrorFrontCamera === 'boolean') {
-        set({ mirrorFrontCamera: saved.mirrorFrontCamera });
-      }
-
-      if (isSupabaseConfigured && supabase) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (session?.user && isEmailConfirmedUser(session.user)) {
-          const { data: profile, error: profileErr } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          const fallbackDisplayName =
-            (typeof session.user.user_metadata?.display_name === 'string' &&
-            session.user.user_metadata.display_name.trim()
-              ? session.user.user_metadata.display_name.trim()
-              : null) ??
-            saved?.user?.display_name ??
-            session.user.email?.split('@')[0] ??
-            'KeepIt User';
-
-          const metaHints = extractUserMetadataProfileHints(session.user.user_metadata);
-          const remoteProfile = !profileErr && profile ? (profile as UserProfile) : null;
-          const effectiveProfile: UserProfile = remoteProfile
-            ? mergeRemoteProfileWithMetadataHints(remoteProfile, metaHints, fallbackDisplayName)
-            : saved?.user?.id === session.user.id
-              ? await upsertUserProfile({
-                  userId: session.user.id,
-                  displayName: saved.user.display_name || fallbackDisplayName,
-                  username: saved.user.username ?? metaHints.username,
-                  bio: saved.user.bio ?? metaHints.bio,
-                  pronouns: saved.user.pronouns ?? metaHints.pronouns,
-                  moodSong: saved.user.mood_song ?? metaHints.moodSong,
-                  bannerColor: saved.user.banner_color ?? metaHints.bannerColor,
-                  bannerPath: saved.user.banner_path,
-                  website: saved.user.website ?? metaHints.website,
-                  avatarPath: saved.user.avatar_path,
-                  isPrivate: saved.user.is_private ?? metaHints.isPrivate,
-                  dumpMode: saved.user.dump_mode ?? metaHints.dumpMode,
-                })
-              : await upsertUserProfile({
-                  userId: session.user.id,
-                  displayName: fallbackDisplayName,
-                  ...metaHints,
-                });
-          const pairing = await fetchPairingSnapshot(effectiveProfile.id);
-          const soloFallbackCouple: CoupleRecord =
-            pairing.couple ??
-            buildSoloFallbackCouple(effectiveProfile.id, effectiveProfile.created_at);
-          const effectiveEmail = session.user.email ?? saved?.email ?? null;
-
-          await persistSessionSlice({
-            user: effectiveProfile,
-            email: effectiveEmail,
-            themePreference: get().themePreference,
-            motionEnabled: get().motionEnabled,
-            motionSpeed: get().motionSpeed,
-          });
-
-          set({
-            user: effectiveProfile,
-            email: effectiveEmail,
-            couple: soloFallbackCouple,
-            partner: pairing.partner,
-            hydrated: true,
-          });
-          return;
-        }
-
-        if (session?.user && !isEmailConfirmedUser(session.user)) {
-          await supabase.auth.signOut().catch(() => {});
-        }
-
-        if (saved?.user) {
-          await persistSessionSlice({
-            user: null,
-            email: null,
-            themePreference: get().themePreference,
-            motionEnabled: get().motionEnabled,
-            motionSpeed: get().motionSpeed,
-          });
-        }
-
-        set({
-          user: null,
-          email: null,
-          couple: null,
-          partner: null,
-          hydrated: true,
-        });
-        return;
-      }
-
-      if (saved?.user) {
-        const pairing = await fetchPairingSnapshot(saved.user.id);
-        const soloFallbackCouple: CoupleRecord =
-          pairing.couple ?? buildSoloFallbackCouple(saved.user.id, saved.user.created_at);
-        set({
-          user: saved.user,
-          email: saved.email ?? null,
-          couple: soloFallbackCouple,
-          partner: pairing.partner,
-          hydrated: true,
-        });
-        return;
-      }
+      saved = raw ? JSON.parse(raw) : null;
     } catch {
       // Clean fallback on corrupted storage
     }
 
-    set({ hydrated: true });
+    // First paint comes from the local cache only: no request may hold the splash screen.
+    const cachedUser = saved?.user ?? null;
+    set({
+      themePreference: saved?.themePreference ?? get().themePreference,
+      motionEnabled:
+        typeof saved?.motionEnabled === 'boolean' ? saved.motionEnabled : get().motionEnabled,
+      motionSpeed: saved?.motionSpeed ?? get().motionSpeed,
+      widgetLayout:
+        saved?.widgetLayout === 'partner_only' || saved?.widgetLayout === 'side_by_side'
+          ? saved.widgetLayout
+          : get().widgetLayout,
+      mirrorFrontCamera:
+        typeof saved?.mirrorFrontCamera === 'boolean'
+          ? saved.mirrorFrontCamera
+          : get().mirrorFrontCamera,
+      user: cachedUser,
+      email: saved?.email ?? null,
+      couple: cachedUser
+        ? (saved?.couple ?? buildSoloFallbackCouple(cachedUser.id, cachedUser.created_at))
+        : null,
+      partner: cachedUser ? (saved?.partner ?? null) : null,
+      hydrated: true,
+    });
+
+    type CachedSessionRead =
+      | { ok: true; user: SupabaseAuthUserLike | null }
+      | { ok: false };
+
+    const readCachedSession = async (): Promise<CachedSessionRead> => {
+      if (!isSupabaseConfigured || !supabase) return { ok: true, user: cachedUser };
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        return { ok: true, user: session?.user ?? null };
+      } catch {
+        // Unreadable here is not proof of sign-out: keep the cached identity.
+        return { ok: false };
+      }
+    };
+
+    // Attempt a restore only when the session cache itself is still readable, so a
+    // transient refresh failure cannot sign a user out of their own account.
+    if (!isSupabaseConfigured || !supabase) {
+      if (cachedUser) {
+        void fetchPairingSnapshot(cachedUser.id)
+          .then((pairing) => {
+            if (get().user?.id !== cachedUser.id) return;
+            set({
+              couple:
+                pairing.couple ?? buildSoloFallbackCouple(cachedUser.id, cachedUser.created_at),
+              partner: pairing.partner,
+            });
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+
+    const sessionRead = await readCachedSession();
+    if (!sessionRead.ok || hydrateGen !== sessionGeneration) return;
+    const sessionUser = sessionRead.user;
+    if (sessionUser) {
+      if (!isEmailConfirmedUser(sessionUser)) {
+        await supabase.auth.signOut().catch(() => {});
+        if (hydrateGen === sessionGeneration && cachedUser?.id === sessionUser.id) {
+          await persistSessionSlice({
+            ...collectPersistedSlice(get()),
+            user: null,
+            email: null,
+            couple: null,
+            partner: null,
+          });
+          set({ user: null, email: null, couple: null, partner: null });
+        }
+        return;
+      }
+
+      // Authenticated but offline/cached: this user is not signed out. Refresh in the
+      // background and patch state when the network answers.
+      void (async () => {
+        const fallbackDisplayName =
+          (typeof sessionUser.user_metadata?.display_name === 'string' &&
+          sessionUser.user_metadata.display_name.trim()
+            ? sessionUser.user_metadata.display_name.trim()
+            : null) ??
+          cachedUser?.display_name ??
+          sessionUser.email?.split('@')[0] ??
+          'KeepIt User';
+        const metaHints = extractUserMetadataProfileHints(sessionUser.user_metadata);
+        let effectiveProfile: UserProfile;
+        try {
+          const { data: profile, error: profileErr } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', sessionUser.id)
+            .maybeSingle();
+          if (!profileErr && profile) {
+            effectiveProfile = mergeRemoteProfileWithMetadataHints(
+              profile as UserProfile,
+              metaHints,
+              fallbackDisplayName
+            );
+          } else if (cachedUser?.id === sessionUser.id) {
+            effectiveProfile = mergeRemoteProfileWithMetadataHints(
+              cachedUser,
+              metaHints,
+              fallbackDisplayName
+            );
+          } else {
+            effectiveProfile = await upsertUserProfile({
+              userId: sessionUser.id,
+              displayName: fallbackDisplayName,
+              ...metaHints,
+            });
+          }
+        } catch {
+          return;
+        }
+        if (hydrateGen !== sessionGeneration) return;
+        const liveUserIdAfterProfile = get().user?.id;
+        if (liveUserIdAfterProfile && liveUserIdAfterProfile !== sessionUser.id) return;
+
+        const pairing = await mergeRemotePairingWithCache(sessionUser.id, saved);
+        if (hydrateGen !== sessionGeneration) return;
+        const liveUserIdAfterPairing = get().user?.id;
+        if (liveUserIdAfterPairing && liveUserIdAfterPairing !== sessionUser.id) return;
+
+        const effectiveCouple: CoupleRecord =
+          pairing.couple ?? buildSoloFallbackCouple(effectiveProfile.id, effectiveProfile.created_at);
+        const effectiveEmail = sessionUser.email ?? saved?.email ?? null;
+        set({
+          user: effectiveProfile,
+          email: effectiveEmail,
+          couple: effectiveCouple,
+          partner: pairing.partner,
+        });
+        void persistSessionSlice({
+          ...collectPersistedSlice(get()),
+          user: effectiveProfile,
+          email: effectiveEmail,
+          couple: effectiveCouple,
+          partner: pairing.partner,
+        }).catch(() => {});
+      })();
+      return;
+    }
+
+    // No readable Supabase session (signed out or the session cache is gone).
+    if (cachedUser) {
+      await persistSessionSlice({
+        ...collectPersistedSlice(get()),
+        user: null,
+        email: null,
+        couple: null,
+        partner: null,
+      });
+      set({ user: null, email: null, couple: null, partner: null });
+    }
   },
 
   consumeAuthRedirectUrl: async (url: string) => {
     if (!isSupabaseConfigured || !supabase || !url) return false;
+    sessionGeneration += 1;
     const params = extractAuthRedirectParams(url);
     const accessToken = params.access_token;
     const refreshToken = params.refresh_token;
@@ -571,22 +722,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     const metaHints = extractUserMetadataProfileHints(sessionUser.user_metadata);
-    const profile = await upsertUserProfile({
+    // The session is already established here; a failing profile or pairing read must
+    // not make a confirmed email link look broken.
+    const profile: UserProfile = await upsertUserProfile({
       userId: sessionUser.id,
       displayName,
       ...metaHints,
-    });
-    const pairing = await fetchPairingSnapshot(sessionUser.id);
+    }).catch(
+      (): UserProfile => ({
+        id: sessionUser!.id,
+        display_name: displayName,
+        username: metaHints.username ?? buildDefaultUsername(displayName, sessionUser!.id),
+        friend_code: metaHints.friendCode ?? '',
+        bio: metaHints.bio ?? '',
+        pronouns: metaHints.pronouns ?? '',
+        mood_song: metaHints.moodSong ?? '',
+        banner_color: metaHints.bannerColor ?? '#1C1C1E',
+        banner_path: metaHints.bannerPath ?? null,
+        website: metaHints.website ?? '',
+        is_private: metaHints.isPrivate ?? false,
+        dump_mode: metaHints.dumpMode ?? false,
+        avatar_path: metaHints.avatarPath ?? null,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+        push_token: null,
+        created_at: new Date().toISOString(),
+      })
+    );
+    let pairing: PairingSnapshot;
+    try {
+      pairing = await fetchPairingSnapshot(sessionUser.id);
+    } catch {
+      pairing = { couple: get().couple, partner: get().partner };
+    }
     const soloFallbackCouple: CoupleRecord =
       pairing.couple ?? buildSoloFallbackCouple(sessionUser.id, profile.created_at);
-
-    await persistSessionSlice({
-      user: profile,
-      email: cleanedEmail,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-    });
 
     set({
       user: profile,
@@ -595,10 +764,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       partner: pairing.partner,
       hydrated: true,
     });
+    await persistSessionSlice(collectPersistedSlice(get()));
     return true;
   },
 
   signUpWithPassword: async ({ displayName, email, password, confirmPassword }) => {
+    sessionGeneration += 1;
     const cleanedName = displayName.trim();
     const cleanedEmail = email.trim().toLowerCase();
 
@@ -628,6 +799,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
 
       if (error) {
+        if (isNetworkOrTransientError(error)) {
+          throw new Error(describeSupabaseError(error, 'Could not create account.'));
+        }
         if (/already registered|already exists/i.test(error.message)) {
           // Never guess credentials on signup: an existing account must go through
           // the sign-in flow so we do not act as a password oracle / account hijack path.
@@ -638,7 +812,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
         // Email-confirmation pending, SMTP rate limits, and similar provider errors must
         // surface to the user instead of minting an unauthenticated local account.
-        throw new Error(error.message || 'Could not create account.');
+        throw new Error(describeSupabaseError(error, 'Could not create account.'));
       }
 
       if (!data?.user?.id) {
@@ -675,23 +849,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const soloFallbackCouple: CoupleRecord =
       pairing.couple ?? buildSoloFallbackCouple(userId, profile.created_at);
 
-    await persistSessionSlice({
-      user: profile,
-      email: cleanedEmail,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-    });
-
     set({
       user: profile,
       email: cleanedEmail,
       couple: soloFallbackCouple,
       partner: pairing.partner,
     });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   signInWithPassword: async ({ email, password }) => {
+    sessionGeneration += 1;
     const cleanedEmail = email.trim().toLowerCase();
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedEmail)) {
@@ -712,6 +880,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
 
       if (error || !data?.user) {
+        // A dropped connection is not a wrong password: saying so makes users retype
+        // credentials that were already correct.
+        if (isNetworkOrTransientError(error)) {
+          throw new Error(describeSupabaseError(error, 'Could not sign in.'));
+        }
         if (error && /rate limit|too many requests/i.test(error.message)) {
           throw new Error('Too many sign-in attempts. Please wait a moment and try again.');
         }
@@ -761,24 +934,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     }
 
+    // Authentication has already succeeded: a failing profile/pairing lookup must not
+    // strand the user as signed out, so fall back to whatever is cached locally.
     const profile: UserProfile = existingRemoteProfile
       ? mergeRemoteProfileWithMetadataHints(existingRemoteProfile, metaHints, displayName)
       : await upsertUserProfile({
           userId,
           displayName,
           ...metaHints,
+        }).catch((): UserProfile => {
+          if (prevUserId === userId && get().user) return get().user!;
+          return {
+            id: userId,
+            display_name: displayName,
+            username: metaHints.username ?? buildDefaultUsername(displayName, userId),
+            friend_code: metaHints.friendCode ?? '',
+            bio: metaHints.bio ?? '',
+            pronouns: metaHints.pronouns ?? '',
+            mood_song: metaHints.moodSong ?? '',
+            banner_color: metaHints.bannerColor ?? '#1C1C1E',
+            banner_path: metaHints.bannerPath ?? null,
+            website: metaHints.website ?? '',
+            is_private: metaHints.isPrivate ?? false,
+            dump_mode: metaHints.dumpMode ?? false,
+            avatar_path: metaHints.avatarPath ?? null,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+            push_token: null,
+            created_at: new Date().toISOString(),
+          } as UserProfile;
         });
-    const pairing = await fetchPairingSnapshot(userId);
+    const pairing = await mergeRemotePairingWithCache(userId, {
+      couple: get().couple,
+      partner: get().partner,
+    });
     const soloFallbackCouple: CoupleRecord =
       pairing.couple ?? buildSoloFallbackCouple(userId, profile.created_at);
-
-    await persistSessionSlice({
-      user: profile,
-      email: cleanedEmail,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-    });
 
     set({
       user: profile,
@@ -786,6 +976,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       couple: soloFallbackCouple,
       partner: pairing.partner,
     });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   resendConfirmationEmail: async (rawEmail: string) => {
@@ -818,6 +1009,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       couple ??
       (currentUser ? buildSoloFallbackCouple(currentUser.id, currentUser.created_at) : null);
     set({ couple: effectiveCouple, partner });
+    void persistSessionSlice(collectPersistedSlice(get())).catch(() => {});
   },
   updateProfile: async (params) => {
     const currentUser = get().user;
@@ -843,14 +1035,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       dumpMode: params.dumpMode,
       coupleId: get().couple?.id ?? null,
     });
-    await persistSessionSlice({
-      user: updated,
-      email: get().email,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-    });
     set({ user: updated });
+    await persistSessionSlice(collectPersistedSlice(get()));
     void syncDirectoryPresence({ profile: updated, couple: get().couple });
     return updated;
   },
@@ -858,69 +1044,42 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   refreshPairing: async () => {
     const currentUser = get().user;
     if (!currentUser) return;
-    const pairing = await fetchPairingSnapshot(currentUser.id);
+    // Offline: the cache wins instead of surfacing a reachability error to every
+    // refresh control on every tab.
+    const pairing = await mergeRemotePairingWithCache(currentUser.id, {
+      couple: get().couple,
+      partner: get().partner,
+    });
+    if (get().user?.id !== currentUser.id) return;
     const effectiveCouple: CoupleRecord =
       pairing.couple ?? buildSoloFallbackCouple(currentUser.id, currentUser.created_at);
     set({ couple: effectiveCouple, partner: pairing.partner });
+    void persistSessionSlice(collectPersistedSlice(get())).catch(() => {});
   },
 
   setThemePreference: async (mode: ThemeMode) => {
     set({ themePreference: mode });
-    await persistSessionSlice({
-      user: get().user,
-      email: get().email,
-      themePreference: mode,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-    });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   setMotionEnabled: async (enabled: boolean) => {
     set({ motionEnabled: enabled });
-    await persistSessionSlice({
-      user: get().user,
-      email: get().email,
-      themePreference: get().themePreference,
-      motionEnabled: enabled,
-      motionSpeed: get().motionSpeed,
-    });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   setMotionSpeed: async (speed: AnimationSpeed) => {
     set({ motionSpeed: speed });
-    await persistSessionSlice({
-      user: get().user,
-      email: get().email,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: speed,
-    });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   setWidgetLayout: async (layout: WidgetLayoutMode) => {
     set({ widgetLayout: layout });
-    await persistSessionSlice({
-      user: get().user,
-      email: get().email,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-      widgetLayout: layout,
-      mirrorFrontCamera: get().mirrorFrontCamera,
-    });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   setMirrorFrontCamera: async (mirror: boolean) => {
     set({ mirrorFrontCamera: mirror });
-    await persistSessionSlice({
-      user: get().user,
-      email: get().email,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-      widgetLayout: get().widgetLayout,
-      mirrorFrontCamera: mirror,
-    });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   setPendingInviteCode: (code) => {
@@ -928,18 +1087,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   signOut: async () => {
+    sessionGeneration += 1;
+    stopMusicPreview();
     if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw new Error('Could not sign out. Check your connection and try again.');
+      // Local scope: a reachability failure must not trap the user in an account
+      // they asked to leave, and other devices are not affected.
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error && !isNetworkOrTransientError(error)) {
+        throw new Error(describeSupabaseError(error, 'Could not sign out.'));
+      }
     }
     await clearAccountSpecificCacheKeys();
-    await persistSessionSlice({
-      user: null,
-      email: null,
-      themePreference: get().themePreference,
-      motionEnabled: get().motionEnabled,
-      motionSpeed: get().motionSpeed,
-    });
     set({
       user: null,
       email: null,
@@ -947,29 +1105,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       partner: null,
       pendingInviteCode: null,
     });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 
   wipeLocalAccount: async () => {
-    const themePreference = get().themePreference;
-    const motionEnabled = get().motionEnabled;
-    const motionSpeed = get().motionSpeed;
+    sessionGeneration += 1;
+    stopMusicPreview();
     await clearAccountSpecificCacheKeys();
     await Promise.all([
       safeRemoveStorageItem(SESSION_STORAGE_KEY),
       safeRemoveStorageItem('keepit.local_db.v1'),
     ]);
-    await persistSessionSlice({
-      user: null,
-      email: null,
-      themePreference,
-      motionEnabled,
-      motionSpeed,
-    });
     set({
       user: null,
       email: null,
       couple: null,
       partner: null,
+      pendingInviteCode: null,
     });
+    await persistSessionSlice(collectPersistedSlice(get()));
   },
 }));

@@ -20,7 +20,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useAppMotion } from '@/hooks/useAppMotion';
-import { MOCHY_REVEAL_EASING, MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
+import { BENTO_REVEAL_EASING, BENTO_REVEAL_MS, MOCHY_SPRINGS, mochyTiming } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
 import {
   buildKeepItWatermarkSvgDataUri,
@@ -79,7 +79,7 @@ export function RevealOnAppear({
     const waitMs = Math.round(
       (delayMs + nextCascadeDelayMs(cascade)) / Math.max(0.25, motionSpeed)
     );
-    const cfg = mochyTiming(220, MOCHY_REVEAL_EASING, motionEnabled, motionSpeed);
+    const cfg = mochyTiming(BENTO_REVEAL_MS, BENTO_REVEAL_EASING, motionEnabled, motionSpeed);
     progress.set(withDelay(waitMs, withTiming(1, cfg)));
   }, [revealKey, cascade, delayMs, motionEnabled, motionSpeed, progress]);
 
@@ -87,7 +87,7 @@ export function RevealOnAppear({
     const p = progress.get();
     return {
       opacity: p,
-      transform: [{ translateY: (1 - p) * 10 }],
+      transform: [{ translateY: (1 - p) * 14 }],
     };
   });
 
@@ -122,6 +122,7 @@ export function MochyCard({
           {
             backgroundColor: colors.surface,
             borderColor: colors.border,
+            borderTopColor: colors.topHighlight,
             borderRadius: radii.card,
           },
           style,
@@ -222,7 +223,7 @@ export function KeepItButton({
   };
 
   const bgByVariant = {
-    primary: hovered && !isDisabled ? colors.primary : colors.accent,
+    primary: hovered && !isDisabled ? colors.blue400 : colors.primary,
     secondary: colors.surfaceElevated,
     danger: colors.dangerSoft,
     ghost: 'transparent',
@@ -237,11 +238,13 @@ export function KeepItButton({
 
   const borderColor = focused
     ? colors.focusRing
-    : variant === 'secondary'
-      ? colors.controlBorder
-      : variant === 'danger'
-        ? colors.danger
-        : 'transparent';
+    : variant === 'primary'
+      ? 'rgba(255,255,255,0.18)'
+      : variant === 'secondary'
+        ? colors.controlBorder
+        : variant === 'danger'
+          ? colors.danger
+          : 'transparent';
   return (
     <AnimatedPressable
       accessibilityRole="button"
@@ -261,7 +264,7 @@ export function KeepItButton({
           backgroundColor: bgByVariant,
           borderRadius: variant === 'ghost' ? radii.none : radii.button,
           borderColor,
-          borderWidth: variant === 'secondary' || variant === 'danger' ? 1 : 0,
+          borderWidth: variant === 'ghost' ? 0 : 1,
           opacity: disabled && !loading ? 0.42 : 1,
         },
         animatedStyle,
@@ -336,9 +339,9 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
           height: backH,
           borderRadius: Math.round(size * 0.22),
           borderCurve: 'continuous',
-          backgroundColor: colors.surfaceElevated,
+          backgroundColor: colors.surfaceObject,
           borderWidth: 1.5,
-          borderColor: colors.ink,
+          borderColor: colors.borderGlass,
           alignItems: 'center',
           justifyContent: 'center',
           transform: [{ translateX: Math.round(size * 0.08) }, { translateY: Math.round(size * 0.04) }],
@@ -349,7 +352,7 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
             height: lensSize,
             borderRadius: Math.round(lensSize / 2),
             borderWidth: 1.5,
-            borderColor: colors.inkMuted,
+            borderColor: colors.blue300,
           }}
         />
       </View>
@@ -363,7 +366,7 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
           height: frontH,
           borderRadius: Math.round(size * 0.16),
           borderCurve: 'continuous',
-          backgroundColor: colors.ink,
+          backgroundColor: colors.primary,
           borderWidth: 2,
           borderColor: colors.surface,
           alignItems: 'center',
@@ -374,7 +377,7 @@ export function DualFrameMark({ size = 56 }: { size?: number }) {
             width: Math.max(5, Math.round(size * 0.1)),
             height: Math.max(5, Math.round(size * 0.1)),
             borderRadius: 99,
-            backgroundColor: colors.canvas,
+            backgroundColor: '#FFFFFF',
           }}
         />
       </View>

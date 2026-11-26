@@ -28,11 +28,13 @@ import {
   LiveBeaconIcon,
   MomentPinIcon,
 } from '@/components/map/MapIcons';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton, SkeletonBlock } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import { LocationMode, LocationShareRecord } from '@/types/database';
+import { handleRovingKeyDown } from '@/utils/a11y';
 
 const MODE_OPTIONS: {
   mode: LocationMode;
@@ -163,6 +165,7 @@ export default function MapScreen() {
   const events = bundle?.events ?? [];
   const currentMode = mine?.mode ?? 'ghost';
   const canChange = Boolean(couple && user && bundle) && !busy;
+  const modeTabRefs = useRef<(View | null)[]>([]);
   const distance =
     hasCoordinates(mine) && hasCoordinates(partnerShare)
       ? formatDistanceApart(
@@ -335,13 +338,13 @@ export default function MapScreen() {
                 style={[
                   styles.distancePill,
                   {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.controlBorder,
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.borderGlass,
                     borderRadius: radii.pill,
                   },
                 ]}
               >
-                <CoupleLinkIcon color={colors.ink} size={15} />
+                <CoupleLinkIcon color={colors.blue300} size={15} />
                 <Text style={[styles.distanceText, { color: colors.ink }]}>{distance}</Text>
               </View>
             ) : undefined
@@ -419,7 +422,7 @@ export default function MapScreen() {
         {bundle ? (
           <>
             {/* Simplified Location Sharing Mode Card */}
-            <View style={[styles.compactCard, surface]}>
+            <BentoTile variant="dark" pattern="dots" radius={radii.card} style={styles.compactCard}>
               <View
                 accessibilityRole="radiogroup"
                 accessibilityLabel="Location sharing mode"
@@ -432,29 +435,44 @@ export default function MapScreen() {
                   },
                 ]}
               >
-                {MODE_OPTIONS.map((option) => {
+                {MODE_OPTIONS.map((option, idx) => {
                   const selected = currentMode === option.mode;
-                  const fg = selected ? colors.canvas : colors.inkMuted;
+                  const fg = selected ? colors.onAccent : colors.inkMuted;
                   return (
                     <AppPressable
                       key={option.mode}
+                      ref={(el) => {
+                        modeTabRefs.current[idx] = el as View | null;
+                      }}
                       accessibilityRole="radio"
                       accessibilityState={{ checked: selected, disabled: !canChange, busy }}
                       accessibilityLabel={`${option.label} mode. ${option.description}`}
                       disabled={!canChange}
                       onPress={() => void changeSharing(option.mode)}
+                      {...(Platform.OS === 'web'
+                        ? ({
+                            onKeyDown: (event: unknown) =>
+                              handleRovingKeyDown(event, idx, MODE_OPTIONS.length, (nextIndex) => {
+                                const nextOpt = MODE_OPTIONS[nextIndex];
+                                if (nextOpt && canChange) {
+                                  void changeSharing(nextOpt.mode);
+                                  (modeTabRefs.current[nextIndex] as unknown as { focus?: () => void } | null)?.focus?.();
+                                }
+                              }),
+                          } as Record<string, unknown>)
+                        : {})}
                       style={[
                         styles.modeSegment,
                         {
                           borderRadius: radii.input - 2,
-                          backgroundColor: selected ? colors.ink : 'transparent',
+                          backgroundColor: selected ? colors.primary : 'transparent',
                         },
                       ]}
                     >
                       <ModeGlyph
                         mode={option.mode}
                         color={fg}
-                        accentColor={selected ? colors.canvas : colors.success}
+                        accentColor={selected ? colors.onAccent : colors.blue400}
                         size={16}
                       />
                       <Text style={[styles.segmentTitle, { color: fg }]}>{option.label}</Text>
@@ -478,7 +496,7 @@ export default function MapScreen() {
                       : ''}
                 </Text>
               </View>
-            </View>
+            </BentoTile>
 
             {/* Interactive Map + Floating Icon HUD */}
             <InteractiveCoupleMap
@@ -490,7 +508,7 @@ export default function MapScreen() {
             />
 
             {/* Compact Circle Strip with Icon Badges & Direct Chat Button */}
-            <View style={[styles.compactCard, surface]}>
+            <BentoTile variant="dark" radius={radii.card} style={styles.compactCard}>
               <View style={styles.sectionTitleRow}>
                 <View style={styles.sectionTitleLeft}>
                   <FriendsClusterIcon color={colors.ink} size={18} />
@@ -630,10 +648,10 @@ export default function MapScreen() {
                   onAction={() => router.navigate('/(tabs)/profile' as never)}
                 />
               )}
-            </View>
+            </BentoTile>
 
             {/* Collapsible Icon Activity Log */}
-            <View style={[styles.compactCard, surface]}>
+            <BentoTile variant="dark" radius={radii.card} style={styles.compactCard}>
               <AppPressable
                 accessibilityRole="button"
                 accessibilityLabel={`Sharing activity (${events.length} events)`}
@@ -718,7 +736,7 @@ export default function MapScreen() {
                   </Text>
                 )
               ) : null}
-            </View>
+            </BentoTile>
           </>
         ) : null}
       </ScrollView>
@@ -765,7 +783,7 @@ const styles = StyleSheet.create({
   modeSegment: {
     flex: 1,
     minWidth: 0,
-    minHeight: 42,
+    minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 8,
     flexDirection: 'row',

@@ -7,7 +7,9 @@ import { useSessionStore } from '@/store/sessionStore';
 export function useAppMotion() {
   const initiallyReduced = useReducedMotion();
   const [systemReduced, setSystemReduced] = useState(() =>
-    Platform.OS === 'web' && typeof window !== 'undefined'
+    Platform.OS === 'web' &&
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
       : initiallyReduced,
   );
@@ -18,10 +20,18 @@ export function useAppMotion() {
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setSystemReduced);
     if (Platform.OS !== 'web') {
       let active = true;
-      void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-        if (active) setSystemReduced(enabled);
-      });
+      void AccessibilityInfo.isReduceMotionEnabled()
+        .then((enabled) => {
+          if (active) setSystemReduced(enabled);
+        })
+        .catch(() => {});
       return () => { active = false; subscription.remove(); };
+    }
+
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return () => {
+        subscription.remove();
+      };
     }
 
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');

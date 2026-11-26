@@ -78,9 +78,17 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     appWidgetManager: AppWidgetManager,
     appWidgetIds: IntArray
   ) {
-    for (widgetId in appWidgetIds) {
-      val options = appWidgetManager.getAppWidgetOptions(widgetId)
-      renderWidgetAsync(context, appWidgetManager, widgetId, options)
+    if (appWidgetIds.isEmpty()) return
+    val pendingResult = goAsync()
+    thread(start = true) {
+      try {
+        for (widgetId in appWidgetIds) {
+          val options = appWidgetManager.getAppWidgetOptions(widgetId)
+          renderWidgetSync(context, appWidgetManager, widgetId, options)
+        }
+      } finally {
+        pendingResult?.finish()
+      }
     }
   }
 
@@ -90,10 +98,17 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     appWidgetId: Int,
     newOptions: Bundle
   ) {
-    renderWidgetAsync(context, appWidgetManager, appWidgetId, newOptions)
+    val pendingResult = goAsync()
+    thread(start = true) {
+      try {
+        renderWidgetSync(context, appWidgetManager, appWidgetId, newOptions)
+      } finally {
+        pendingResult?.finish()
+      }
+    }
   }
 
-  private fun renderWidgetAsync(
+  private fun renderWidgetSync(
     context: Context,
     appWidgetManager: AppWidgetManager,
     widgetId: Int,
@@ -103,73 +118,78 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
     val minHeightDp = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 150) ?: 150
     val isMedium = minWidthDp >= 220
 
-    thread(start = true) {
-      try {
-        val snapshot = readSnapshot(context)
-        val photoBitmap = loadUriBitmap(snapshot?.takeIf { !it.momentLocked }?.momentPhotoUri)
-        val myPhotoBitmap = loadUriBitmap(snapshot?.myPhotoUri)
-        val cardBitmap = drawMochyWidgetBitmap(
-          context = context,
-          snapshot = snapshot,
-          photo = photoBitmap,
-          myPhoto = myPhotoBitmap,
-          isMedium = isMedium,
-          widthDp = if (isMedium) 300 else 155,
-          heightDp = minHeightDp.coerceIn(135, 165)
-        )
+    var photoBitmap: Bitmap? = null
+    var myPhotoBitmap: Bitmap? = null
+    var cardBitmap: Bitmap? = null
+    try {
+      val snapshot = readSnapshot(context)
+      photoBitmap = loadUriBitmap(snapshot?.takeIf { !it.momentLocked }?.momentPhotoUri)
+      myPhotoBitmap = loadUriBitmap(snapshot?.myPhotoUri)
+      cardBitmap = drawMochyWidgetBitmap(
+        context = context,
+        snapshot = snapshot,
+        photo = photoBitmap,
+        myPhoto = myPhotoBitmap,
+        isMedium = isMedium,
+        widthDp = if (isMedium) 300 else 155,
+        heightDp = minHeightDp.coerceIn(135, 165)
+      )
 
-        val targetUri = when {
-          snapshot == null -> "keepit://"
-          snapshot.momentLocked -> "keepit://camera"
-          snapshot.deepLinkUrl.isNotBlank() -> snapshot.deepLinkUrl
-          else -> "keepit://"
-        }
-
-        val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUri)).apply {
-          setPackage(context.packageName)
-          flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-          context,
-          widgetId,
-          launchIntent,
-          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val resolvedLayoutId = context.resources.getIdentifier(
-          "keepit_appwidget",
-          "layout",
-          context.packageName
-        )
-        val resolvedImageId = context.resources.getIdentifier(
-          "widget_canvas_image",
-          "id",
-          context.packageName
-        )
-
-        val useCustomLayout = resolvedLayoutId != 0 && resolvedImageId != 0
-        val layoutId = if (useCustomLayout) resolvedLayoutId else android.R.layout.activity_list_item
-        val imageViewId = if (useCustomLayout) resolvedImageId else android.R.id.icon
-
-        val views = RemoteViews(context.packageName, layoutId).apply {
-          setImageViewBitmap(imageViewId, cardBitmap)
-          setOnClickPendingIntent(imageViewId, pendingIntent)
-          if (!useCustomLayout) {
-            setTextViewText(
-              android.R.id.text1,
-              snapshot?.let {
-                "${it.partnerName} · ${activeStatusText(it) ?: formatTimeAgo(it.momentPostedAt ?: it.updatedAt)}"
-              } ?: "KeepIt · Tap to open"
-            )
-            setOnClickPendingIntent(android.R.id.text1, pendingIntent)
-          }
-        }
-
-        appWidgetManager.updateAppWidget(widgetId, views)
-      } catch (_: Throwable) {
-        // Guard against RemoteViews / Binder IPC exceptions crashing the app process
+      val targetUri = when {
+        snapshot == null -> "keepit://"
+        snapshot.momentLocked -> "keepit://camera"
+        snapshot.deepLinkUrl.isNotBlank() -> snapshot.deepLinkUrl
+        else -> "keepit://"
       }
+
+      val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUri)).apply {
+        setPackage(context.packageName)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      }
+
+      val pendingIntent = PendingIntent.getActivity(
+        context,
+        widgetId,
+        launchIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+
+      val resolvedLayoutId = context.resources.getIdentifier(
+        "keepit_appwidget",
+        "layout",
+        context.packageName
+      )
+      val resolvedImageId = context.resources.getIdentifier(
+        "widget_canvas_image",
+        "id",
+        context.packageName
+      )
+
+      val useCustomLayout = resolvedLayoutId != 0 && resolvedImageId != 0
+      val layoutId = if (useCustomLayout) resolvedLayoutId else android.R.layout.activity_list_item
+      val imageViewId = if (useCustomLayout) resolvedImageId else android.R.id.icon
+
+      val views = RemoteViews(context.packageName, layoutId).apply {
+        setImageViewBitmap(imageViewId, cardBitmap)
+        setOnClickPendingIntent(imageViewId, pendingIntent)
+        if (!useCustomLayout) {
+          setTextViewText(
+            android.R.id.text1,
+            snapshot?.let {
+              "${it.partnerName} · ${activeStatusText(it) ?: formatTimeAgo(it.momentPostedAt ?: it.updatedAt)}"
+            } ?: "KeepIt · Tap to open"
+          )
+          setOnClickPendingIntent(android.R.id.text1, pendingIntent)
+        }
+      }
+
+      appWidgetManager.updateAppWidget(widgetId, views)
+    } catch (_: Throwable) {
+      // Guard against RemoteViews / Binder IPC exceptions crashing the app process
+    } finally {
+      photoBitmap?.takeIf { !it.isRecycled }?.recycle()
+      myPhotoBitmap?.takeIf { !it.isRecycled }?.recycle()
+      cardBitmap?.takeIf { !it.isRecycled }?.recycle()
     }
   }
 
@@ -783,7 +803,15 @@ class KeepItGlanceWidgetReceiver : AppWidgetProvider() {
           )
         }
         uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
-          val bytes = URL(uriStr).openStream().use { it.readBytes() }
+          val connection = (URL(uriStr).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 8_000
+            readTimeout = 10_000
+          }
+          val bytes = try {
+            connection.inputStream.use { it.readBytes() }
+          } finally {
+            connection.disconnect()
+          }
           val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
           var sample = 1

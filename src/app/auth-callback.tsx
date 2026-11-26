@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BentoTile, BentoToggleGlyph } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
@@ -42,6 +43,7 @@ export default function AuthCallbackScreen() {
     processedRef.current = true;
 
     let active = true;
+    let unverifiedTimer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       try {
         if (params.error_description || params.error) {
@@ -89,7 +91,7 @@ export default function AuthCallbackScreen() {
         }
 
         setStatus('unverified');
-        setTimeout(() => {
+        unverifiedTimer = setTimeout(() => {
           if (active && !useSessionStore.getState().user) {
             router.replace({
               pathname: '/(auth)/welcome',
@@ -110,21 +112,24 @@ export default function AuthCallbackScreen() {
 
     return () => {
       active = false;
+      clearTimeout(unverifiedTimer);
     };
   }, [params, user, consumeAuthRedirectUrl, router]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
-      <View
+      <BentoTile
+        variant="spotlight"
+        pattern="dots"
+        grain
+        radius={radii.card}
         style={[
           styles.card,
           {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderRadius: radii.group,
             padding: spacing.xl,
           },
         ]}>
+        <BentoToggleGlyph size={28} tone="auto" />
         {effectiveStatus === 'verifying' ? (
           <>
             <ActivityIndicator size="large" color={colors.ink} />
@@ -183,7 +188,7 @@ export default function AuthCallbackScreen() {
             />
           </>
         )}
-      </View>
+      </BentoTile>
     </SafeAreaView>
   );
 }

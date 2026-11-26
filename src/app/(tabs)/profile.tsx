@@ -12,6 +12,7 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -33,20 +34,24 @@ import {
   CURATED_MUSIC_TRACKS,
   fetchFriendsCircle,
   removeFriend,
+  updateFriendRelationship,
 } from '@/api/social';
 import { DualMomentCard } from '@/components/moment/MomentCards';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton, RevealOnAppear, SkeletonBlock } from '@/components/ui/Primitives';
 import { AppPressable, AppSwitch as Switch, AppTextInput, ConfirmModal, PageHeader } from '@/components/ui/ScreenKit';
+import { useAccessibleModal } from '@/hooks/useAccessibleModal';
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
+import { announcePolite, handleRovingKeyDown } from '@/utils/a11y';
 import { pickProfileImage } from '@/utils/imageUpload';
 
 const BANNER_COLOR_SWATCHES = [
-  '#000000',
-  '#1876F2',
-  '#262626',
-  '#595959',
+  '#0A1650',
+  '#2F55FF',
+  '#0D0D0D',
+  '#1C1C1E',
 ] as const;
 
 const PRONOUN_PRESETS = ['she/her', 'he/him', 'they/them'] as const;
@@ -65,23 +70,23 @@ function makeAvatarSvgDataUri(bgHex: string, glyph: string, label: string): stri
 const AVATAR_PRESETS = [
   {
     id: 'threads_blue',
-    label: 'Blue',
-    uri: makeAvatarSvgDataUri('#1876F2', 'K', 'KEEPIT'),
+    label: 'Electric',
+    uri: makeAvatarSvgDataUri('#2F55FF', 'K', 'KEEPIT'),
   },
   {
     id: 'obsidian_dual',
-    label: 'Black',
-    uri: makeAvatarSvgDataUri('#000000', 'II', 'DUAL'),
+    label: 'Midnight',
+    uri: makeAvatarSvgDataUri('#0A1650', 'II', 'DUAL'),
   },
   {
     id: 'slate_vinyl',
-    label: 'Slate',
-    uri: makeAvatarSvgDataUri('#262626', 'M', 'MOMENT'),
+    label: 'Obsidian',
+    uri: makeAvatarSvgDataUri('#0D0D0D', 'M', 'MOMENT'),
   },
   {
     id: 'graphite_film',
-    label: '35mm',
-    uri: makeAvatarSvgDataUri('#595959', '35', 'FILM'),
+    label: 'Graphite',
+    uri: makeAvatarSvgDataUri('#1C1C1E', '35', 'FILM'),
   },
 ] as const;
 
@@ -105,8 +110,20 @@ export default function ProfileScreen() {
   const [profileFeedback, setProfileFeedback] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState<'avatar' | 'banner' | null>(null);
+  const [updatingFriendId, setUpdatingFriendId] = useState<string | null>(null);
+  const subTabRefs = useRef<(View | null)[]>([]);
   const copyTimerRef = useRef<number | undefined>(undefined);
   const feedbackTimerRef = useRef<number | undefined>(undefined);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearTimeout(copyTimerRef.current);
+      clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
 
   // Edit Profile Modal state
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -199,7 +216,7 @@ export default function ProfileScreen() {
   const displayName = user?.display_name ?? 'KeepIt Creator';
   const username = user?.username || buildDefaultUsername(displayName, userId);
   const friendCode = user?.friend_code || buildFriendCode(userId, displayName);
-  const bannerColor = user?.banner_color ?? '#000000';
+  const bannerColor = user?.banner_color ?? '#0A1650';
   const bannerPath = user?.banner_path ?? null;
   const pronouns = user?.pronouns ?? '';
   const bio = user?.bio ?? '';
@@ -230,10 +247,23 @@ export default function ProfileScreen() {
     try {
       await Clipboard.setStringAsync(friendCode);
       setCopiedCode(true);
+      announcePolite(`Copied Friend Code ${friendCode} to clipboard.`);
       clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopiedCode(false), 2000) as unknown as number;
     } catch {
       setProfileError('Could not copy the Friend Code. Try selecting it manually.');
+    }
+  };
+
+  const handleShareFriendCode = async () => {
+    triggerHaptic();
+    try {
+      await Share.share({
+        message: `Add me on KeepIt! My Friend Code is ${friendCode} (@${username}).`,
+      });
+      announcePolite('Friend Code share sheet opened.');
+    } catch {
+      setProfileError('Could not open share sheet. Copy your Friend Code instead.');
     }
   };
 
@@ -247,14 +277,18 @@ export default function ProfileScreen() {
       isPrivate: nextVal,
     })
       .then(() => {
+        if (!isMountedRef.current) return;
         showTemporaryFeedback(
           nextVal ? 'Private Profile enabled.' : 'Profile is now visible to your circle.'
         );
       })
       .catch((err) => {
+        if (!isMountedRef.current) return;
         setProfileError(err instanceof Error ? err.message : 'Could not update privacy settings.');
       })
-      .finally(() => setPrivateModeSaving(false));
+      .finally(() => {
+        if (isMountedRef.current) setPrivateModeSaving(false);
+      });
   };
 
   const handleDirectUpload = async (kind: 'avatar' | 'banner') => {
@@ -365,17 +399,12 @@ export default function ProfileScreen() {
     setEditConfirmOpen(true);
   };
 
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof document === 'undefined' || !editModalOpen) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || savingProfile) return;
-      event.preventDefault();
-      if (editDirty) setEditConfirmOpen(true);
-      else setEditModalOpen(false);
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [editModalOpen, editDirty, savingProfile]);
+  const editModal = useAccessibleModal({
+    visible: editModalOpen,
+    onClose: closeEditProfile,
+    disabled: savingProfile || editConfirmOpen,
+    title: 'Edit Profile',
+  });
 
   const discardEditProfile = () => {
     setEditConfirmOpen(false);
@@ -457,7 +486,7 @@ export default function ProfileScreen() {
         friendsQuery.refetch(),
       ]);
     } finally {
-      setPullRefreshing(false);
+      if (isMountedRef.current) setPullRefreshing(false);
     }
   };
   const handleAddFriend = async () => {
@@ -498,6 +527,7 @@ export default function ProfileScreen() {
       await removeFriend({ userId, friendRecordId });
       setPendingRemoveFriend(null);
       showTemporaryFeedback(`Removed ${name} from your Friends Circle.`);
+      announcePolite(`Removed ${name} from your Friends Circle.`);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
         queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
@@ -506,6 +536,32 @@ export default function ProfileScreen() {
       setProfileError(err instanceof Error ? err.message : 'Could not remove friend.');
     } finally {
       setRemovingFriend(false);
+    }
+  };
+
+  const handleToggleFriendTier = async (fr: (typeof friendsList)[number]) => {
+    if (updatingFriendId) return;
+    const nextRel: 'bestie' | 'friend' = fr.relationship === 'bestie' ? 'friend' : 'bestie';
+    const fName = fr.friend_profile.display_name || 'Friend';
+    setProfileError(null);
+    setUpdatingFriendId(fr.id);
+    triggerHaptic();
+    try {
+      await updateFriendRelationship({
+        userId,
+        friendRecordId: fr.id,
+        relationship: nextRel,
+      });
+      showTemporaryFeedback(`${fName} is now ${nextRel === 'bestie' ? 'a Bestie' : 'a Friend'}.`);
+      announcePolite(`${fName} set to ${nextRel === 'bestie' ? 'Bestie' : 'Friend'}.`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['friends-list', userId] }),
+        queryClient.invalidateQueries({ queryKey: ['today-moment'] }),
+      ]);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Could not update friend tier.');
+    } finally {
+      setUpdatingFriendId(null);
     }
   };
 
@@ -604,7 +660,19 @@ export default function ProfileScreen() {
                   contentFit="cover"
                   style={StyleSheet.absoluteFill}
                 />
-              ) : null}
+              ) : (
+                <BentoTile
+                  variant={
+                    bannerColor === '#0A1650' || bannerColor === '#2F55FF'
+                      ? 'heroBlue'
+                      : 'bottomGlow'
+                  }
+                  grain
+                  radius={0}
+                  style={StyleSheet.absoluteFill}>
+                  <View />
+                </BentoTile>
+              )}
               <View style={[styles.bannerOverlayRow, { paddingHorizontal: 16 }]}>
                 <View style={styles.topQuickButtons}>
                   {bannerPath ? (
@@ -613,9 +681,19 @@ export default function ProfileScreen() {
                       accessibilityLabel="Remove banner image"
                       onPress={() => {
                         triggerHaptic();
-                        void updateProfile({ displayName, bannerPath: null }).then(() =>
-                          showTemporaryFeedback('Banner reset to solid color.')
-                        );
+                        void updateProfile({ displayName, bannerPath: null })
+                          .then(() => {
+                            if (isMountedRef.current) {
+                              showTemporaryFeedback('Banner reset to solid color.');
+                            }
+                          })
+                          .catch((err) => {
+                            if (isMountedRef.current) {
+                              setProfileError(
+                                err instanceof Error ? err.message : 'Could not reset banner.'
+                              );
+                            }
+                          });
                       }}
                       style={styles.bannerIconBtn}>
                       <SymbolView
@@ -724,17 +802,17 @@ export default function ProfileScreen() {
                   style={[
                     styles.iconActionBtnWide,
                     {
-                      backgroundColor: colors.ink,
-                      borderColor: colors.ink,
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary,
                       borderRadius: radii.input,
                     },
                   ]}>
                   <SymbolView
                     name={{ ios: 'pencil', android: 'edit', web: 'edit' }}
-                    tintColor={colors.canvas}
+                    tintColor={colors.onAccent}
                     size={16}
                   />
-                  <Text style={[styles.iconActionText, { color: colors.canvas }]}>Edit</Text>
+                  <Text style={[styles.iconActionText, { color: colors.onAccent }]}>Edit</Text>
                 </AppPressable>
               </View>
             </View>
@@ -851,13 +929,14 @@ export default function ProfileScreen() {
 
             {/* Icon-First Social Stats Bar */}
             <RevealOnAppear revealKey="profile-stats-bar">
-              <View
+              <BentoTile
+                variant="spotlight"
+                pattern="grid"
+                grain
+                radius={radii.card}
                 style={[
                   styles.statsBarCard,
                   {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.card,
                     marginTop: 16,
                     paddingVertical: 16,
                     paddingHorizontal: 12,
@@ -869,7 +948,7 @@ export default function ProfileScreen() {
                   style={styles.statCol}>
                   <SymbolView
                     name={{ ios: 'square.grid.2x2', android: 'grid_view', web: 'grid_view' }}
-                    tintColor={colors.inkMuted}
+                    tintColor={colors.blue300}
                     size={15}
                   />
                   <Text style={[styles.statValue, { color: colors.ink }]}>{myPosts.length}</Text>
@@ -884,10 +963,10 @@ export default function ProfileScreen() {
                   style={styles.statCol}>
                   <SymbolView
                     name={{ ios: 'flame.fill', android: 'local_fire_department', web: 'local_fire_department' }}
-                    tintColor={colors.inkMuted}
+                    tintColor={colors.blue300}
                     size={15}
                   />
-                  <Text style={[styles.statValue, { color: colors.ink }]}>{streakCount}d</Text>
+                  <Text style={[styles.statValue, { color: colors.blue400 }]}>{streakCount}d</Text>
                   <Text style={[styles.statLabel, { color: colors.inkMuted }]}>Streak</Text>
                 </View>
 
@@ -899,7 +978,7 @@ export default function ProfileScreen() {
                   style={styles.statCol}>
                   <SymbolView
                     name={{ ios: 'person.2.fill', android: 'group', web: 'group' }}
-                    tintColor={colors.inkMuted}
+                    tintColor={colors.blue300}
                     size={15}
                   />
                   <Text style={[styles.statValue, { color: colors.ink }]}>{friendsList.length + (isPartnerPaired ? 1 : 0)}</Text>
@@ -924,7 +1003,7 @@ export default function ProfileScreen() {
                         ? { ios: 'heart.fill', android: 'favorite', web: 'favorite' }
                         : { ios: 'person.badge.plus', android: 'person_add', web: 'person_add' }
                     }
-                    tintColor={isPartnerPaired ? colors.ink : colors.inkMuted}
+                    tintColor={isPartnerPaired ? colors.blue400 : colors.inkMuted}
                     size={15}
                   />
                   <Text
@@ -933,7 +1012,7 @@ export default function ProfileScreen() {
                     {isPartnerPaired ? partnerName : 'Pair'}
                   </Text>
                 </AppPressable>
-              </View>
+              </BentoTile>
             </RevealOnAppear>
 
             {profileFeedback ? (
@@ -951,6 +1030,8 @@ export default function ProfileScreen() {
             {/* Profile Sub-Tabs Switcher + Inline Action */}
             <View style={[styles.subTabsBarRow, { marginTop: 20 }]}>
               <View
+                accessibilityRole="tablist"
+                accessibilityLabel="Profile sections"
                 style={[
                   styles.subTabsTrack,
                   {
@@ -960,6 +1041,9 @@ export default function ProfileScreen() {
                   },
                 ]}>
                 <AppPressable
+                  ref={(el) => {
+                    subTabRefs.current[0] = el as View | null;
+                  }}
                   accessibilityRole="tab"
                   accessibilityState={{ selected: subTab === 'posts' }}
                   accessibilityLabel={`My Posts (${myPosts.length})`}
@@ -967,29 +1051,42 @@ export default function ProfileScreen() {
                     triggerHaptic();
                     setSubTab('posts');
                   }}
+                  {...(Platform.OS === 'web'
+                    ? ({
+                        onKeyDown: (event: unknown) =>
+                          handleRovingKeyDown(event, 0, 2, (nextIndex) => {
+                            const nextTab: ProfileSubTab = nextIndex === 0 ? 'posts' : 'friends';
+                            setSubTab(nextTab);
+                            (subTabRefs.current[nextIndex] as unknown as { focus?: () => void } | null)?.focus?.();
+                          }),
+                      } as Record<string, unknown>)
+                    : {})}
                   style={[
                     styles.subTabBtn,
                     subTab === 'posts' && {
-                      backgroundColor: colors.ink,
+                      backgroundColor: colors.primary,
                       borderRadius: radii.pill,
                     },
                   ]}>
                   <SymbolView
                     name={{ ios: 'square.grid.2x2', android: 'grid_view', web: 'grid_view' }}
-                    tintColor={subTab === 'posts' ? colors.canvas : colors.inkMuted}
+                    tintColor={subTab === 'posts' ? colors.onAccent : colors.inkMuted}
                     size={16}
                   />
                   <Text
                     pointerEvents="none"
                     style={[
                       styles.subTabText,
-                      { color: subTab === 'posts' ? colors.canvas : colors.inkMuted },
+                      { color: subTab === 'posts' ? colors.onAccent : colors.inkMuted },
                     ]}>
                     Posts · {myPosts.length}
                   </Text>
                 </AppPressable>
 
                 <AppPressable
+                  ref={(el) => {
+                    subTabRefs.current[1] = el as View | null;
+                  }}
                   accessibilityRole="tab"
                   accessibilityState={{ selected: subTab === 'friends' }}
                   accessibilityLabel={`Friends Circle (${friendsList.length + (isPartnerPaired ? 1 : 0)})`}
@@ -997,23 +1094,33 @@ export default function ProfileScreen() {
                     triggerHaptic();
                     setSubTab('friends');
                   }}
+                  {...(Platform.OS === 'web'
+                    ? ({
+                        onKeyDown: (event: unknown) =>
+                          handleRovingKeyDown(event, 1, 2, (nextIndex) => {
+                            const nextTab: ProfileSubTab = nextIndex === 0 ? 'posts' : 'friends';
+                            setSubTab(nextTab);
+                            (subTabRefs.current[nextIndex] as unknown as { focus?: () => void } | null)?.focus?.();
+                          }),
+                      } as Record<string, unknown>)
+                    : {})}
                   style={[
                     styles.subTabBtn,
                     subTab === 'friends' && {
-                      backgroundColor: colors.ink,
+                      backgroundColor: colors.primary,
                       borderRadius: radii.pill,
                     },
                   ]}>
                   <SymbolView
                     name={{ ios: 'person.2.fill', android: 'group', web: 'group' }}
-                    tintColor={subTab === 'friends' ? colors.canvas : colors.inkMuted}
+                    tintColor={subTab === 'friends' ? colors.onAccent : colors.inkMuted}
                     size={16}
                   />
                   <Text
                     pointerEvents="none"
                     style={[
                       styles.subTabText,
-                      { color: subTab === 'friends' ? colors.canvas : colors.inkMuted },
+                      { color: subTab === 'friends' ? colors.onAccent : colors.inkMuted },
                     ]}>
                     Friends · {friendsList.length + (isPartnerPaired ? 1 : 0)}
                   </Text>
@@ -1126,31 +1233,54 @@ export default function ProfileScreen() {
                   <Text style={{ fontSize: 13, lineHeight: 20, color: colors.inkMuted }}>
                     Share this so someone can add you.
                   </Text>
-                  <AppPressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Copy Friend Code ${friendCode}`}
-                    onPress={() => void handleCopyFriendCode()}
-                    style={[
-                      styles.friendCodePill,
-                      {
-                        backgroundColor: colors.surfaceElevated,
-                        borderColor: copiedCode ? colors.success : colors.border,
-                        borderRadius: radii.pill,
-                      },
-                    ]}>
-                    <SymbolView
-                      name={
-                        copiedCode
-                          ? { ios: 'checkmark', android: 'check', web: 'check' }
-                          : { ios: 'doc.on.doc', android: 'content_copy', web: 'content_copy' }
-                      }
-                      tintColor={copiedCode ? colors.success : colors.inkMuted}
-                      size={14}
-                    />
-                    <Text style={[styles.friendCodeValue, { color: colors.ink }]}>
-                      {copiedCode ? 'Copied' : friendCode}
-                    </Text>
-                  </AppPressable>
+                  <View style={styles.friendCodeActionsRow}>
+                    <AppPressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Copy Friend Code ${friendCode}`}
+                      onPress={() => void handleCopyFriendCode()}
+                      style={[
+                        styles.friendCodePill,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: copiedCode ? colors.success : colors.border,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <SymbolView
+                        name={
+                          copiedCode
+                            ? { ios: 'checkmark', android: 'check', web: 'check' }
+                            : { ios: 'doc.on.doc', android: 'content_copy', web: 'content_copy' }
+                        }
+                        tintColor={copiedCode ? colors.success : colors.inkMuted}
+                        size={14}
+                      />
+                      <Text style={[styles.friendCodeValue, { color: colors.ink }]}>
+                        {copiedCode ? 'Copied' : friendCode}
+                      </Text>
+                    </AppPressable>
+                    <AppPressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Share Friend Code ${friendCode}`}
+                      onPress={() => void handleShareFriendCode()}
+                      style={[
+                        styles.friendCodePill,
+                        {
+                          backgroundColor: colors.primary,
+                          borderColor: colors.primary,
+                          borderRadius: radii.pill,
+                        },
+                      ]}>
+                      <SymbolView
+                        name={{ ios: 'square.and.arrow.up', android: 'share', web: 'share' }}
+                        tintColor="#FFFFFF"
+                        size={14}
+                      />
+                      <Text style={[styles.friendCodeValue, { color: '#FFFFFF' }]}>
+                        Share
+                      </Text>
+                    </AppPressable>
+                  </View>
                 </View>
                 {/* Compact Add Friend Bar */}
                 <View
@@ -1411,6 +1541,38 @@ export default function ProfileScreen() {
                         <View style={styles.friendCompactActions}>
                           <AppPressable
                             accessibilityRole="button"
+                            accessibilityLabel={`Change ${fName} tier, currently ${fr.relationship === 'bestie' ? 'Bestie' : 'Friend'}`}
+                            disabled={updatingFriendId === fr.id}
+                            onPress={() => void handleToggleFriendTier(fr)}
+                            style={[
+                              styles.tierBadgeBtn,
+                              {
+                                backgroundColor:
+                                  fr.relationship === 'bestie'
+                                    ? colors.accentSoft
+                                    : colors.surfaceElevated,
+                                borderColor:
+                                  fr.relationship === 'bestie' ? colors.accent : colors.border,
+                                borderRadius: radii.pill,
+                                opacity: updatingFriendId === fr.id ? 0.55 : 1,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.tierBadgeBtnText,
+                                {
+                                  color:
+                                    fr.relationship === 'bestie'
+                                      ? colors.blue300
+                                      : colors.inkMuted,
+                                },
+                              ]}>
+                              {fr.relationship === 'bestie' ? 'Bestie' : 'Friend'}
+                            </Text>
+                          </AppPressable>
+
+                          <AppPressable
+                            accessibilityRole="button"
                             accessibilityLabel={`Message ${fName}`}
                             onPress={() => {
                               triggerHaptic();
@@ -1481,6 +1643,10 @@ export default function ProfileScreen() {
               styles.modalSheet,
               { backgroundColor: colors.sheetSurface, borderColor: colors.controlBorder },
             ]}>
+            <View
+              ref={editModal.dialogRef as never}
+              {...editModal.dialogA11yProps}
+              style={{ flex: 1 }}>
             <View
               style={[
                 styles.modalHeader,
@@ -1810,7 +1976,11 @@ export default function ProfileScreen() {
 
               {/* Clean Identity Fields + Dropdowns */}
               <View style={{ gap: spacing.sm }}>
+                <Text nativeID="profile-display-name-label" style={[styles.fieldLabel, { color: colors.ink }]}>
+                  Display name
+                </Text>
                 <AppTextInput
+                  labelId="profile-display-name-label"
                   accessibilityLabel="Display Name"
                   value={draftName}
                   onChangeText={setDraftName}
@@ -1828,7 +1998,11 @@ export default function ProfileScreen() {
                   ]}
                 />
 
+                <Text nativeID="profile-username-label" style={[styles.fieldLabel, { color: colors.ink }]}>
+                  Username
+                </Text>
                 <AppTextInput
+                  labelId="profile-username-label"
                   accessibilityLabel="Username handle"
                   value={draftUsername}
                   onChangeText={setDraftUsername}
@@ -1848,7 +2022,11 @@ export default function ProfileScreen() {
                 />
 
                 <View style={{ gap: 4 }}>
+                  <Text nativeID="profile-bio-label" style={[styles.fieldLabel, { color: colors.ink }]}>
+                    Bio
+                  </Text>
                   <AppTextInput
+                    labelId="profile-bio-label"
                     accessibilityLabel="Profile bio"
                     value={draftBio}
                     onChangeText={setDraftBio}
@@ -2123,6 +2301,7 @@ export default function ProfileScreen() {
                 onPress={() => void handleSaveProfile()}
               />
             </ScrollView>
+            </View>
           </SafeAreaView>
         </KeyboardAvoidingView>
       </Modal>
@@ -2227,7 +2406,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   bannerUploadPill: {
-    minHeight: 40,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -2293,6 +2472,13 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingBottom: 4,
     minWidth: 0,
+  },
+  friendCodeActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   friendCodePill: {
     minHeight: 44,
@@ -2538,6 +2724,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  tierBadgeBtn: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tierBadgeBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   friendIconBtn: {
     width: 44,
     height: 44,
@@ -2622,7 +2819,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarPresetChip: {
-    minHeight: 40,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,

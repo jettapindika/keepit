@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { formatStatusRemaining } from '@/api/statuses';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { AppPressable } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { StatusRecord } from '@/types/database';
@@ -54,15 +55,11 @@ export function StatusHeaderCard({
       : 'Set status…';
 
   return (
-    <View
-      style={[
-        styles.bar,
-        {
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-          borderRadius: radii.card,
-        },
-      ]}>
+    <BentoTile
+      variant="dark"
+      pattern="dots"
+      radius={radii.card}
+      style={styles.bar}>
       <AppPressable
         accessibilityRole="button"
         accessibilityLabel={
@@ -130,7 +127,7 @@ export function StatusHeaderCard({
             styles.statusReadout,
             {
               backgroundColor: colors.surfaceElevated,
-              borderColor: colors.border,
+              borderColor: colors.borderGlass,
               borderRadius: radii.pill,
             },
           ]}>
@@ -149,7 +146,7 @@ export function StatusHeaderCard({
             styles.secondaryChip,
             {
               backgroundColor: colors.surfaceElevated,
-              borderColor: colors.border,
+              borderColor: colors.borderGlass,
               borderRadius: radii.pill,
             },
           ]}>
@@ -169,21 +166,21 @@ export function StatusHeaderCard({
         style={[
           styles.chatChip,
           {
-            backgroundColor: colors.surfaceElevated,
+            backgroundColor: colors.surfaceObject,
             borderColor: colors.controlBorder,
-            borderRadius: radii.lg,
+            borderRadius: radii.buttonSm,
           },
         ]}>
         <SymbolView
           name={{ ios: 'bubble.left.and.bubble.right', android: 'chat_bubble', web: 'chat_bubble' }}
-          tintColor={colors.ink}
+          tintColor={colors.blue300}
           size={16}
         />
         <Text numberOfLines={1} style={[styles.chipText, { color: colors.ink }]}>
           Chat
         </Text>
       </AppPressable>
-    </View>
+    </BentoTile>
   );
 }
 

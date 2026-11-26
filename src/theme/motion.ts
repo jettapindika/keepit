@@ -13,6 +13,9 @@ export type AnimationSpeed = (typeof ANIMATION_SPEEDS)[number];
 
 // Mochy-Music CubicBezierEasing curves
 export const MOCHY_REVEAL_EASING = Easing.bezier(0.2, 0, 0, 1); // RevealOnAppear.kt:44
+export const BENTO_REVEAL_EASING = Easing.bezier(0.2, 0.8, 0.2, 1);
+export const BENTO_REVEAL_MS = 460;
+export const BENTO_STAGGER_MS = 60;
 export const MOCHY_CLOSE_EASING = Easing.bezier(0.4, 0, 0.1, 1); // ContainerTransform.kt:54
 export const MOCHY_SHEET_EASING = Easing.bezier(0.57, 0.53, 0, 1); // SearchDesign.kt:112 / MenuSheet.kt:70
 export const MOCHY_HERO_EASING = Easing.bezier(0.32, 0, 0.15, 1); // HeroCarousel.kt:163

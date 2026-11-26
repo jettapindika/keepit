@@ -2,7 +2,7 @@
 
 **Keep every moment, together.**
 
-KeepIt is a private, BeReal-style mobile app built strictly for couples (`2` partners per space), crafted with Expo Router (React Native + TypeScript), Supabase (Postgres RLS, Realtime, Private Storage, Edge Functions), native iOS WidgetKit + Android Jetpack Glance widgets, and a dark-first visual and spring-motion system adapted from [`realidkroo/Mochy-Music`](https://github.com/realidkroo/Mochy-Music).
+KeepIt is a private, BeReal-style mobile app built strictly for couples (`2` partners per space), crafted with Expo Router (React Native + TypeScript), Supabase (Postgres RLS, Realtime, Private Storage, Edge Functions), native iOS WidgetKit + Android Jetpack Glance widgets, and a Dark Bento / Electric Blue visual system with spring motion.
 
 ## Core Features
 
@@ -31,12 +31,14 @@ KeepIt is a private, BeReal-style mobile app built strictly for couples (`2` par
 
 ## Visual system and UX patterns
 
-KeepIt implements the **Threads Light System** ([`design.md`](design.md) & [`DESIGN.md`](DESIGN.md)) across every screen:
+KeepIt v0.6.0 uses a **Dark Bento / Electric Blue** design system across every screen:
 
-- **Palette and hierarchy:** Light mode (default) uses crisp `#FFFFFF` canvas/surfaces, `#F5F5F5` tertiary cards, `#000000` ink and primary button fills, `1px` `#00000026` subtle outlines, `#D92D20` error states, and `#1876F2` primary blue for focus rings, active states, and button hover; Dark mode provides a matching high-contrast counterpart.
-- **Geometry and typography:** Cards and modals use `24px` (`rounded.xl`) radii, buttons and inputs use `20px` (`rounded.lg`), and navigation items use `8px` (`rounded.md`). Typography uses `system-ui` in sentence case (`0px` letter-spacing) with weight `600` headings/labels and `400` body copy.
-- **Navigation and safety:** `NavigationGuard` resumes `pendingInviteCode` after sign-in, peer tabs (`Home`, `Map`, `Capture`, `Memories`, `Profile`) switch without sliding in a compact dock (`58px` height), **Chat** sits in the top-right header of Home and Profile, and dirty status/profile/camera edits confirm before discard. Destructive actions require explicit confirmation via `ConfirmModal`.
-- **Truthful states:** Missing, failed, or SVG-generated Moment media shows an unavailable/retry state instead of synthetic photos. Missing location coordinates remain `null` until a real GPS fix, located Moment, or confirmed place check-in exists. Browser camera capture uses `CameraView`/`takePictureAsync` and reports unsupported browser video explicitly.
+- **Palette:** `#000000` canvas, `#0D0D0D` / `#141414` / `#1C1C1E` surfaces, one electric blue accent (`#2F55FF`, with `#4B73FF` and `#8FA8FF` tints), soft blue glows, and fine film grain. Bento tiles replace dense card stacks on Home, Memories, Map, and Recap.
+- **Accessibility (WCAG 2.2 AA):** skip link and main landmark on Web, focus-trapped dialogs with a shared Escape stack, labelled form fields with focus on the first error, screen reader announcements, arrow-key navigation for tabs and radio groups, keyboard map controls (`+`, `-`, `0`, arrows), and 44x44 minimum tap targets.
+- **Chat:** photo attachments, message search, Copy, sender-only Unsend, and Reply in Chat from a partner or friend Moment.
+- **Home, Memories, Profile, Settings:** feed filters (All, Partner, Friends, Yours), memory filters and search, Bestie/Friend tier toggle, Friend Code sharing, and an animation speed control.
+- **Navigation and safety:** `NavigationGuard` resumes `pendingInviteCode` after sign-in, peer tabs (`Home`, `Map`, `Capture`, `Memories`, `Profile`) switch in a compact dock, and destructive actions require confirmation via `ConfirmModal`.
+- **Truthful states:** Missing, failed, or SVG-generated Moment media shows an unavailable/retry state instead of synthetic photos. Missing location coordinates remain `null` until a real GPS fix, located Moment, or confirmed place check-in exists.
 
 [NEXT_AI_NOTES.md](NEXT_AI_NOTES.md) records the remaining native-device and strict-gate items.
 

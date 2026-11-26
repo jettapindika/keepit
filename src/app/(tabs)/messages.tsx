@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -18,6 +19,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { requestRealtimeCatchUpSync } from '@/api/realtimeSync';
 import {
+  deleteDirectMessage,
   fetchConversationMessages,
   fetchFriendsCircle,
   getSnapDmRemainingSeconds,
@@ -31,6 +33,8 @@ import { AppPressable, AppTextInput, PageHeader } from '@/components/ui/ScreenKi
 import { useSessionStore } from '@/store/sessionStore';
 import { useKeepItTheme } from '@/theme/tokens';
 import { DirectMessageRecord } from '@/types/database';
+import { announcePolite, handleRovingKeyDown } from '@/utils/a11y';
+import { pickProfileImage } from '@/utils/imageUpload';
 
 const DM_REACTION_EMOJIS = ['❤️', '🔥', '🥹', '😂', '👍'] as const;
 
@@ -53,7 +57,12 @@ interface PeerOption {
 
 export default function MessagesScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ peerId?: string; peerName?: string }>();
+  const params = useLocalSearchParams<{
+    peerId?: string;
+    peerName?: string;
+    replyMomentId?: string;
+    replyMomentPreview?: string;
+  }>();
   const queryClient = useQueryClient();
   const { colors, radii, spacing } = useKeepItTheme();
   const insets = useSafeAreaInsets();
@@ -162,11 +171,33 @@ export default function MessagesScreen() {
   });
 
   const [draftText, setDraftText] = useState('');
+  const [draftMediaUri, setDraftMediaUri] = useState<string | null>(null);
+  const [pickingPhoto, setPickingPhoto] = useState(false);
+  const [activeReplyMoment, setActiveReplyMoment] = useState<{
+    id?: string;
+    preview: string;
+  } | null>(() =>
+    params.replyMomentPreview
+      ? { id: params.replyMomentId, preview: params.replyMomentPreview }
+      : null
+  );
+  const [searchQuery, setSearchQuery] = useState('');
   const [snapOnceMode, setSnapOnceMode] = useState(false);
   const [sending, setSending] = useState(false);
   const [activeReactionMsgId, setActiveReactionMsgId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const peerTabRefs = useRef<(View | null)[]>([]);
+
+  useEffect(() => {
+    if (params.replyMomentPreview) {
+      setActiveReplyMoment({
+        id: params.replyMomentId,
+        preview: params.replyMomentPreview,
+      });
+    }
+  }, [params.replyMomentId, params.replyMomentPreview]);
 
   const handlePullRefresh = async () => {
     if (pullRefreshing) return;
@@ -188,96 +219,79 @@ export default function MessagesScreen() {
         messagesQuery.refetch(),
       ]);
     } finally {
-      setPullRefreshing(false);
+      if (isMountedRef.current) setPullRefreshing(false);
     }
   };
   // Snap Once active 15s countdowns + sender local preview toggle
-  const [snapCountdowns, setSnapCountdowns] = useState<Record<string, number>>({});
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const [openedLocalAtById, setOpenedLocalAtById] = useState<Record<string, number>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [senderPreviewOpenIds, setSenderPreviewOpenIds] = useState<Record<string, boolean>>({});
-  const tickIntervalRef = useRef<number | undefined>(undefined);
+  const expiredDispatchedRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<{ scrollToEnd?: (opts?: { animated?: boolean }) => void } | null>(null);
 
-  // Derive persisted remaining seconds for any in-progress Snap Once DMs without setState-in-effect
-  const persistedCountdowns = useMemo(() => {
+  const activeCountdowns = useMemo(() => {
     const out: Record<string, number> = {};
     for (const m of messagesQuery.data ?? []) {
       if (!m.snap_once || m.sender_id === userId) continue;
-      const rem = getSnapDmRemainingSeconds(m, userId);
-      if (rem !== null && rem > 0) {
-        out[m.id] = rem;
-      }
+      if ((m.viewed_by_user_ids ?? []).includes(userId)) continue;
+      const persistedIso = m.snap_opened_at_by_user?.[userId];
+      const persistedMs = persistedIso ? new Date(persistedIso).getTime() : NaN;
+      const openedMs = Number.isFinite(persistedMs) ? persistedMs : openedLocalAtById[m.id];
+      if (!Number.isFinite(openedMs)) continue;
+      const durationSec = m.snap_duration_seconds ?? 15;
+      const elapsedSec = Math.floor((nowMs - openedMs) / 1000);
+      out[m.id] = Math.max(0, durationSec - elapsedSec);
     }
     return out;
-  }, [messagesQuery.data, userId]);
+  }, [messagesQuery.data, openedLocalAtById, userId, nowMs]);
+
+  const hasRunningCountdowns = Object.values(activeCountdowns).some((secs) => secs > 0);
+
+  useEffect(() => {
+    if (!hasRunningCountdowns) return;
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [hasRunningCountdowns]);
 
   useEffect(() => {
     const list = messagesQuery.data ?? [];
     for (const m of list) {
       if (!m.snap_once || m.sender_id === userId) continue;
-      const rem = getSnapDmRemainingSeconds(m, userId);
-      if (rem === 0 && !(m.viewed_by_user_ids ?? []).includes(userId)) {
+      if ((m.viewed_by_user_ids ?? []).includes(userId)) continue;
+      const rem = activeCountdowns[m.id] ?? getSnapDmRemainingSeconds(m, userId, nowMs);
+      if (rem === 0 && !expiredDispatchedRef.current.has(m.id)) {
+        expiredDispatchedRef.current.add(m.id);
         void markSnapDirectMessageViewed({
           coupleId: couple?.id ?? null,
           messageId: m.id,
           viewerId: userId,
           expired: true,
-        }).then(() => {
-          void queryClient.invalidateQueries({
-            queryKey: ['direct-messages', userId, activePeer?.id],
+        })
+          .then(() => {
+            if (isMountedRef.current) {
+              void queryClient.invalidateQueries({
+                queryKey: ['direct-messages', userId, activePeer?.id],
+              });
+            }
+          })
+          .catch(() => {
+            expiredDispatchedRef.current.delete(m.id);
           });
-        });
       }
     }
-  }, [messagesQuery.data, userId, couple?.id, activePeer?.id, queryClient]);
-
-  const mergedCountdowns: Record<string, number> = {
-    ...persistedCountdowns,
-    ...snapCountdowns,
-  };
-  const hasActiveCountdowns = Object.keys(mergedCountdowns).length > 0;
-
-  useEffect(() => {
-    if (!hasActiveCountdowns) {
-      clearInterval(tickIntervalRef.current);
-      tickIntervalRef.current = undefined;
-      return;
-    }
-
-    tickIntervalRef.current = setInterval(() => {
-      const expiredIds: string[] = [];
-      setSnapCountdowns((current) => {
-        const combined = { ...persistedCountdowns, ...current };
-        const next: Record<string, number> = {};
-        for (const [msgId, secs] of Object.entries(combined)) {
-          if (secs <= 1) {
-            expiredIds.push(msgId);
-          } else {
-            next[msgId] = secs - 1;
-          }
-        }
-        return next;
-      });
-
-      if (expiredIds.length > 0) {
-        for (const msgId of expiredIds) {
-          void markSnapDirectMessageViewed({
-            coupleId: couple?.id ?? null,
-            messageId: msgId,
-            viewerId: userId,
-            expired: true,
-          }).then(() => {
-            void queryClient.invalidateQueries({
-              queryKey: ['direct-messages', userId, activePeer?.id],
-            });
-          });
-        }
-      }
-    }, 1000) as unknown as number;
-
-    return () => {
-      clearInterval(tickIntervalRef.current);
-    };
-  }, [hasActiveCountdowns, persistedCountdowns, couple?.id, userId, activePeer?.id, queryClient]);
+  }, [messagesQuery.data, activeCountdowns, nowMs, userId, couple?.id, activePeer?.id, queryClient]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -304,14 +318,22 @@ export default function MessagesScreen() {
       return;
     }
     if (isSnapDmExpiredForViewer(msg, userId)) return;
-    if (snapCountdowns[msg.id] !== undefined) return;
+    if (activeCountdowns[msg.id] !== undefined) return;
 
     triggerHaptic();
-    const rem = getSnapDmRemainingSeconds(msg, userId) ?? 15;
-    setSnapCountdowns((prev) => ({
+    const currentNow = Date.now();
+    const rem = getSnapDmRemainingSeconds(msg, userId, currentNow) ?? 15;
+    if (rem <= 0) {
+      setNowMs(currentNow);
+      return;
+    }
+    const durationSec = msg.snap_duration_seconds ?? 15;
+    const inferredOpenedMs = currentNow - Math.max(0, durationSec - rem) * 1000;
+    setOpenedLocalAtById((prev) => ({
       ...prev,
-      [msg.id]: rem,
+      [msg.id]: inferredOpenedMs,
     }));
+    setNowMs(currentNow);
     void markSnapDirectMessageViewed({
       coupleId: couple?.id ?? null,
       messageId: msg.id,
@@ -320,11 +342,65 @@ export default function MessagesScreen() {
     });
   };
 
+  const handlePickMessagePhoto = async () => {
+    if (pickingPhoto || sending) return;
+    setPickingPhoto(true);
+    setErrorMsg(null);
+    setActionNotice(null);
+    try {
+      const picked = await pickProfileImage('message');
+      if (picked?.uri && isMountedRef.current) {
+        setDraftMediaUri(picked.uri);
+        announcePolite('Photo attached to message draft.');
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not attach photo.');
+    } finally {
+      if (isMountedRef.current) {
+        setPickingPhoto(false);
+      }
+    }
+  };
+
+  const handleCopyMessage = async (msg: DirectMessageRecord) => {
+    const copyText = msg.text.trim() || (msg.media_uri ? '[Photo message]' : '');
+    if (!copyText) return;
+    triggerHaptic();
+    await Clipboard.setStringAsync(copyText);
+    setActiveReactionMsgId(null);
+    setActionNotice('Copied message.');
+    announcePolite('Message copied to clipboard.');
+  };
+
+  const handleUnsendMessage = async (msg: DirectMessageRecord) => {
+    if (!activePeer) return;
+    setErrorMsg(null);
+    setActionNotice(null);
+    triggerHaptic();
+    try {
+      await deleteDirectMessage({
+        coupleId: couple?.id ?? null,
+        messageId: msg.id,
+        userId,
+      });
+      setActiveReactionMsgId(null);
+      setActionNotice('Message unsent.');
+      announcePolite('Message unsent.');
+      await queryClient.invalidateQueries({
+        queryKey: ['direct-messages', userId, activePeer.id],
+      });
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not unsend message.');
+    }
+  };
+
   const handleSendText = async (overrideText?: string) => {
     const content = (overrideText ?? draftText).trim();
-    if (!content || sending || !activePeer) return;
+    const attachedMedia = overrideText === undefined ? draftMediaUri : null;
+    if ((!content && !attachedMedia) || sending || !activePeer) return;
 
     setErrorMsg(null);
+    setActionNotice(null);
     setSending(true);
     triggerHaptic();
 
@@ -335,12 +411,19 @@ export default function MessagesScreen() {
         senderName: myName,
         recipientId: activePeer.id,
         text: content,
+        mediaUri: attachedMedia,
+        replyMomentId: overrideText === undefined ? (activeReplyMoment?.id ?? null) : null,
+        replyMomentPreview: overrideText === undefined ? (activeReplyMoment?.preview ?? null) : null,
         snapOnce: snapOnceMode,
       });
+      const wasSnap = snapOnceMode;
       setSnapOnceMode(false);
       if (overrideText === undefined) {
         setDraftText('');
+        setDraftMediaUri(null);
+        setActiveReplyMoment(null);
       }
+      announcePolite(wasSnap ? '15 second Snap sent.' : 'Message sent.');
       await queryClient.invalidateQueries({
         queryKey: ['direct-messages', userId, activePeer.id],
       });
@@ -371,6 +454,17 @@ export default function MessagesScreen() {
   };
 
   const messages = messagesQuery.data ?? [];
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const displayedMessages = useMemo(() => {
+    if (!normalizedQuery) return messages;
+    return messages.filter(
+      (m) =>
+        (m.text || '').toLowerCase().includes(normalizedQuery) ||
+        (m.sender_name || '').toLowerCase().includes(normalizedQuery) ||
+        (m.reply_moment_preview || '').toLowerCase().includes(normalizedQuery)
+    );
+  }, [messages, normalizedQuery]);
+  const sendEnabled = Boolean(draftText.trim() || draftMediaUri);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
@@ -406,17 +500,21 @@ export default function MessagesScreen() {
             ]}>
             <ScrollView
               horizontal
+              accessibilityRole="tablist"
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={[
                 styles.switcherScroll,
                 { paddingHorizontal: spacing.lg, gap: spacing.sm },
               ]}>
-              {peers.map((peer) => {
+              {peers.map((peer, idx) => {
                 const selected = peer.id === activePeer?.id;
                 const monogram = peer.displayName.trim().slice(0, 1).toUpperCase() || 'K';
                 return (
                   <AppPressable
                     key={peer.id}
+                    ref={(el) => {
+                      peerTabRefs.current[idx] = el as View | null;
+                    }}
                     accessibilityRole="tab"
                     accessibilityState={{ selected }}
                     accessibilityLabel={`${peer.displayName} (${peer.roleLabel})`}
@@ -425,12 +523,30 @@ export default function MessagesScreen() {
                       setManualSelection({ paramPeerId: params.peerId, peerId: peer.id });
                       setSnapOnceMode(false);
                       setActiveReactionMsgId(null);
+                      setSearchQuery('');
+                      setActionNotice(null);
                     }}
+                    {...(Platform.OS === 'web'
+                      ? ({
+                          onKeyDown: (event: unknown) =>
+                            handleRovingKeyDown(event, idx, peers.length, (nextIndex) => {
+                              const nextPeer = peers[nextIndex];
+                              if (nextPeer) {
+                                setManualSelection({ paramPeerId: params.peerId, peerId: nextPeer.id });
+                                setSnapOnceMode(false);
+                                setActiveReactionMsgId(null);
+                                setSearchQuery('');
+                                setActionNotice(null);
+                                (peerTabRefs.current[nextIndex] as unknown as { focus?: () => void } | null)?.focus?.();
+                              }
+                            }),
+                        } as Record<string, unknown>)
+                      : {})}
                     style={[
                       styles.peerPill,
                       {
-                        backgroundColor: selected ? colors.ink : colors.surface,
-                        borderColor: selected ? colors.ink : colors.border,
+                        backgroundColor: selected ? colors.primary : colors.surface,
+                        borderColor: selected ? colors.primary : colors.border,
                         borderRadius: radii.pill,
                       },
                     ]}>
@@ -438,7 +554,7 @@ export default function MessagesScreen() {
                       pointerEvents="none"
                       style={[
                         styles.peerAvatarCircle,
-                        { backgroundColor: selected ? colors.surfaceElevated : colors.badgeBg },
+                        { backgroundColor: selected ? 'rgba(0,0,0,0.32)' : colors.surfaceObject },
                       ]}>
                       {peer.avatarPath ? (
                         <Image
@@ -447,7 +563,7 @@ export default function MessagesScreen() {
                           style={styles.peerAvatarImg}
                         />
                       ) : (
-                        <Text style={[styles.peerAvatarLetter, { color: selected ? colors.ink : colors.badgeFg }]}>{monogram}</Text>
+                        <Text style={[styles.peerAvatarLetter, { color: '#FFFFFF' }]}>{monogram}</Text>
                       )}
                     </View>
                     <View pointerEvents="none" style={styles.peerTextCol}>
@@ -455,7 +571,7 @@ export default function MessagesScreen() {
                         numberOfLines={1}
                         style={[
                           styles.peerNameText,
-                          { color: selected ? colors.canvas : colors.ink },
+                          { color: selected ? '#FFFFFF' : colors.ink },
                         ]}>
                         {peer.displayName}
                       </Text>
@@ -463,7 +579,7 @@ export default function MessagesScreen() {
                         {peer.isPartner ? (
                           <SymbolView
                             name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
-                            tintColor={selected ? colors.canvas : colors.ink}
+                            tintColor={selected ? '#FFFFFF' : colors.blue400}
                             size={11}
                           />
                         ) : null}
@@ -471,7 +587,7 @@ export default function MessagesScreen() {
                           numberOfLines={1}
                           style={[
                             styles.peerRoleText,
-                            { color: selected ? colors.canvas : colors.inkMuted, opacity: selected ? 0.78 : 1 },
+                            { color: selected ? 'rgba(255,255,255,0.82)' : colors.inkMuted },
                           ]}>
                           {peer.isPartner ? 'Partner' : peer.roleLabel}
                         </Text>
@@ -506,6 +622,50 @@ export default function MessagesScreen() {
             ) : null}
           </View>
         ) : null}
+        {actionNotice ? (
+          <View style={{ maxWidth: 640, width: '100%', alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.sm }}>
+            <InlineNotice message={actionNotice} tone="success" />
+          </View>
+        ) : null}
+
+        {activePeer && messages.length >= 4 ? (
+          <View style={styles.searchBarRow}>
+            <AppTextInput
+              accessibilityLabel="Search conversation messages"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search messages…"
+              placeholderTextColor={colors.placeholder}
+              returnKeyType="search"
+              style={[
+                styles.searchInput,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.controlBorder,
+                  color: colors.ink,
+                  borderRadius: radii.input,
+                },
+              ]}
+            />
+            {searchQuery.trim().length > 0 ? (
+              <AppPressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear message search"
+                onPress={() => setSearchQuery('')}
+                style={[
+                  styles.searchClearBtn,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.border,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Text style={[styles.searchClearText, { color: colors.ink }]}>Clear</Text>
+              </AppPressable>
+            ) : null}
+          </View>
+        ) : null}
+
         {/* Chat Message Thread */}
         <ScrollView
           ref={scrollRef as never}
@@ -574,15 +734,35 @@ export default function MessagesScreen() {
                 Send a note, react to a message, or toggle 15s Snap for a disappearing message.
               </Text>
             </View>
+          ) : displayedMessages.length === 0 ? (
+            <View
+              style={[
+                styles.emptyCard,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  borderRadius: radii.card,
+                  padding: spacing.xl,
+                },
+              ]}>
+              <Text style={[styles.emptyTitle, { color: colors.ink }]}>
+                No messages match “{searchQuery.trim()}”
+              </Text>
+              <KeepItButton
+                label="Show all messages"
+                variant="secondary"
+                onPress={() => setSearchQuery('')}
+              />
+            </View>
           ) : (
-            messages.map((msg) => {
+            displayedMessages.map((msg) => {
               const isMine = msg.sender_id === userId;
               const isSnap = Boolean(msg.snap_once);
               const viewedList = msg.viewed_by_user_ids ?? [];
               const isExpiredSnap = isSnap && isSnapDmExpiredForViewer(msg, userId);
               const hasViewerOpened = !isMine && isExpiredSnap;
               const peerOpenedMine = isMine && (isExpiredSnap || viewedList.some((id) => id !== userId));
-              const activeRemainingSecs = !isMine ? mergedCountdowns[msg.id] : undefined;
+              const activeRemainingSecs = !isMine ? activeCountdowns[msg.id] : undefined;
               const isRevealedNow = isMine
                 ? Boolean(senderPreviewOpenIds[msg.id]) && !peerOpenedMine
                 : activeRemainingSecs !== undefined && !hasViewerOpened;
@@ -649,15 +829,13 @@ export default function MessagesScreen() {
                           backgroundColor: hasViewerOpened
                             ? colors.surface
                             : isRevealedNow
-                              ? colors.surfaceElevated
+                              ? colors.blue900
                               : isMine
                                 ? colors.accentSoft
                                 : colors.surfaceElevated,
-                          borderColor: isRevealedNow
-                            ? colors.warning
-                            : hasViewerOpened
-                              ? colors.border
-                              : colors.warning,
+                          borderColor: hasViewerOpened
+                            ? colors.border
+                            : colors.blue400,
                           borderRadius: radii.card,
                         },
                       ]}>
@@ -676,22 +854,31 @@ export default function MessagesScreen() {
                       ) : isRevealedNow ? (
                         <View style={{ gap: 6 }}>
                           <View style={styles.snapCountdownHeader}>
-                            <Text style={[styles.snapLiveBadge, { color: colors.warning }]}>
+                            <Text style={[styles.snapLiveBadge, { color: colors.blue300 }]}>
                               {isMine ? 'YOUR SNAP PREVIEW (TAP TO HIDE)' : 'SNAP ONCE'}
                             </Text>
                             {!isMine && activeRemainingSecs !== undefined ? (
-                              <View style={[styles.countdownPill, { backgroundColor: colors.warning }]}>
-                                <Text style={[styles.countdownPillText, { color: '#000000' }]}>
+                              <View style={[styles.countdownPill, { backgroundColor: colors.primary }]}>
+                                <Text style={[styles.countdownPillText, { color: '#FFFFFF' }]}>
                                   {activeRemainingSecs}s
                                 </Text>
                               </View>
                             ) : null}
                           </View>
-                          <Text style={[styles.snapRevealedText, { color: colors.ink }]}>{msg.text}</Text>
+                          {msg.media_uri ? (
+                            <Image
+                              source={{ uri: msg.media_uri }}
+                              contentFit="cover"
+                              style={[styles.dmMediaImage, { borderRadius: radii.input }]}
+                            />
+                          ) : null}
+                          {msg.text ? (
+                            <Text style={[styles.snapRevealedText, { color: '#FFFFFF' }]}>{msg.text}</Text>
+                          ) : null}
                         </View>
                       ) : (
                         <View style={styles.snapRow}>
-                          <Text style={[styles.snapIcon, { color: colors.warning }]}>15s</Text>
+                          <Text style={[styles.snapIcon, { color: colors.blue400 }]}>15s</Text>
                           <View style={{ flex: 1 }}>
                             <Text
                               style={[
@@ -718,7 +905,7 @@ export default function MessagesScreen() {
                   ) : (
                     <AppPressable
                       accessibilityRole="button"
-                      accessibilityLabel={`${msg.sender_name}: ${msg.text}. Tap to react`}
+                      accessibilityLabel={`${msg.sender_name}: ${msg.text || 'Photo message'}. Tap for reactions or actions`}
                       onPress={() => {
                         triggerHaptic();
                         setActiveReactionMsgId((prev) => (prev === msg.id ? null : msg.id));
@@ -726,8 +913,8 @@ export default function MessagesScreen() {
                       style={[
                         styles.bubble,
                         {
-                          backgroundColor: isMine ? colors.ink : colors.surface,
-                          borderColor: isMine ? colors.ink : colors.border,
+                          backgroundColor: isMine ? colors.primary : colors.surface,
+                          borderColor: isMine ? colors.primary : colors.border,
                           borderRadius: radii.card,
                         },
                       ]}>
@@ -738,13 +925,15 @@ export default function MessagesScreen() {
                           style={[styles.dmMediaImage, { borderRadius: radii.input }]}
                         />
                       ) : null}
-                      <Text
-                        style={[
-                          styles.messageText,
-                          { color: isMine ? colors.canvas : colors.ink },
-                        ]}>
-                        {msg.text}
-                      </Text>
+                      {msg.text ? (
+                        <Text
+                          style={[
+                            styles.messageText,
+                            { color: isMine ? colors.onAccent : colors.ink },
+                          ]}>
+                          {msg.text}
+                        </Text>
+                      ) : null}
                     </AppPressable>
                   )}
 
@@ -782,7 +971,7 @@ export default function MessagesScreen() {
                     </View>
                   ) : null}
 
-                  {/* Quick Reaction Picker Bar */}
+                  {/* Quick Reaction & Action Picker Bar */}
                   {showReactionPicker ? (
                     <View
                       style={[
@@ -790,7 +979,7 @@ export default function MessagesScreen() {
                         {
                           backgroundColor: colors.surfaceElevated,
                           borderColor: colors.border,
-                          borderRadius: radii.pill,
+                          borderRadius: radii.card,
                         },
                       ]}>
                       {DM_REACTION_EMOJIS.map((emoji) => {
@@ -812,6 +1001,38 @@ export default function MessagesScreen() {
                           </AppPressable>
                         );
                       })}
+                      {!isSnap || isRevealedNow ? (
+                        <AppPressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Copy message text"
+                          onPress={() => void handleCopyMessage(msg)}
+                          style={[
+                            styles.msgActionBtn,
+                            {
+                              backgroundColor: colors.surface,
+                              borderColor: colors.border,
+                              borderRadius: radii.pill,
+                            },
+                          ]}>
+                          <Text style={[styles.msgActionText, { color: colors.ink }]}>Copy</Text>
+                        </AppPressable>
+                      ) : null}
+                      {isMine ? (
+                        <AppPressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Unsend this message"
+                          onPress={() => void handleUnsendMessage(msg)}
+                          style={[
+                            styles.msgActionBtn,
+                            {
+                              backgroundColor: colors.dangerSoft,
+                              borderColor: colors.danger,
+                              borderRadius: radii.pill,
+                            },
+                          ]}>
+                          <Text style={[styles.msgActionText, { color: colors.danger }]}>Unsend</Text>
+                        </AppPressable>
+                      ) : null}
                     </View>
                   ) : null}
 
@@ -865,12 +1086,84 @@ export default function MessagesScreen() {
               ))}
             </ScrollView>
 
+            {activeReplyMoment ? (
+              <View
+                style={[
+                  styles.replyDraftBanner,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Text numberOfLines={1} style={[styles.replyDraftText, { color: colors.inkMuted }]}>
+                  Replying to Moment · {activeReplyMoment.preview}
+                </Text>
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss Moment reply context"
+                  onPress={() => setActiveReplyMoment(null)}
+                  style={styles.dismissMiniBtn}>
+                  <Text style={[styles.msgActionText, { color: colors.ink }]}>Dismiss</Text>
+                </AppPressable>
+              </View>
+            ) : null}
+
+            {draftMediaUri ? (
+              <View
+                style={[
+                  styles.mediaDraftRow,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    borderRadius: radii.input,
+                  },
+                ]}>
+                <Image
+                  source={{ uri: draftMediaUri }}
+                  contentFit="cover"
+                  style={[styles.mediaDraftThumb, { borderRadius: radii.input - 2 }]}
+                />
+                <Text style={[styles.replyDraftText, { color: colors.ink }]}>
+                  Photo attached
+                </Text>
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove attached photo"
+                  onPress={() => setDraftMediaUri(null)}
+                  style={styles.dismissMiniBtn}>
+                  <Text style={[styles.msgActionText, { color: colors.danger }]}>Remove</Text>
+                </AppPressable>
+              </View>
+            ) : null}
+
             {snapOnceMode ? (
               <Text style={[styles.snapHintText, { color: colors.inkMuted }]}>
                 Next message disappears 15 seconds after it’s opened.
               </Text>
             ) : null}
             <View style={styles.inputRow}>
+              <AppPressable
+                accessibilityRole="button"
+                accessibilityLabel="Attach photo to message"
+                disabled={pickingPhoto || sending}
+                onPress={() => void handlePickMessagePhoto()}
+                style={[
+                  styles.attachBtn,
+                  {
+                    backgroundColor: draftMediaUri ? colors.accentSoft : colors.surface,
+                    borderColor: draftMediaUri ? colors.accent : colors.border,
+                    borderRadius: radii.pill,
+                    opacity: pickingPhoto || sending ? 0.55 : 1,
+                  },
+                ]}>
+                <SymbolView
+                  name={{ ios: 'photo.on.rectangle', android: 'add_photo_alternate', web: 'add_photo_alternate' }}
+                  tintColor={draftMediaUri ? colors.blue300 : colors.ink}
+                  size={18}
+                />
+              </AppPressable>
+
               {/* Snap Once 15s Toggle */}
               <AppPressable
                 accessibilityRole="switch"
@@ -928,22 +1221,22 @@ export default function MessagesScreen() {
               <AppPressable
                 accessibilityRole="button"
                 accessibilityLabel="Send message"
-                disabled={!draftText.trim() || sending}
+                disabled={!sendEnabled || sending}
                 onPress={() => void handleSendText()}
                 style={[
                   styles.sendBtn,
                   {
-                    backgroundColor: draftText.trim() ? colors.ink : colors.surface,
-                    borderColor: colors.border,
-                    borderWidth: draftText.trim() ? 0 : 1,
+                    backgroundColor: sendEnabled ? colors.primary : colors.surface,
+                    borderColor: sendEnabled ? colors.primary : colors.border,
+                    borderWidth: 1,
                     borderRadius: radii.button,
-                    opacity: !draftText.trim() || sending ? 0.5 : 1,
+                    opacity: !sendEnabled || sending ? 0.5 : 1,
                   },
                 ]}>
                 <Text
                   style={[
                     styles.sendBtnText,
-                    { color: draftText.trim() ? colors.canvas : colors.inkMuted },
+                    { color: sendEnabled ? colors.onAccent : colors.inkMuted },
                   ]}>
                   {sending ? 'Sending…' : 'Send'}
                 </Text>
@@ -1133,13 +1426,13 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   snapLiveBadge: {
-    color: '#FDBA74',
+    color: '#8FA8FF',
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     letterSpacing: 0.4,
   },
   countdownPill: {
-    backgroundColor: '#F97316',
+    backgroundColor: '#2F55FF',
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -1181,6 +1474,7 @@ const styles = StyleSheet.create({
   },
   reactionPickerBar: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     borderWidth: 1,
     paddingHorizontal: 6,
@@ -1188,11 +1482,97 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   reactionChoiceBtn: {
-    paddingHorizontal: 7,
-    paddingVertical: 4,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
   },
   reactionChoiceEmoji: {
-    fontSize: 17,
+    fontSize: 18,
+  },
+  msgActionBtn: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  msgActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  searchBarRow: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: 1,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  searchClearBtn: {
+    minHeight: 44,
+    minWidth: 64,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchClearText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  replyDraftBanner: {
+    borderWidth: 1,
+    paddingLeft: 12,
+    paddingRight: 6,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  mediaDraftRow: {
+    borderWidth: 1,
+    padding: 6,
+    paddingLeft: 8,
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  mediaDraftThumb: {
+    width: 38,
+    height: 38,
+  },
+  replyDraftText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  dismissMiniBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachBtn: {
+    width: 44,
+    height: 44,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   timestampLabel: {
     fontSize: 11,
@@ -1208,7 +1588,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   nudgeChip: {
-    minHeight: 40,
+    minHeight: 44,
     borderWidth: 1,
     paddingHorizontal: 13,
     paddingVertical: 8,

@@ -62,17 +62,20 @@ import {
 import {
   addFriendByHandleOrCode,
   CURATED_MUSIC_TRACKS,
+  deleteDirectMessage,
   fetchConversationMessages,
   fetchFriendsCircle,
   markSnapDirectMessageViewed,
   matchesUserByQuery,
+  redactExpiredSnapDm,
   removeFriend,
   sendDirectMessage,
   toggleDirectMessageReaction,
+  updateFriendRelationship,
 } from '@/api/social';
 import { buildWidgetSnapshotPayload } from '@/hooks/useWidgetSync';
 import { computeCountdownSnapshot } from '@/hooks/useMomentCountdown';
-import { getAuthRedirectUrl } from '@/api/supabase';
+import { getAuthRedirectUrl, isNetworkOrTransientError } from '@/api/supabase';
 import {
   CURRENT_STORAGE_SCHEMA_EPOCH,
   extractAuthRedirectParams,
@@ -1667,5 +1670,583 @@ describe('Shared Pulse Streak System: Grace Shields, Golden Syncs & Milestone Ch
     assert.equal(memories.days.length, 1);
     assert.equal(memories.days[0].mine?.id, posted.id);
     assert.equal(memories.days[0].mine?.caption, 'Solo memory after login');
+  });
+});
+
+describe('Session persistence & offline launch', () => {
+  const SESSION_KEY = 'keepit.session.v1';
+
+  beforeEach(async () => {
+    await resetAllState();
+    await AsyncStorage.setItem(STORAGE_SCHEMA_EPOCH_KEY, CURRENT_STORAGE_SCHEMA_EPOCH);
+  });
+
+  it('keeps every preference when one preference changes, and restores all of them after hydration', async () => {
+    await useSessionStore.getState().setWidgetLayout('partner_only');
+    await useSessionStore.getState().setMirrorFrontCamera(true);
+    await useSessionStore.getState().setMotionEnabled(false);
+    await useSessionStore.getState().setThemePreference('dark');
+
+    const saved = JSON.parse((await AsyncStorage.getItem(SESSION_KEY)) ?? '{}');
+    assert.equal(saved.themePreference, 'dark');
+    assert.equal(saved.motionEnabled, false);
+    assert.equal(saved.widgetLayout, 'partner_only');
+    assert.equal(saved.mirrorFrontCamera, true);
+
+    useSessionStore.setState({
+      themePreference: 'light',
+      motionEnabled: true,
+      widgetLayout: 'side_by_side',
+      mirrorFrontCamera: false,
+      hydrated: false,
+    });
+    await useSessionStore.getState().hydrate();
+    const restored = useSessionStore.getState();
+    assert.equal(restored.themePreference, 'dark');
+    assert.equal(restored.motionEnabled, false);
+    assert.equal(restored.widgetLayout, 'partner_only');
+    assert.equal(restored.mirrorFrontCamera, true);
+  });
+
+  it('commits concurrent preference writes in order instead of letting an older snapshot win', async () => {
+    await Promise.all([
+      useSessionStore.getState().setThemePreference('dark'),
+      useSessionStore.getState().setWidgetLayout('partner_only'),
+      useSessionStore.getState().setMirrorFrontCamera(true),
+    ]);
+    useSessionStore.setState({ themePreference: 'light', widgetLayout: 'side_by_side', mirrorFrontCamera: false });
+    await useSessionStore.getState().hydrate();
+    const restored = useSessionStore.getState();
+    assert.equal(restored.themePreference, 'dark');
+    assert.equal(restored.widgetLayout, 'partner_only');
+    assert.equal(restored.mirrorFrontCamera, true);
+  });
+
+  it('paints the cached account first and keeps it when the pairing backend is unreachable', async () => {
+    const cachedCouple = {
+      id: 'couple_cached_1',
+      user_a_id: 'user_cached_1',
+      user_b_id: 'user_partner_1',
+      invite_code: '',
+      invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      state: 'active' as const,
+      paired_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    const cachedUser = {
+      id: 'user_cached_1',
+      display_name: 'Cached',
+      username: 'cached',
+      friend_code: 'CAC-001',
+      bio: '',
+      pronouns: '',
+      mood_song: '',
+      banner_color: '#1C1C1E',
+      banner_path: null,
+      website: '',
+      is_private: false,
+      dump_mode: false,
+      avatar_path: null,
+      timezone: 'UTC',
+      push_token: null,
+      created_at: new Date().toISOString(),
+    };
+    const cachedPartner = { ...cachedUser, id: 'user_partner_1', display_name: 'Partner' };
+    await AsyncStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        user: cachedUser,
+        email: 'cached@example.com',
+        themePreference: 'dark',
+        motionEnabled: false,
+        motionSpeed: 1,
+        widgetLayout: 'partner_only',
+        mirrorFrontCamera: true,
+        couple: cachedCouple,
+        partner: cachedPartner,
+      })
+    );
+    // A local DB with no couple row makes the cache the only source of pairing truth.
+    await AsyncStorage.setItem('keepit.local_db.v1', JSON.stringify({ users: {}, couples: {} }));
+
+    useSessionStore.setState({
+      hydrated: false,
+      user: null,
+      email: null,
+      couple: null,
+      partner: null,
+      themePreference: 'light',
+    });
+    await useSessionStore.getState().hydrate();
+
+    const state = useSessionStore.getState();
+    assert.equal(state.hydrated, true);
+    assert.equal(state.user?.id, 'user_cached_1');
+    assert.equal(state.couple?.id, 'couple_cached_1');
+    assert.equal(state.couple?.state, 'active');
+    assert.equal(state.partner?.id, 'user_partner_1');
+    assert.equal(state.email, 'cached@example.com');
+
+    // A refresh must never drop the cached space when the backend cannot answer.
+    useSessionStore.setState({ couple: cachedCouple, partner: cachedPartner });
+    await useSessionStore.getState().refreshPairing();
+    const afterRefresh = useSessionStore.getState();
+    assert.ok(afterRefresh.couple?.id);
+    assert.equal(afterRefresh.user?.id, 'user_cached_1');
+    assert.equal(afterRefresh.partner?.id, 'user_partner_1');
+  });
+
+  it('classifies transport failures as reachability, not credentials', () => {
+    assert.equal(
+      isNetworkOrTransientError(Object.assign(new Error('fetch failed'), { name: 'AuthRetryableFetchError', status: 0 })),
+      true
+    );
+    assert.equal(isNetworkOrTransientError(Object.assign(new Error('boom'), { status: 503 })), true);
+    assert.equal(isNetworkOrTransientError(new TypeError('Network request failed')), true);
+    assert.equal(
+      isNetworkOrTransientError(Object.assign(new Error('Invalid login credentials'), { status: 400 })),
+      false
+    );
+    assert.equal(isNetworkOrTransientError(null), false);
+  });
+});
+
+describe('Stability & regression fixes', () => {
+  beforeEach(resetAllState);
+
+  it('survives corrupted AsyncStorage JSON payloads during incoming realtime packets', async () => {
+    await AsyncStorage.setItem('keepit.local_statuses.v1', '{corrupt-json');
+    await AsyncStorage.setItem('keepit.local_messages.v1', '{corrupt-json');
+    await AsyncStorage.setItem('keepit.local_db.v1', '{corrupt-json');
+    await AsyncStorage.setItem('keepit.local_friends.v1', '{corrupt-json');
+
+    const nowIso = new Date().toISOString();
+
+    await applyIncomingCouplePacket({
+      kind: 'status_upsert',
+      status: {
+        id: 'status_corrupt_recover_1',
+        couple_id: 'couple_corrupt_recover',
+        user_id: 'user_partner_corrupt',
+        emoji: '✨',
+        text: 'Recovered status',
+        created_at: nowIso,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      },
+    });
+
+    await applyIncomingCouplePacket({
+      kind: 'dm_upsert',
+      message: {
+        id: 'dm_corrupt_recover_1',
+        couple_id: 'couple_corrupt_recover',
+        sender_id: 'user_partner_corrupt',
+        recipient_id: 'user_self_corrupt',
+        body: 'Recovered DM',
+        media_uri: null,
+        is_snap_once: false,
+        viewed_by_user_ids: [],
+        reactions: {},
+        created_at: nowIso,
+      },
+    });
+
+    await applyIncomingCouplePacket({
+      kind: 'profile_upsert',
+      profile: {
+        id: 'user_partner_corrupt',
+        display_name: 'Partner Corrupt Recover',
+        username: 'partner.corrupt',
+        friend_code: 'PRT-999',
+        bio: '',
+        pronouns: '',
+        mood_song: '',
+        banner_color: '#1C1C1E',
+        banner_path: null,
+        website: '',
+        is_private: false,
+        dump_mode: false,
+        avatar_path: null,
+        timezone: 'UTC',
+        push_token: null,
+        created_at: nowIso,
+      },
+    });
+
+    await applyIncomingCouplePacket({
+      kind: 'friend_added',
+      friend: {
+        id: 'friend_corrupt_recover_1',
+        user_id: 'user_self_corrupt',
+        friend_id: 'user_friend_corrupt',
+        relationship: 'bestie',
+        created_at: nowIso,
+        friend_profile: {
+          id: 'user_friend_corrupt',
+          display_name: 'Friend',
+          username: 'friend.corrupt',
+          friend_code: 'FRI-999',
+          bio: '',
+          pronouns: '',
+          mood_song: '',
+          banner_color: '#1C1C1E',
+          banner_path: null,
+          website: '',
+          is_private: false,
+          dump_mode: false,
+          avatar_path: null,
+          timezone: 'UTC',
+          push_token: null,
+          created_at: nowIso,
+        },
+      },
+    });
+
+    const statuses = JSON.parse((await AsyncStorage.getItem('keepit.local_statuses.v1')) || '{}');
+    const messages = JSON.parse((await AsyncStorage.getItem('keepit.local_messages.v1')) || '[]');
+    const db = JSON.parse((await AsyncStorage.getItem('keepit.local_db.v1')) || '{}');
+    const friends = JSON.parse((await AsyncStorage.getItem('keepit.local_friends.v1')) || '[]');
+
+    assert.equal(statuses.user_partner_corrupt?.id, 'status_corrupt_recover_1');
+    assert.equal(messages.some((m: { id: string }) => m.id === 'dm_corrupt_recover_1'), true);
+    assert.equal(db.users?.user_partner_corrupt?.id, 'user_partner_corrupt');
+    assert.equal(friends.some((f: { id: string }) => f.id === 'friend_corrupt_recover_1'), true);
+  });
+
+  it('keeps paired partner moments in partnerMomentsToday even when partner is also in Friends Circle', async () => {
+    const viewerId = 'user_viewer_overlap';
+    const partnerId = 'user_partner_overlap';
+    const coupleId = 'couple_overlap_1';
+    const today = todayLocalDateString();
+
+    const viewerProfile = await upsertUserProfile({
+      userId: viewerId,
+      displayName: 'Viewer Overlap',
+      username: 'viewer.overlap',
+    });
+    const partnerProfile = await upsertUserProfile({
+      userId: partnerId,
+      displayName: 'Partner Overlap',
+      username: 'partner.overlap',
+    });
+    useSessionStore.setState({ user: viewerProfile, partner: partnerProfile });
+
+    // Add paired partner into Friends Circle as well
+    await addFriendByHandleOrCode({
+      userId: viewerId,
+      query: '@partner.overlap',
+      relationship: 'bestie',
+    });
+
+    const promptId = `prompt_${coupleId}_${today}`;
+    await submitDailyMoment({
+      coupleId,
+      promptId,
+      userId: viewerId,
+      authorName: 'Viewer Overlap',
+      backUri: 'data:image/jpeg;base64,VIEWER_OVERLAP_BACK',
+      frontUri: 'data:image/jpeg;base64,VIEWER_OVERLAP_FRONT',
+    });
+    await submitDailyMoment({
+      coupleId,
+      promptId,
+      userId: partnerId,
+      authorName: 'Partner Overlap',
+      backUri: 'data:image/jpeg;base64,PARTNER_OVERLAP_BACK',
+      frontUri: 'data:image/jpeg;base64,PARTNER_OVERLAP_FRONT',
+    });
+
+    const bundle = await fetchTodayMomentBundle({ coupleId, userId: viewerId });
+    assert.equal(bundle.myMomentsToday.some((m) => m.user_id === viewerId), true);
+    assert.equal(bundle.partnerMomentsToday.some((m) => m.user_id === partnerId), true);
+  });
+
+  it('persists couple and partner on setPairing and restores them cleanly on hydrate', async () => {
+    const nowIso = new Date().toISOString();
+    const user = {
+      id: 'user_persist_pair_1',
+      display_name: 'Self Persist',
+      username: 'self.persist',
+      friend_code: 'SLF-001',
+      bio: '',
+      pronouns: '',
+      mood_song: '',
+      banner_color: '#1C1C1E',
+      banner_path: null,
+      website: '',
+      is_private: false,
+      dump_mode: false,
+      avatar_path: null,
+      timezone: 'UTC',
+      push_token: null,
+      created_at: nowIso,
+    };
+    const partner = {
+      ...user,
+      id: 'user_persist_pair_2',
+      display_name: 'Partner Persist',
+      username: 'partner.persist',
+      friend_code: 'PRT-002',
+    };
+    const couple = {
+      id: 'couple_persist_pair_1',
+      user_a_id: user.id,
+      user_b_id: partner.id,
+      invite_code: '',
+      invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      state: 'active' as const,
+      paired_at: nowIso,
+      created_at: nowIso,
+    };
+
+    // Simulate normal app boot so storage schema epoch is initialized before signing in & pairing
+    await useSessionStore.getState().hydrate();
+    useSessionStore.setState({ user, email: 'self@example.com' });
+    useSessionStore.getState().setPairing(couple, partner);
+    await new Promise((r) => setTimeout(r, 15));
+
+    const persistedRaw = await AsyncStorage.getItem('keepit.session.v1');
+    const persisted = persistedRaw ? JSON.parse(persistedRaw) : null;
+    assert.equal(persisted?.couple?.id, couple.id);
+    assert.equal(persisted?.partner?.id, partner.id);
+
+    // Clear in-memory pairing & hydrate back from persisted session (cold relaunch)
+    useSessionStore.setState({ hydrated: false, user: null, couple: null, partner: null });
+    await useSessionStore.getState().hydrate();
+    const restored = useSessionStore.getState();
+    assert.equal(restored.couple?.id, couple.id);
+    assert.equal(restored.partner?.id, partner.id);
+  });
+
+  it('strips medium (>= 30k chars) base64 data URIs on second pass when aggregate payload exceeds storage cap', async () => {
+    const mediumUri = `data:image/jpeg;base64,${'M'.repeat(50_000)}`;
+    const entries = Array.from({ length: 18 }, (_, index) => ({
+      id: `item_${index}`,
+      photo: mediumUri,
+    }));
+    const payload = JSON.stringify(entries);
+    assert.ok(payload.length > MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS);
+
+    await safeSetStorageItem('keepit.medium_strip_test', payload);
+    const stored = await safeGetStorageItem('keepit.medium_strip_test');
+    assert.ok(stored && stored.length <= MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS);
+    assert.equal(stored.includes(mediumUri), false);
+  });
+
+  it('enforces sender ownership on deleteDirectMessage and applies verified dm_delete realtime packets', async () => {
+    const senderId = 'user_dm_unsend_sender';
+    const recipientId = 'user_dm_unsend_recipient';
+
+    const sent = await sendDirectMessage({
+      senderId,
+      senderName: 'Sender',
+      recipientId,
+      text: 'Undo this message',
+    });
+
+    const initialThread = await fetchConversationMessages({
+      userId: senderId,
+      peerId: recipientId,
+    });
+    assert.equal(initialThread.some((m) => m.id === sent.id), true);
+
+    await assert.rejects(
+      () =>
+        deleteDirectMessage({
+          messageId: sent.id,
+          userId: recipientId,
+        }),
+      /only unsend your own messages/i
+    );
+
+    await deleteDirectMessage({
+      messageId: sent.id,
+      userId: senderId,
+    });
+
+    const afterLocalDelete = await fetchConversationMessages({
+      userId: senderId,
+      peerId: recipientId,
+    });
+    assert.equal(afterLocalDelete.some((m) => m.id === sent.id), false);
+
+    // Realtime dm_delete packet verifies senderId before removing locally
+    const peerMsg = await sendDirectMessage({
+      senderId: recipientId,
+      senderName: 'Peer',
+      recipientId: senderId,
+      text: 'Peer hello',
+    });
+
+    await applyIncomingCouplePacket({
+      kind: 'dm_delete',
+      messageId: peerMsg.id,
+      senderId: 'spoofed_attacker',
+    });
+    const stillPresent = await fetchConversationMessages({
+      userId: senderId,
+      peerId: recipientId,
+    });
+    assert.equal(stillPresent.some((m) => m.id === peerMsg.id), true);
+
+    await applyIncomingCouplePacket({
+      kind: 'dm_delete',
+      messageId: peerMsg.id,
+      senderId: recipientId,
+    });
+    const removedByPacket = await fetchConversationMessages({
+      userId: senderId,
+      peerId: recipientId,
+    });
+    assert.equal(removedByPacket.some((m) => m.id === peerMsg.id), false);
+  });
+
+  it('supports photo-only DMs with Moment reply preview and redacts media_uri when Snap Once expires', async () => {
+    const senderId = 'user_photo_dm_a';
+    const recipientId = 'user_photo_dm_b';
+    const photoUri = 'data:image/jpeg;base64,PHOTO_DM_BYTES';
+
+    const sent = await sendDirectMessage({
+      senderId,
+      senderName: 'Alex',
+      recipientId,
+      text: '   ',
+      mediaUri: photoUri,
+      replyMomentId: 'moment_reply_99',
+      replyMomentPreview: 'Coffee by the window',
+      snapOnce: true,
+    });
+
+    assert.equal(sent.text, '');
+    assert.equal(sent.media_uri, photoUri);
+    assert.equal(sent.reply_moment_id, 'moment_reply_99');
+    assert.equal(sent.reply_moment_preview, 'Coffee by the window');
+    assert.equal(sent.snap_once, true);
+
+    const opened = {
+      ...sent,
+      snap_opened_at_by_user: {
+        [recipientId]: new Date(Date.now() - 20_000).toISOString(),
+      },
+    };
+    const redacted = redactExpiredSnapDm(opened, recipientId, Date.now());
+    assert.equal(redacted.text, '');
+    assert.equal(redacted.media_uri, null);
+    assert.equal(redacted.viewed_by_user_ids.includes(recipientId), true);
+  });
+
+  it('toggles friend relationship tier via updateFriendRelationship and gates private friend moments', async () => {
+    const viewerId = 'user_tier_viewer';
+    const friendId = 'user_tier_private_friend';
+    const viewerCoupleId = `solo_${viewerId}`;
+    const friendCoupleId = `solo_${friendId}`;
+    const nowIso = new Date().toISOString();
+    const today = todayLocalDateString();
+
+    useSessionStore.setState({
+      user: {
+        id: viewerId,
+        display_name: 'Viewer User',
+        username: 'viewer.user',
+        friend_code: 'VWU-111',
+        bio: '',
+        pronouns: '',
+        mood_song: '',
+        banner_color: '#1C1C1E',
+        banner_path: null,
+        website: '',
+        is_private: false,
+        dump_mode: false,
+        avatar_path: null,
+        timezone: 'UTC',
+        push_token: null,
+        created_at: nowIso,
+      },
+      partner: null,
+      couple: {
+        id: viewerCoupleId,
+        user_a_id: viewerId,
+        user_b_id: null,
+        invite_code: '',
+        invite_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        state: 'pending',
+        paired_at: null,
+        created_at: nowIso,
+      },
+    });
+
+    const friendRecord = {
+      id: 'fr_tier_private_1',
+      user_id: viewerId,
+      friend_id: friendId,
+      relationship: 'friend' as const,
+      created_at: nowIso,
+      friend_profile: {
+        id: friendId,
+        display_name: 'Private Pal',
+        username: 'private.pal',
+        friend_code: 'PRV-222',
+        bio: '',
+        pronouns: '',
+        mood_song: '',
+        banner_color: '#1C1C1E',
+        banner_path: null,
+        website: '',
+        is_private: true,
+        dump_mode: false,
+        avatar_path: null,
+        timezone: 'UTC',
+        push_token: null,
+        created_at: nowIso,
+      },
+    };
+    await applyIncomingCouplePacket({ kind: 'friend_added', friend: friendRecord });
+
+    const createdMoment = await submitDailyMoment({
+      coupleId: friendCoupleId,
+      promptId: `prompt_${friendCoupleId}_${today}`,
+      userId: friendId,
+      authorName: 'Private Pal',
+      backUri: 'data:image/jpeg;base64,PRIV_BACK',
+      frontUri: 'data:image/jpeg;base64,PRIV_FRONT',
+      visibility: 'everyone',
+      caption: 'Besties only',
+    });
+
+    // Under 'friend' tier, a private profile's Moment stays hidden from viewer's friend feed
+    const hiddenBundle = await fetchTodayMomentBundle({
+      coupleId: viewerCoupleId,
+      userId: viewerId,
+    });
+    assert.equal(hiddenBundle.friendMomentsToday.some((m) => m.id === createdMoment.id), false);
+
+    // Promote to 'bestie' -> persists across fetchFriendsCircle & reveals Moment
+    const promoted = await updateFriendRelationship({
+      userId: viewerId,
+      friendRecordId: friendRecord.id,
+      relationship: 'bestie',
+    });
+    assert.equal(promoted.relationship, 'bestie');
+
+    const circleAfterPromote = await fetchFriendsCircle({ userId: viewerId, partner: null });
+    assert.equal(circleAfterPromote.find((f) => f.id === friendRecord.id)?.relationship, 'bestie');
+
+    const revealedBundle = await fetchTodayMomentBundle({
+      coupleId: viewerCoupleId,
+      userId: viewerId,
+    });
+    assert.equal(revealedBundle.friendMomentsToday.some((m) => m.id === createdMoment.id), true);
+
+    // Demote back to 'friend' -> hidden again
+    await updateFriendRelationship({
+      userId: viewerId,
+      friendRecordId: friendRecord.id,
+      relationship: 'friend',
+    });
+    const hiddenAgainBundle = await fetchTodayMomentBundle({
+      coupleId: viewerCoupleId,
+      userId: viewerId,
+    });
+    assert.equal(hiddenAgainBundle.friendMomentsToday.some((m) => m.id === createdMoment.id), false);
   });
 });

@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import React, { useRef, useState } from 'react';
-import { GestureResponderEvent, StyleSheet, Text, View } from 'react-native';
+import { GestureResponderEvent, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { formatRelativeTimeAgo } from '@/api/locations';
 import {
@@ -18,9 +18,11 @@ import {
   ZoomPlusIcon,
 } from '@/components/map/MapIcons';
 import { KeepItButton } from '@/components/ui/Primitives';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { AppPressable, EmptyState } from '@/components/ui/ScreenKit';
 import { useKeepItTheme } from '@/theme/tokens';
 import { LocationMode, LocationShareRecord } from '@/types/database';
+import { announcePolite } from '@/utils/a11y';
 
 export interface InteractiveCoupleMapProps {
   mine: LocationShareRecord | null;
@@ -232,6 +234,7 @@ export function InteractiveCoupleMap({
     setFocusId(null);
     setPan({ x: 0, y: 0 });
     setZoom(DEFAULT_ZOOM);
+    announcePolite('Map centered on active pins.');
   };
 
   const zoomBy = (delta: number) => {
@@ -240,6 +243,38 @@ export function InteractiveCoupleMap({
     const factor = 2 ** (next - zoom);
     setZoom(next);
     setPan((value) => ({ x: value.x * factor, y: value.y * factor }));
+    announcePolite(`Zoom level ${next} of ${MAX_ZOOM}.`);
+  };
+
+  const handleMapKeyDown = (event: {
+    key?: string;
+    preventDefault?: () => void;
+    target?: { tagName?: string } | null;
+  }) => {
+    const tag = event.target?.tagName?.toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault?.();
+      zoomBy(1);
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault?.();
+      zoomBy(-1);
+    } else if (event.key === '0') {
+      event.preventDefault?.();
+      center();
+    } else if (panEnabled && event.key === 'ArrowUp') {
+      event.preventDefault?.();
+      setPan((value) => ({ ...value, y: clamp(value.y + 80, -900, 900) }));
+    } else if (panEnabled && event.key === 'ArrowDown') {
+      event.preventDefault?.();
+      setPan((value) => ({ ...value, y: clamp(value.y - 80, -900, 900) }));
+    } else if (panEnabled && event.key === 'ArrowLeft') {
+      event.preventDefault?.();
+      setPan((value) => ({ ...value, x: clamp(value.x + 80, -900, 900) }));
+    } else if (panEnabled && event.key === 'ArrowRight') {
+      event.preventDefault?.();
+      setPan((value) => ({ ...value, x: clamp(value.x - 80, -900, 900) }));
+    }
   };
 
   const handleStart = (event: GestureResponderEvent) => {
@@ -259,7 +294,17 @@ export function InteractiveCoupleMap({
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+    <View
+      {...(Platform.OS === 'web'
+        ? ({
+            tabIndex: 0,
+            onKeyDown: handleMapKeyDown,
+            accessibilityLabel:
+              'Interactive map canvas. Use plus and minus keys to zoom, 0 to center, and arrow keys to pan.',
+          } as Record<string, unknown>)
+        : {})}
+      style={{ width: '100%' }}>
+    <BentoTile variant="spotlight" pattern="dots" radius={radii.card} style={styles.container}>
       {/* Top compact icon HUD bar: Layer switcher + Friends filter + Controls */}
       <View style={styles.hudBar}>
         <View style={styles.hudGroup}>
@@ -399,7 +444,7 @@ export function InteractiveCoupleMap({
                         height: radius * 2,
                         borderRadius: radius,
                         borderWidth: 1,
-                        borderColor: colors.controlBorder,
+                        borderColor: isDark ? 'rgba(75,115,255,0.34)' : colors.controlBorder,
                         left: width / 2 - radius,
                         top: HEIGHT / 2 - radius,
                       }}
@@ -418,7 +463,7 @@ export function InteractiveCoupleMap({
                     width: connectorLength,
                     borderTopWidth: 2,
                     borderStyle: 'dashed',
-                    borderColor: colors.controlBorder,
+                    borderColor: colors.blue400,
                     transform: [{ rotate: `${connectorAngle}deg` }],
                   }}
                 />
@@ -532,17 +577,17 @@ export function InteractiveCoupleMap({
                   style={[
                     styles.panToggle,
                     {
-                      backgroundColor: panEnabled ? colors.ink : colors.surface,
-                      borderColor: colors.controlBorder,
+                      backgroundColor: panEnabled ? colors.primary : colors.surface,
+                      borderColor: panEnabled ? colors.primary : colors.controlBorder,
                       borderRadius: radii.pill,
                     },
                   ]}
                 >
-                  <PanMoveIcon color={panEnabled ? colors.canvas : colors.ink} size={14} />
+                  <PanMoveIcon color={panEnabled ? colors.onAccent : colors.ink} size={14} />
                   <Text
                     style={[
                       styles.panToggleText,
-                      { color: panEnabled ? colors.canvas : colors.ink },
+                      { color: panEnabled ? colors.onAccent : colors.ink },
                     ]}
                   >
                     {panEnabled ? 'Done' : 'Move'}
@@ -636,7 +681,7 @@ export function InteractiveCoupleMap({
 
             <View style={styles.metaStrip}>
               <Text style={[styles.metaText, { color: colors.inkMuted }]}>
-                {`${scaleMeters} m · © ${mapStyle === 'street' ? 'Esri · OSM' : 'KeepIt radar'}`}
+                {`${scaleMeters ?? 100} m · © ${mapStyle === 'street' ? 'Esri · OSM' : 'KeepIt radar'}`}
               </Text>
             </View>
           </View>
@@ -730,6 +775,7 @@ export function InteractiveCoupleMap({
           </View>
         </View>
       ) : null}
+    </BentoTile>
     </View>
   );
 }

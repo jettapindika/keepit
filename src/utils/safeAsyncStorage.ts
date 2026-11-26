@@ -108,6 +108,13 @@ export async function safeSetStorageItem(key: string, value: string): Promise<vo
       'null'
     );
   }
+  if (payload.length > MAX_SAFE_ASYNC_STORAGE_VALUE_CHARS) {
+    // Second pass for multiple medium base64 data URIs that collectively exceed CursorWindow budget
+    payload = payload.replace(
+      /"data:(?:image|video|audio)\/[^;"]+;base64,[A-Za-z0-9+/=]{30000,}"/g,
+      'null'
+    );
+  }
 
   try {
     await AsyncStorage.setItem(key, payload);

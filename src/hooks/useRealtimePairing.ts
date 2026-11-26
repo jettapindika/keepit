@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 
 import {
   ensureCrossDeviceShareableUri,
+  isSnapOnceExpiredForViewer,
   readLocalMoments,
   todayLocalDateString,
 } from '@/api/moments';
@@ -39,7 +40,6 @@ export function useRealtimePairing() {
   const queryClient = useQueryClient();
   const user = useSessionStore((s) => s.user);
   const couple = useSessionStore((s) => s.couple);
-  const partner = useSessionStore((s) => s.partner);
   const refreshPairing = useSessionStore((s) => s.refreshPairing);
   const setPairing = useSessionStore((s) => s.setPairing);
 
@@ -76,6 +76,7 @@ export function useRealtimePairing() {
     const client = supabase;
     if (!userId || !isSupabaseConfigured || !client) return;
 
+    let active = true;
     const directoryChannel = createFreshRealtimeChannel(client, buildUserDirectoryChannelTopic(), {
       config: {
         broadcast: { ack: true, self: false },
@@ -84,9 +85,11 @@ export function useRealtimePairing() {
     });
 
     const syncDirectoryPresenceToLocalDb = async () => {
+      if (!active) return;
       const state = directoryChannel.presenceState();
       for (const [, entries] of Object.entries(state)) {
         for (const rawEntry of entries as unknown[]) {
+          if (!active) return;
           if (rawEntry && typeof rawEntry === 'object' && 'profile' in rawEntry) {
             const candidate = rawEntry.profile as UserProfile | undefined;
             if (candidate?.id) {
@@ -125,6 +128,7 @@ export function useRealtimePairing() {
                   const snap = await fetchPairingSnapshot(userId);
                   resolvedPartner = snap.partner;
                 }
+                if (!active || useSessionStore.getState().user?.id !== userId) return;
                 if (resolvedPartner) {
                   await saveCompletedPairingLocally({
                     couple: candCouple,
@@ -132,6 +136,7 @@ export function useRealtimePairing() {
                     selfProfile: currentSelf,
                   });
                 }
+                if (!active || useSessionStore.getState().user?.id !== userId) return;
                 setPairing(candCouple, resolvedPartner);
               }
             }
@@ -142,7 +147,7 @@ export function useRealtimePairing() {
 
     directoryChannel
       .on('presence', { event: 'sync' }, () => {
-        void syncDirectoryPresenceToLocalDb();
+        void syncDirectoryPresenceToLocalDb().catch(() => {});
       })
       .on('broadcast', { event: 'WhoIsUser' }, (msg) => {
         const payload = msg.payload as { query?: string; requesterId?: string } | undefined;
@@ -162,7 +167,7 @@ export function useRealtimePairing() {
         const payload = msg.payload as { profile?: UserProfile } | undefined;
         const candidate = payload?.profile;
         if (candidate?.id && candidate.id !== userId) {
-          void applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate });
+          void applyIncomingCouplePacket({ kind: 'profile_upsert', profile: candidate }).catch(() => {});
           emitDirectoryUserAnnounce(candidate);
         }
       })
@@ -171,28 +176,31 @@ export function useRealtimePairing() {
         if (!payload?.code) return;
         const requestedCode = normalizeInviteCode(payload.code);
         const currentUser = useSessionStore.getState().user;
-        if (!currentUser) return;
-        void fetchPairingSnapshot(currentUser.id).then((snap) => {
-          if (
-            snap.couple &&
-            snap.couple.state === 'pending' &&
-            snap.couple.user_a_id === currentUser.id &&
-            normalizeInviteCode(snap.couple.invite_code) === requestedCode &&
-            new Date(snap.couple.invite_expires_at).getTime() > Date.now()
-          ) {
-            const announcePayload: RealtimeInvitePresence = {
-              couple: snap.couple,
-              hostProfile: currentUser,
-            };
-            void directoryChannel
-              .send({
-                type: 'broadcast',
-                event: 'invite_host_announce',
-                payload: announcePayload,
-              })
-              .catch(() => {});
-          }
-        });
+        if (!currentUser || currentUser.id !== userId) return;
+        void fetchPairingSnapshot(currentUser.id)
+          .then((snap) => {
+            if (!active || useSessionStore.getState().user?.id !== userId) return;
+            if (
+              snap.couple &&
+              snap.couple.state === 'pending' &&
+              snap.couple.user_a_id === currentUser.id &&
+              normalizeInviteCode(snap.couple.invite_code) === requestedCode &&
+              new Date(snap.couple.invite_expires_at).getTime() > Date.now()
+            ) {
+              const announcePayload: RealtimeInvitePresence = {
+                couple: snap.couple,
+                hostProfile: currentUser,
+              };
+              void directoryChannel
+                .send({
+                  type: 'broadcast',
+                  event: 'invite_host_announce',
+                  payload: announcePayload,
+                })
+                .catch(() => {});
+            }
+          })
+          .catch(() => {});
       })
       .on('broadcast', { event: 'invite_host_announce' }, (msg) => {
         const payload = msg.payload as RealtimeInvitePresence | undefined;
@@ -204,48 +212,62 @@ export function useRealtimePairing() {
         const payload = msg.payload as RealtimeRedeemPayload | undefined;
         if (!payload?.couple || !payload?.joinerProfile) return;
         const currentUser = useSessionStore.getState().user;
-        if (!currentUser || payload.couple.user_a_id !== currentUser.id) return;
+        if (!currentUser || currentUser.id !== userId || payload.couple.user_a_id !== currentUser.id) {
+          return;
+        }
         void saveCompletedPairingLocally({
           couple: payload.couple,
           partner: payload.joinerProfile,
           selfProfile: currentUser,
-        }).then(() => {
-          setPairing(payload.couple, payload.joinerProfile);
-          void syncDirectoryPresence({ profile: currentUser, couple: payload.couple });
-          void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
-          void queryClient.invalidateQueries({ queryKey: ['couple-statuses'] });
-          void queryClient.invalidateQueries({ queryKey: ['couple-locations'] });
-        });
+        })
+          .then(() => {
+            if (!active || useSessionStore.getState().user?.id !== userId) return;
+            setPairing(payload.couple, payload.joinerProfile);
+            void syncDirectoryPresence({ profile: currentUser, couple: payload.couple }).catch(() => {});
+            void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
+            void queryClient.invalidateQueries({ queryKey: ['couple-statuses'] });
+            void queryClient.invalidateQueries({ queryKey: ['couple-locations'] });
+          })
+          .catch(() => {});
       })
       .on('broadcast', { event: 'RequestRecentMoments' }, (msg) => {
         const payload = msg.payload as { requesterId?: string } | undefined;
         const currentUser = useSessionStore.getState().user;
-        if (!currentUser) return;
+        if (!currentUser || currentUser.id !== userId) return;
         void (async () => {
           const [state, friends] = await Promise.all([
             readLocalMoments(),
             fetchFriendsCircle({ userId: currentUser.id }),
           ]);
-          const requesterIsFriend =
-            Boolean(payload?.requesterId) &&
-            friends.some((f) => f.friend_id === payload?.requesterId);
+          if (!active || useSessionStore.getState().user?.id !== userId) return;
+          const requesterId = payload?.requesterId;
+          const requesterFriendEntry = requesterId
+            ? friends.find((f) => f.friend_id === requesterId)
+            : undefined;
+          const requesterIsFriend = Boolean(requesterFriendEntry);
+          const requesterIsBestie = requesterFriendEntry?.relationship === 'bestie';
           const today = todayLocalDateString();
-          const isSameUserRequest = payload?.requesterId === currentUser.id;
-          const myTodayMoments = Object.values(state.moments).filter(
-            (m) =>
-              m?.id &&
-              m.user_id === currentUser.id &&
-              (isSameUserRequest || m.visibility !== 'partner') &&
-              (isSameUserRequest ||
-                m.posted_at?.startsWith(today) ||
-                m.captured_at?.startsWith(today)) &&
-              (isSameUserRequest ||
-                !currentUser.is_private ||
-                friends.some((f) => f.friend_id === payload?.requesterId && f.relationship === 'bestie') ||
-                !requesterIsFriend)
-          );
+          const isSameUserRequest = requesterId === currentUser.id;
+          const myTodayMoments = Object.values(state.moments).filter((m) => {
+            if (!m?.id || m.user_id !== currentUser.id) return false;
+            if (isSameUserRequest) return true;
+            if (m.visibility === 'partner') return false;
+            if (currentUser.is_private && !requesterIsBestie) return false;
+            if (m.visibility === 'friends' && !requesterIsFriend) return false;
+            if (m.snap_once && requesterId && isSnapOnceExpiredForViewer(m, requesterId)) {
+              return false;
+            }
+            const rawIso = m.captured_at || m.posted_at;
+            const parsedDate = rawIso ? new Date(rawIso) : null;
+            const localDate =
+              parsedDate && !Number.isNaN(parsedDate.getTime())
+                ? todayLocalDateString(parsedDate)
+                : rawIso?.slice(0, 10);
+            return localDate === today;
+          });
           const seen = new Set<string>();
           for (const m of myTodayMoments) {
+            if (!active) return;
             if (seen.has(m.id)) continue;
             seen.add(m.id);
             const [portableBack, portableFront] = await Promise.all([
@@ -269,6 +291,7 @@ export function useRealtimePairing() {
           }
           if (isSameUserRequest) {
             for (const f of friends) {
+              if (!active) return;
               await directoryChannel
                 .send({
                   type: 'broadcast',
@@ -285,18 +308,21 @@ export function useRealtimePairing() {
               })
               .catch(() => {});
           }
-          if (payload?.requesterId) {
+          if (requesterId) {
             const rawMsgs = await safeGetStorageItem('keepit.local_messages.v1');
             if (rawMsgs) {
               try {
                 const allMsgs = JSON.parse(rawMsgs) as DirectMessageRecord[];
-                const myDmsToRequester = allMsgs.filter(
-                  (dm) =>
-                    dm?.id &&
-                    dm.sender_id === currentUser.id &&
-                    dm.recipient_id === payload.requesterId
-                );
+                const myDmsToRequester = Array.isArray(allMsgs)
+                  ? allMsgs.filter(
+                      (dm) =>
+                        dm?.id &&
+                        dm.sender_id === currentUser.id &&
+                        dm.recipient_id === requesterId
+                    )
+                  : [];
                 for (const dm of myDmsToRequester.slice(-15)) {
+                  if (!active) return;
                   await directoryChannel
                     .send({
                       type: 'broadcast',
@@ -310,55 +336,62 @@ export function useRealtimePairing() {
               }
             }
           }
-        })();
+        })().catch(() => {});
       })
       .on('broadcast', { event: 'couple_packet' }, (msg) => {
         const packet = msg.payload as CoupleSyncPacket | undefined;
-        if (!packet) return;
-        void applyIncomingCouplePacket(packet).then(() => {
-          if (packet.kind === 'friend_added' || packet.kind === 'friend_removed') {
-            void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
-            void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
-          } else if (packet.kind === 'profile_upsert') {
-            if (packet.profile.id === userId) {
-              const cur = useSessionStore.getState().user;
-              if (!cur) {
-                useSessionStore.setState({ user: packet.profile });
+        if (!packet || !active) return;
+        void applyIncomingCouplePacket(packet)
+          .then(() => {
+            if (!active || useSessionStore.getState().user?.id !== userId) return;
+            if (packet.kind === 'friend_added' || packet.kind === 'friend_removed') {
+              void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
+              void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
+            } else if (packet.kind === 'profile_upsert') {
+              if (packet.profile.id === userId) {
+                const cur = useSessionStore.getState().user;
+                if (!cur) {
+                  useSessionStore.setState({ user: packet.profile });
+                }
+              } else {
+                emitDirectoryUserAnnounce(packet.profile);
               }
-            } else {
-              emitDirectoryUserAnnounce(packet.profile);
+            } else if (
+              packet.kind === 'moment_upsert' ||
+              packet.kind === 'moment_delete' ||
+              packet.kind === 'moment_comment' ||
+              packet.kind === 'moment_comment_delete' ||
+              packet.kind === 'moment_reaction' ||
+              packet.kind === 'moment_snap_viewed'
+            ) {
+              void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
+              void queryClient.invalidateQueries({ queryKey: ['month-memories'] });
+              void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
+            } else if (
+              packet.kind === 'dm_upsert' ||
+              packet.kind === 'dm_reaction' ||
+              packet.kind === 'dm_snap_viewed'
+            ) {
+              void queryClient.invalidateQueries({ queryKey: ['direct-messages'] });
             }
-          } else if (
-            packet.kind === 'moment_upsert' ||
-            packet.kind === 'moment_delete' ||
-            packet.kind === 'moment_comment' ||
-            packet.kind === 'moment_comment_delete' ||
-            packet.kind === 'moment_reaction' ||
-            packet.kind === 'moment_snap_viewed'
-          ) {
-            void queryClient.invalidateQueries({ queryKey: ['today-moment'] });
-            void queryClient.invalidateQueries({ queryKey: ['month-memories'] });
-            void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
-          } else if (
-            packet.kind === 'dm_upsert' ||
-            packet.kind === 'dm_reaction' ||
-            packet.kind === 'dm_snap_viewed'
-          ) {
-            void queryClient.invalidateQueries({ queryKey: ['direct-messages'] });
-          }
-        });
+          })
+          .catch(() => {});
       })
       .subscribe((status) => {
+        if (!active) return;
         if (status === 'SUBSCRIBED') {
           registerActiveDirectoryChannel(directoryChannel);
           const currentUser = useSessionStore.getState().user;
-          if (currentUser) {
-            void fetchPairingSnapshot(currentUser.id).then((snap) => {
-              void syncDirectoryPresence({
-                profile: currentUser,
-                couple: snap.couple,
-              });
-            });
+          if (currentUser && currentUser.id === userId) {
+            void fetchPairingSnapshot(currentUser.id)
+              .then((snap) => {
+                if (!active || useSessionStore.getState().user?.id !== userId) return;
+                void syncDirectoryPresence({
+                  profile: currentUser,
+                  couple: snap.couple,
+                }).catch(() => {});
+              })
+              .catch(() => {});
             void directoryChannel
               .send({
                 type: 'broadcast',
@@ -370,92 +403,120 @@ export function useRealtimePairing() {
         }
       });
     return () => {
+      active = false;
       registerActiveDirectoryChannel(null);
-      void client.removeChannel(directoryChannel);
+      void client.removeChannel(directoryChannel).catch(() => {});
     };
   }, [userId, setPairing, queryClient]);
 
   // Cross-device Realtime Broadcast + Presence sync channel for active couples
   useEffect(() => {
     const client = supabase;
-    if (!user || !coupleId || coupleState !== 'active' || !isSupabaseConfigured || !client) {
+    if (!userId || !coupleId || coupleState !== 'active' || !isSupabaseConfigured || !client) {
       return;
     }
 
+    let active = true;
     const syncChannel = createFreshRealtimeChannel(client, buildCoupleSyncChannelTopic(coupleId), {
       config: {
         broadcast: { ack: false, self: false },
-        presence: { key: user.id },
+        presence: { key: userId },
       },
     });
 
     syncChannel
       .on('presence', { event: 'sync' }, () => {
+        if (!active) return;
+        const currentUser = useSessionStore.getState().user;
+        const currentCouple = useSessionStore.getState().couple;
+        const currentPartner = useSessionStore.getState().partner;
+        if (!currentUser || currentUser.id !== userId || !currentCouple || currentCouple.id !== coupleId) {
+          return;
+        }
         const state = syncChannel.presenceState();
         for (const [key, entries] of Object.entries(state)) {
-          if (key === user.id) continue;
+          if (key === userId) continue;
           for (const rawEntry of entries as unknown[]) {
             if (rawEntry && typeof rawEntry === 'object' && 'profile' in rawEntry) {
               const peerProfile = rawEntry.profile as UserProfile | undefined;
-              if (
-                peerProfile?.id &&
-                peerProfile.id !== user.id &&
-                (!partner || partner.display_name === 'Partner' || partner.id !== peerProfile.id)
-              ) {
-                const updatedCouple = {
-                  ...couple!,
-                  user_b_id:
-                    couple!.user_a_id === user.id ? peerProfile.id : couple!.user_b_id ?? user.id,
-                };
-                void saveCompletedPairingLocally({
-                  couple: updatedCouple,
-                  partner: peerProfile,
-                  selfProfile: user,
-                }).then(() => {
+              if (!peerProfile?.id || peerProfile.id === userId) continue;
+              const partnerAlreadySynced = Boolean(
+                currentPartner &&
+                  currentPartner.id === peerProfile.id &&
+                  currentPartner.display_name === peerProfile.display_name &&
+                  currentPartner.username === peerProfile.username &&
+                  currentPartner.avatar_path === peerProfile.avatar_path
+              );
+              if (partnerAlreadySynced) continue;
+
+              const updatedCouple = {
+                ...currentCouple,
+                user_b_id:
+                  currentCouple.user_a_id === userId
+                    ? peerProfile.id
+                    : (currentCouple.user_b_id ?? userId),
+              };
+              void saveCompletedPairingLocally({
+                couple: updatedCouple,
+                partner: peerProfile,
+                selfProfile: currentUser,
+              })
+                .then(() => {
+                  if (!active || useSessionStore.getState().user?.id !== userId) return;
                   setPairing(updatedCouple, peerProfile);
-                });
-              }
+                })
+                .catch(() => {});
             }
           }
         }
       })
       .on('broadcast', { event: 'couple_packet' }, (msg) => {
         const packet = msg.payload as CoupleSyncPacket | undefined;
-        if (!packet) return;
+        if (!packet || !active) return;
 
         if (packet.kind === 'unpair') {
-          setPairing(null, null);
+          if (useSessionStore.getState().user?.id === userId) {
+            setPairing(null, null);
+          }
           return;
         }
 
-        if (packet.kind === 'profile_upsert' && packet.profile.id !== user.id) {
-          if (couple) {
-            setPairing(couple, packet.profile);
+        if (packet.kind === 'profile_upsert' && packet.profile.id !== userId) {
+          const currentCouple = useSessionStore.getState().couple;
+          if (currentCouple && currentCouple.id === coupleId) {
+            setPairing(currentCouple, packet.profile);
           }
         }
 
-        void applyIncomingCouplePacket(packet).then(() => {
-          void queryClient.invalidateQueries({ queryKey: ['today-moment', coupleId] });
-          void queryClient.invalidateQueries({ queryKey: ['month-memories', coupleId] });
-          void queryClient.invalidateQueries({ queryKey: ['couple-statuses', coupleId] });
-          void queryClient.invalidateQueries({ queryKey: ['couple-locations', coupleId] });
-          void queryClient.invalidateQueries({ queryKey: ['couple-nudges', coupleId] });
-          void queryClient.invalidateQueries({ queryKey: ['direct-messages'] });
-          void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
-          void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
-        });
+        void applyIncomingCouplePacket(packet)
+          .then(() => {
+            if (!active || useSessionStore.getState().user?.id !== userId) return;
+            void queryClient.invalidateQueries({ queryKey: ['today-moment', coupleId] });
+            void queryClient.invalidateQueries({ queryKey: ['month-memories', coupleId] });
+            void queryClient.invalidateQueries({ queryKey: ['couple-statuses', coupleId] });
+            void queryClient.invalidateQueries({ queryKey: ['couple-locations', coupleId] });
+            void queryClient.invalidateQueries({ queryKey: ['couple-nudges', coupleId] });
+            void queryClient.invalidateQueries({ queryKey: ['direct-messages'] });
+            void queryClient.invalidateQueries({ queryKey: ['friends-list'] });
+            void queryClient.invalidateQueries({ queryKey: ['user-posts'] });
+          })
+          .catch(() => {});
       })
       .on('broadcast', { event: 'RequestCoupleMoments' }, (msg) => {
         const payload = msg.payload as { requesterId?: string } | undefined;
         const currentUser = useSessionStore.getState().user;
-        if (!currentUser || payload?.requesterId === currentUser.id) return;
+        if (!active || !currentUser || currentUser.id !== userId || payload?.requesterId === userId) {
+          return;
+        }
         void (async () => {
           const state = await readLocalMoments();
+          if (!active || useSessionStore.getState().user?.id !== userId) return;
           const myCoupleMoments = Object.values(state.moments).filter(
             (m) => m?.id && m.couple_id === coupleId && m.user_id === currentUser.id
           );
           const seen = new Set<string>();
           for (const m of myCoupleMoments.slice(0, 10)) {
+            if (!active) return;
             if (seen.has(m.id)) continue;
             seen.add(m.id);
             const [portableBack, portableFront] = await Promise.all([
@@ -482,6 +543,7 @@ export function useRealtimePairing() {
             safeGetStorageItem('keepit.local_locations.v1'),
             safeGetStorageItem('keepit.local_messages.v1'),
           ]);
+          if (!active) return;
           if (rawStatuses) {
             try {
               const statusMap = JSON.parse(rawStatuses) as Record<string, StatusRecord>;
@@ -519,8 +581,11 @@ export function useRealtimePairing() {
           if (rawMsgs) {
             try {
               const allMsgs = JSON.parse(rawMsgs) as DirectMessageRecord[];
-              const myDms = allMsgs.filter((dm) => dm?.id && dm.sender_id === currentUser.id);
+              const myDms = Array.isArray(allMsgs)
+                ? allMsgs.filter((dm) => dm?.id && dm.sender_id === currentUser.id)
+                : [];
               for (const dm of myDms.slice(-15)) {
+                if (!active) return;
                 await syncChannel
                   .send({
                     type: 'broadcast',
@@ -533,25 +598,30 @@ export function useRealtimePairing() {
               // Ignore malformed messages cache
             }
           }
-        })();
+        })().catch(() => {});
       })
       .subscribe((status) => {
+        if (!active) return;
         if (status === 'SUBSCRIBED') {
           registerActiveCoupleChannel(coupleId, syncChannel);
-          void syncChannel.track({ profile: user }).catch(() => {});
-          void syncChannel
-            .send({
-              type: 'broadcast',
-              event: 'RequestCoupleMoments',
-              payload: { requesterId: user.id },
-            })
-            .catch(() => {});
+          const currentUser = useSessionStore.getState().user;
+          if (currentUser && currentUser.id === userId) {
+            void syncChannel.track({ profile: currentUser }).catch(() => {});
+            void syncChannel
+              .send({
+                type: 'broadcast',
+                event: 'RequestCoupleMoments',
+                payload: { requesterId: userId },
+              })
+              .catch(() => {});
+          }
         }
       });
 
     return () => {
+      active = false;
       registerActiveCoupleChannel(null, null);
-      void client.removeChannel(syncChannel);
+      void client.removeChannel(syncChannel).catch(() => {});
     };
-  }, [user, couple, coupleId, coupleState, partner, setPairing, queryClient]);
+  }, [userId, coupleId, coupleState, setPairing, queryClient]);
 }

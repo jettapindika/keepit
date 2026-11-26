@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
 
@@ -184,7 +183,7 @@ export async function requestPinKeepItWidgetDetailed(): Promise<PinWidgetResult>
       try {
         const requested = await nativeBridge.requestPinWidgetAsync();
         if (requested) {
-          await AsyncStorage.setItem(WIDGET_PINNED_STORAGE_KEY, 'true');
+          await safeSetStorageItem(WIDGET_PINNED_STORAGE_KEY, 'true');
           return {
             pinned: true,
             mode: 'native_pinned',
@@ -311,7 +310,7 @@ export async function compressImageForCrossDeviceShare(
 
 export async function isKeepItWidgetPinned(): Promise<boolean> {
   try {
-    const stored = await AsyncStorage.getItem(WIDGET_PINNED_STORAGE_KEY);
+    const stored = await safeGetStorageItem(WIDGET_PINNED_STORAGE_KEY);
     return stored === 'true';
   } catch {
     return false;

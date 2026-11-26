@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,10 +15,12 @@ import { MonthlyRecapModal } from '@/components/memories/MonthlyRecapModal';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
 import { DualMomentCard } from '@/components/moment/MomentCards';
 import { StreakMilestoneShelf } from '@/components/streak/SharedPulseCard';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
-import { AppPressable, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
+import { AppPressable, AppTextInput, EmptyState, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
+import { announcePolite } from '@/utils/a11y';
 
 const WEEKDAYS = [
   { key: 'Sun', short: 'S' },
@@ -61,8 +63,18 @@ export default function MemoriesScreen() {
   const [cursorYear, setCursorYear] = useState(currentYear);
   const [cursorMonth, setCursorMonth] = useState(currentMonth);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [memoryFilter, setMemoryFilter] = useState<'all' | 'together'>('all');
+  const [memoryQuery, setMemoryQuery] = useState('');
   const [recapOpen, setRecapOpen] = useState(false);
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const calendarCellRefs = useRef<Record<string, View | null>>({});
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const isPartnerPaired = Boolean(partner && couple && !couple.id.startsWith('solo_'));
   const myName = user?.display_name ?? 'You';
   const partnerName = partner?.display_name ?? 'Partner';
@@ -108,11 +120,44 @@ export default function MemoriesScreen() {
     () => (memoriesQuery.data?.days ?? []).filter((day) => day.mine || day.partner),
     [memoriesQuery.data?.days]
   );
+  const normalizedMemoryQuery = memoryQuery.trim().toLowerCase();
+  const filteredDays = useMemo(() => {
+    return days.filter((day) => {
+      if (memoryFilter === 'together' && !(day.mine && day.partner)) return false;
+      if (!normalizedMemoryQuery) return true;
+      return [day.mine, day.partner].some((m) => {
+        if (!m) return false;
+        if ((m.caption ?? '').toLowerCase().includes(normalizedMemoryQuery)) return true;
+        if ((m.location_label ?? '').toLowerCase().includes(normalizedMemoryQuery)) return true;
+        if ((m.music_track?.title ?? '').toLowerCase().includes(normalizedMemoryQuery)) return true;
+        if ((m.music_track?.artist ?? '').toLowerCase().includes(normalizedMemoryQuery)) return true;
+        return (m.tagged_users ?? []).some(
+          (u) =>
+            u.displayName.toLowerCase().includes(normalizedMemoryQuery) ||
+            u.username.toLowerCase().includes(normalizedMemoryQuery)
+        );
+      });
+    });
+  }, [days, memoryFilter, normalizedMemoryQuery]);
   const streak = memoriesQuery.data?.streak ?? null;
-  const dayMap = useMemo(() => new Map(days.map((day) => [day.prompt_date, day])), [days]);
+  const dayMap = useMemo(
+    () => new Map(filteredDays.map((day) => [day.prompt_date, day])),
+    [filteredDays]
+  );
   const effectiveDate =
-    selectedDate && dayMap.has(selectedDate) ? selectedDate : days[0]?.prompt_date ?? null;
+    selectedDate && dayMap.has(selectedDate) ? selectedDate : filteredDays[0]?.prompt_date ?? null;
   const selectedRecord = effectiveDate ? dayMap.get(effectiveDate) : null;
+  const activeDayIdx = effectiveDate
+    ? filteredDays.findIndex((day) => day.prompt_date === effectiveDate)
+    : -1;
+  const stepSelectedDay = (delta: -1 | 1) => {
+    if (activeDayIdx < 0) return;
+    const next = filteredDays[activeDayIdx + delta];
+    if (!next) return;
+    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    setSelectedDate(next.prompt_date);
+    announcePolite(`Selected ${fullDate(next.prompt_date)}.`);
+  };
   const monthLabel = new Date(Date.UTC(cursorYear, cursorMonth - 1, 15)).toLocaleDateString(
     undefined,
     { month: 'long', year: 'numeric', timeZone: 'UTC' }
@@ -190,7 +235,7 @@ export default function MemoriesScreen() {
         queryClient.invalidateQueries({ queryKey: ['today-moment', couple?.id] }),
       ]);
     } finally {
-      setPullRefreshing(false);
+      if (isMountedRef.current) setPullRefreshing(false);
     }
   };
 
@@ -410,15 +455,11 @@ export default function MemoriesScreen() {
           </View>
         ) : null}
 
-        <View
-          style={[
-            styles.calendar,
-            {
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-              borderRadius: radii.card,
-            },
-          ]}>
+        <BentoTile
+          variant="spotlight"
+          pattern="dots"
+          radius={radii.card}
+          style={styles.calendar}>
           <View style={styles.calendarGrid}>
             <View style={styles.week}>
               {WEEKDAYS.map((day) => (
@@ -447,8 +488,8 @@ export default function MemoriesScreen() {
                   const dotColor = thumbnail
                     ? '#FFFFFF'
                     : selected
-                      ? colors.canvas
-                      : colors.ink;
+                      ? '#FFFFFF'
+                      : colors.blue400;
 
                   if (!count) {
                     return (
@@ -471,19 +512,48 @@ export default function MemoriesScreen() {
                   return (
                     <AppPressable
                       key={cell.date}
+                      ref={(el) => {
+                        calendarCellRefs.current[cell.date] = el as View | null;
+                      }}
                       accessibilityRole="button"
                       accessibilityLabel={`${fullDate(cell.date)}, ${count} ${count === 1 ? 'person' : 'people'} posted`}
                       accessibilityState={{ selected }}
                       onPress={() => {
                         if (Platform.OS !== 'web') void Haptics.selectionAsync();
                         setSelectedDate(cell.date);
+                        announcePolite(`Selected ${fullDate(cell.date)}.`);
                       }}
+                      {...(Platform.OS === 'web'
+                        ? ({
+                            onKeyDown: (event: { key?: string; preventDefault?: () => void }) => {
+                              const activeDates = filteredDays.map((d) => d.prompt_date).sort();
+                              const pos = activeDates.indexOf(cell.date);
+                              if (pos < 0) return;
+                              let targetDate: string | undefined;
+                              if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                                targetDate = activeDates[Math.min(activeDates.length - 1, pos + 1)];
+                              } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                                targetDate = activeDates[Math.max(0, pos - 1)];
+                              } else if (event.key === 'Home') {
+                                targetDate = activeDates[0];
+                              } else if (event.key === 'End') {
+                                targetDate = activeDates[activeDates.length - 1];
+                              }
+                              if (targetDate && targetDate !== cell.date) {
+                                event.preventDefault?.();
+                                setSelectedDate(targetDate);
+                                announcePolite(`Selected ${fullDate(targetDate)}.`);
+                                (calendarCellRefs.current[targetDate] as unknown as { focus?: () => void } | null)?.focus?.();
+                              }
+                            },
+                          } as Record<string, unknown>)
+                        : {})}
                       style={[
                         styles.cell,
                         styles.day,
                         {
-                          backgroundColor: selected ? colors.ink : colors.surfaceElevated,
-                          borderColor: selected ? colors.focusRing : colors.controlBorder,
+                          backgroundColor: selected ? colors.primary : colors.surfaceElevated,
+                          borderColor: selected ? colors.blue300 : colors.controlBorder,
                           borderRadius: 12,
                         },
                       ]}>
@@ -504,11 +574,9 @@ export default function MemoriesScreen() {
                           style={[
                             styles.dateNumber,
                             {
-                              color: thumbnail
+                              color: thumbnail || selected
                                 ? '#FFFFFF'
-                                : selected
-                                  ? colors.canvas
-                                  : colors.ink,
+                                : colors.ink,
                             },
                           ]}>
                           {cell.day}
@@ -560,7 +628,88 @@ export default function MemoriesScreen() {
               </Text>
             </View>
           </View>
-        </View>
+        </BentoTile>
+
+        {!memoriesQuery.isLoading && !memoriesQuery.isError && days.length > 0 ? (
+          <View style={styles.filterSearchWrap}>
+            <View accessibilityRole="tablist" style={styles.filterPillsRow}>
+              {(
+                [
+                  { key: 'all', label: `All (${days.length})` },
+                  { key: 'together', label: `Together (${togetherCount})` },
+                ] as const
+              ).map((opt) => {
+                const selected = memoryFilter === opt.key;
+                return (
+                  <AppPressable
+                    key={opt.key}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`Filter memories: ${opt.label}`}
+                    onPress={() => {
+                      setMemoryFilter(opt.key);
+                      announcePolite(`Filtered to ${opt.label}.`);
+                    }}
+                    style={[
+                      styles.filterChipBtn,
+                      {
+                        backgroundColor: selected ? colors.primary : colors.surface,
+                        borderColor: selected ? colors.primary : colors.border,
+                        borderRadius: radii.pill,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        { color: selected ? colors.onAccent : colors.ink },
+                      ]}>
+                      {opt.label}
+                    </Text>
+                  </AppPressable>
+                );
+              })}
+            </View>
+            <View style={styles.searchBarRow}>
+              <AppTextInput
+                accessibilityLabel="Search archived Moments by caption, place, song, or friend tag"
+                value={memoryQuery}
+                onChangeText={setMemoryQuery}
+                placeholder="Search captions, places, songs, tags…"
+                placeholderTextColor={colors.placeholder}
+                returnKeyType="search"
+                style={[
+                  styles.searchInput,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.controlBorder,
+                    color: colors.ink,
+                    borderRadius: radii.input,
+                  },
+                ]}
+              />
+              {memoryQuery.trim().length > 0 ? (
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear memory search"
+                  onPress={() => {
+                    setMemoryQuery('');
+                    announcePolite('Cleared memory search.');
+                  }}
+                  style={[
+                    styles.iconNavBtn,
+                    {
+                      width: 68,
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                    },
+                  ]}>
+                  <Text style={[styles.filterChipText, { color: colors.ink }]}>Clear</Text>
+                </AppPressable>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
 
         {!memoriesQuery.isLoading && !memoriesQuery.isError && !days.length ? (
           <EmptyState
@@ -568,6 +717,17 @@ export default function MemoriesScreen() {
             message="Tap Capture in the dock to record today's dual-camera Moment."
             actionLabel="Open Dual Camera"
             onAction={() => router.push('/camera')}
+          />
+        ) : !memoriesQuery.isLoading && !memoriesQuery.isError && days.length > 0 && !filteredDays.length ? (
+          <EmptyState
+            title="No matching Moments"
+            message="Try clearing your search text or switching back to All."
+            actionLabel="Reset filters"
+            onAction={() => {
+              setMemoryFilter('all');
+              setMemoryQuery('');
+              announcePolite('Reset memory filters.');
+            }}
           />
         ) : null}
 
@@ -593,20 +753,62 @@ export default function MemoriesScreen() {
                   {shortDate(selectedRecord.prompt_date)}
                 </Text>
               </View>
-              <View
-                style={[
-                  styles.modeTagPill,
-                  {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    borderRadius: radii.pill,
-                  },
-                ]}>
-                <Text style={[styles.modeTagText, { color: colors.inkMuted }]}>
-                  {selectedRecord.mine && selectedRecord.partner
-                    ? 'Together'
-                    : `${singleName} only`}
-                </Text>
+              <View style={styles.monthRightActions}>
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous archived day"
+                  disabled={activeDayIdx <= 0}
+                  onPress={() => stepSelectedDay(-1)}
+                  style={[
+                    styles.iconNavBtn,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                      opacity: activeDayIdx <= 0 ? 0.4 : 1,
+                    },
+                  ]}>
+                  <SymbolView
+                    name={{ ios: 'chevron.left', android: 'chevron_left', web: 'chevron_left' }}
+                    tintColor={colors.ink}
+                    size={18}
+                  />
+                </AppPressable>
+                <AppPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Next archived day"
+                  disabled={activeDayIdx < 0 || activeDayIdx >= filteredDays.length - 1}
+                  onPress={() => stepSelectedDay(1)}
+                  style={[
+                    styles.iconNavBtn,
+                    {
+                      backgroundColor: colors.surfaceElevated,
+                      borderColor: colors.controlBorder,
+                      borderRadius: radii.input,
+                      opacity: activeDayIdx < 0 || activeDayIdx >= filteredDays.length - 1 ? 0.4 : 1,
+                    },
+                  ]}>
+                  <SymbolView
+                    name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
+                    tintColor={colors.ink}
+                    size={18}
+                  />
+                </AppPressable>
+                <View
+                  style={[
+                    styles.modeTagPill,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      borderRadius: radii.pill,
+                    },
+                  ]}>
+                  <Text style={[styles.modeTagText, { color: colors.inkMuted }]}>
+                    {selectedRecord.mine && selectedRecord.partner
+                      ? 'Together'
+                      : `${singleName} only`}
+                  </Text>
+                </View>
               </View>
             </View>
 
@@ -633,6 +835,11 @@ export default function MemoriesScreen() {
                 lateBySeconds={singleMoment.late_by_seconds}
                 isLate={singleMoment.is_late}
                 retakeCount={singleMoment.retake_count}
+                currentUserId={user?.id}
+                coupleId={couple?.id}
+                isOwner={singleMoment.user_id === user?.id}
+                onUpdated={() => void memoriesQuery.refetch()}
+                onDeleted={() => void memoriesQuery.refetch()}
               />
             ) : null}
           </View>
@@ -839,5 +1046,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '600',
+  },
+  filterSearchWrap: {
+    gap: 10,
+  },
+  filterPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterChipBtn: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderCurve: 'continuous',
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: 1,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

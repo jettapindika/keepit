@@ -1,6 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -39,8 +40,10 @@ import {
   QUICK_LOCATION_PRESETS,
 } from '@/api/social';
 import { DualFrameMark, InlineNotice, KeepItButton, KeepItWatermarkLogo } from '@/components/ui/Primitives';
+import { BentoTile, BentoToggleGlyph } from '@/components/ui/BentoPrimitives';
 import { AppPressable as Pressable, AppSwitch as Switch, AppTextInput as TextInput, SectionHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
+import { useAccessibleModal } from '@/hooks/useAccessibleModal';
 import { useAppMotion } from '@/hooks/useAppMotion';
 import { MOCHY_SPRINGS } from '@/theme/motion';
 import { useKeepItTheme } from '@/theme/tokens';
@@ -89,7 +92,7 @@ const REACTION_SYMBOL_MAP: Record<
     web: 'sentiment_satisfied',
     label: 'Laugh',
   },
-  '👏': { ios: 'Hands.clap.fill', android: 'celebration', web: 'celebration', label: 'Applause' },
+  '👏': { ios: 'hands.clap.fill', android: 'celebration', web: 'celebration', label: 'Applause' },
 };
 
 function ReactionGlyph({
@@ -174,7 +177,16 @@ export function DualMomentCard({
     Boolean(moment?.user_id && moment.user_id === effectiveUserId);
 
   const sessionPartner = useSessionStore((s) => s.partner);
+  const router = useRouter();
   const overlaySeqRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Local optimistic overrides keyed to moment revision so prop updates sync without setState-in-effect
   const momentRevisionKey = [
@@ -326,41 +338,20 @@ export function DualMomentCard({
     initialRemaining !== null && initialRemaining > 0 ? initialRemaining : 15
   );
   const snapTimerRef = useRef<number | undefined>(undefined);
+  const snapExpiryDispatchedRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!localSnapOnce || ownerFlag || snapExpired) {
+    if (!localSnapOnce || ownerFlag || snapExpired || !snapOpened) {
       clearInterval(snapTimerRef.current);
-      if (propSnapExpired && moment?.id && !moment.viewed_by_user_ids?.includes(effectiveUserId)) {
-        void markSnapOnceMomentState({
-          momentId: moment.id,
-          coupleId: effectiveCoupleId,
-          viewerId: effectiveUserId,
-          expired: true,
-        }).then(() => {
-          void onUpdated?.();
-        }).catch((err) => setActionError(err instanceof Error ? err.message : 'Could not sync the expired Snap Once state. Refresh the feed to retry.'));
-      }
       return;
     }
-    if (!snapOpened) return;
 
     clearInterval(snapTimerRef.current);
     snapTimerRef.current = setInterval(() => {
       setSnapSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(snapTimerRef.current);
-          setLocalExpiredFlag(true);
-          if (moment?.id) {
-            void markSnapOnceMomentState({
-              momentId: moment.id,
-              coupleId: effectiveCoupleId,
-              viewerId: effectiveUserId,
-              expired: true,
-            }).then(() => {
-              void onUpdated?.();
-            }).catch((err) => setActionError(err instanceof Error ? err.message : 'Could not sync the expired Snap Once state. Refresh the feed to retry.'));
-          }
           return 0;
         }
         return prev - 1;
@@ -370,12 +361,51 @@ export function DualMomentCard({
     return () => {
       clearInterval(snapTimerRef.current);
     };
+  }, [localSnapOnce, ownerFlag, snapExpired, snapOpened]);
+
+  useEffect(() => {
+    if (!localSnapOnce || ownerFlag) return;
+    const timerExpired = snapOpened && snapSecondsLeft <= 0;
+    const needsSyncExpiry =
+      (timerExpired || propSnapExpired) &&
+      moment?.id &&
+      !moment.viewed_by_user_ids?.includes(effectiveUserId);
+
+    if (timerExpired && !localExpiredFlag) {
+      setLocalExpiredFlag(true);
+    }
+
+    if (needsSyncExpiry && !snapExpiryDispatchedRef.current && moment?.id) {
+      snapExpiryDispatchedRef.current = true;
+      void markSnapOnceMomentState({
+        momentId: moment.id,
+        coupleId: effectiveCoupleId,
+        viewerId: effectiveUserId,
+        expired: true,
+      })
+        .then(() => {
+          if (isMountedRef.current) {
+            void onUpdated?.();
+          }
+        })
+        .catch((err) => {
+          snapExpiryDispatchedRef.current = false;
+          if (isMountedRef.current) {
+            setActionError(
+              err instanceof Error
+                ? err.message
+                : 'Could not sync the expired Snap Once state. Refresh the feed to retry.'
+            );
+          }
+        });
+    }
   }, [
     localSnapOnce,
     ownerFlag,
-    snapExpired,
-    propSnapExpired,
     snapOpened,
+    snapSecondsLeft,
+    propSnapExpired,
+    localExpiredFlag,
     moment?.id,
     moment?.viewed_by_user_ids,
     effectiveCoupleId,
@@ -525,23 +555,61 @@ export function DualMomentCard({
     setHubOpen(false);
   };
 
+  const closeHubSheetRef = useRef(closeHubSheet);
+  closeHubSheetRef.current = closeHubSheet;
+
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (!radialOpen && !hubOpen && !savePreviewModalOpen) return;
+    if (!radialOpen || hubOpen || savePreviewModalOpen || storyModalOpen || pendingDeleteComment || discardEdits) {
+      return;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (radialOpen) {
-          setRadialOpen(false);
-        } else if (savePreviewModalOpen && !savingPhoto) {
-          setSavePreviewModalOpen(false);
-        } else if (hubOpen && !storyModalOpen && !pendingDeleteComment && !discardEdits) {
-          closeHubSheet();
-        }
+        setRadialOpen(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [radialOpen, hubOpen, savePreviewModalOpen, storyModalOpen, pendingDeleteComment, discardEdits]);
+
+  const hubModal = useAccessibleModal({
+    visible: hubOpen,
+    onClose: () => closeHubSheetRef.current(),
+    disabled:
+      savingCrud ||
+      deletingPost ||
+      savePreviewModalOpen ||
+      storyModalOpen ||
+      Boolean(pendingDeleteComment || discardEdits),
+    title: `${authorName}'s Moment details`,
+  });
+
+  const saveModal = useAccessibleModal({
+    visible: savePreviewModalOpen,
+    onClose: () => {
+      if (!savingPhoto) setSavePreviewModalOpen(false);
+    },
+    disabled: savingPhoto,
+    title: 'Save Moment Preview',
+  });
+
+  const storyModal = useAccessibleModal({
+    visible: storyModalOpen,
+    onClose: () => {
+      if (!storySharing) setStoryModalOpen(false);
+    },
+    disabled: storySharing,
+    title: '9:16 Story Studio',
+  });
+
+  const confirmModal = useAccessibleModal({
+    visible: Boolean(pendingDeleteComment || discardEdits),
+    onClose: () => {
+      setPendingDeleteComment(null);
+      setDiscardEdits(false);
+    },
+    title: discardEdits ? 'Discard Moment edits?' : 'Delete this comment?',
   });
 
   const handleOpenEditor = () => {
@@ -558,8 +626,9 @@ export function DualMomentCard({
     setConfirmingDelete(false);
     setCrudError(null);
     setEditing(true);
-    void fetchFriendsCircle({ userId: effectiveUserId, partner: sessionPartner }).then(
-      (friends) => {
+    void fetchFriendsCircle({ userId: effectiveUserId, partner: sessionPartner })
+      .then((friends) => {
+        if (!isMountedRef.current) return;
         setCircleTagCandidates(
           friends.map((f) => ({
             userId: f.friend_id,
@@ -567,8 +636,16 @@ export function DualMomentCard({
             username: f.friend_profile.username ?? f.friend_id,
           }))
         );
-      }
-    ).catch((err) => setCrudError(err instanceof Error ? err.message : 'Could not load people to tag. Reopen the editor to retry.'));
+      })
+      .catch((err) => {
+        if (isMountedRef.current) {
+          setCrudError(
+            err instanceof Error
+              ? err.message
+              : 'Could not load people to tag. Reopen the editor to retry.'
+          );
+        }
+      });
   };
 
   const availableTagCandidates: TaggedPerson[] = [
@@ -842,7 +919,7 @@ export function DualMomentCard({
   };
 
   const storyDataUri =
-    (localSnapOnce && !ownerFlag) || mediaUnavailable
+    !storyModalOpen || (localSnapOnce && !ownerFlag) || mediaUnavailable
       ? ''
       : buildMomentCompositeSvgDataUri({
           backUri: mainSource,
@@ -924,13 +1001,14 @@ export function DualMomentCard({
           backgroundColor: colors.surface,
           borderColor:
             localFilterPreset !== 'normal' ? filterMeta.borderAccent : colors.border,
+          borderTopColor: colors.topHighlight,
           borderRadius: radii.card,
         },
       ]}>
       <View style={styles.postHeader}>
         <SectionHeader
           title={authorName}
-          subtitle={`${timeFormatted}${isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}${moment?.daily_index ? ` · Moment ${moment.daily_index} of 5` : ''}`}
+          subtitle={`${timeFormatted}${isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}${moment?.daily_index ? ` · Moment #${moment.daily_index}` : ''}`}
         />
       </View>
       {/* Main 3:4 Photo Container */}
@@ -1021,7 +1099,11 @@ export function DualMomentCard({
               <Image
                 key={`${mainSource}-${mediaRetry}`}
                 accessibilityLabel={`${authorName}’s ${swapped ? 'front' : 'back'} camera photo`}
-                onError={() => setFailedImageUris((uris) => [...uris, mainSource])}
+                onError={() =>
+                  setFailedImageUris((uris) =>
+                    uris.includes(mainSource) ? uris : [...uris, mainSource]
+                  )
+                }
                 source={{ uri: mainSource }}
                 contentFit="cover"
                 style={[
@@ -1062,7 +1144,11 @@ export function DualMomentCard({
                 ]}>
                 <Image
                   accessibilityLabel={`${authorName}’s other camera photo. Swap views.`}
-                  onError={() => setFailedImageUris((uris) => [...uris, pipSource])}
+                  onError={() =>
+                    setFailedImageUris((uris) =>
+                      uris.includes(pipSource) ? uris : [...uris, pipSource]
+                    )
+                  }
                   source={{ uri: pipSource }}
                   contentFit="cover"
                   style={[
@@ -1529,7 +1615,8 @@ export function DualMomentCard({
             style={StyleSheet.absoluteFill}
           />
           <View
-            accessibilityViewIsModal
+            ref={hubModal.dialogRef as never}
+            {...hubModal.dialogA11yProps}
             style={[
               styles.hubSheetContainer,
               {
@@ -1758,6 +1845,42 @@ export function DualMomentCard({
                         </Text>
                       </Pressable>
                     </>
+                  ) : null}
+
+                  {!ownerFlag && moment?.user_id ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Reply to ${authorName}'s Moment in Chat`}
+                      onPress={() => {
+                        const preview =
+                          (localCaption && localCaption.trim()) ||
+                          (localLocationLabel
+                            ? `Location · ${localLocationLabel}`
+                            : `${authorName}'s Moment`);
+                        setHubOpen(false);
+                        router.navigate({
+                          pathname: '/(tabs)/messages',
+                          params: {
+                            peerId: moment.user_id,
+                            peerName: authorName,
+                            replyMomentId: moment.id,
+                            replyMomentPreview: preview,
+                          },
+                        });
+                      }}
+                      style={[
+                        styles.sheetActionBtn,
+                        {
+                          backgroundColor: colors.accentSoft,
+                          borderColor: colors.accent,
+                          borderRadius: radii.input,
+                          minHeight: 44,
+                        },
+                      ]}>
+                      <Text style={[styles.smallActionText, { color: colors.ink }]}>
+                        Reply in Chat
+                      </Text>
+                    </Pressable>
                   ) : null}
                 </View>
               ) : null}
@@ -2319,17 +2442,23 @@ export function DualMomentCard({
         transparent
         onRequestClose={() => { if (!savingPhoto) setSavePreviewModalOpen(false); }}>
         <View style={styles.storyModalBackdrop}>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.storyModalContent}
+          <View
+            ref={saveModal.dialogRef as never}
+            {...saveModal.dialogA11yProps}
             style={[
               styles.storyModalSheet,
               {
                 backgroundColor: colors.sheetSurface,
                 borderColor: colors.border,
                 borderRadius: radii.group,
+                borderWidth: 1,
+                overflow: 'hidden',
               },
             ]}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.storyModalContent}
+            style={{ maxHeight: '100%' }}>
             <View style={styles.metaTopRow}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.storyModalTitle, { color: colors.ink }]}>
@@ -2481,6 +2610,7 @@ export function DualMomentCard({
               }}
             />
           </ScrollView>
+          </View>
         </View>
       </Modal>
       {/* Full-Screen 9:16 Story Share Modal (Item #19) */}
@@ -2490,15 +2620,21 @@ export function DualMomentCard({
         transparent
         onRequestClose={() => { if (!storySharing) setStoryModalOpen(false); }}>
         <View style={styles.storyModalBackdrop}>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.storyModalContent}
+          <View
+            ref={storyModal.dialogRef as never}
+            {...storyModal.dialogA11yProps}
             style={[
               styles.storyModalSheet,
               {
                 backgroundColor: colors.sheetSurface,
                 borderColor: colors.border,
                 borderRadius: radii.group,
+                borderWidth: 1,
+                overflow: 'hidden',
               },
             ]}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.storyModalContent}
+            style={{ maxHeight: '100%' }}>
             <View style={styles.metaTopRow}>
               <View>
                 <Text style={[styles.storyModalTitle, { color: colors.ink }]}>
@@ -2592,11 +2728,12 @@ export function DualMomentCard({
               onPress={() => void handleShare9x16Story()}
             />
           </ScrollView>
+          </View>
         </View>
       </Modal>
       <Modal visible={Boolean(pendingDeleteComment || discardEdits)} transparent animationType={motionEnabled ? 'fade' : 'none'} onRequestClose={() => { setPendingDeleteComment(null); setDiscardEdits(false); }}>
         <View style={styles.storyModalBackdrop}>
-          <View accessibilityViewIsModal style={[styles.confirmDialog, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
+          <View ref={confirmModal.dialogRef as never} {...confirmModal.dialogA11yProps} style={[styles.confirmDialog, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
             <SectionHeader title={discardEdits ? 'Discard Moment edits?' : 'Delete this comment?'} subtitle={discardEdits ? 'Your unsaved changes will be lost.' : 'This cannot be undone.'} />
             <KeepItButton label={discardEdits ? 'Discard edits' : 'Delete comment'} variant="danger" onPress={() => { if (discardEdits) { setDiscardEdits(false); setEditing(false); } else if (pendingDeleteComment) { const id = pendingDeleteComment; setPendingDeleteComment(null); void handleDeleteComment(id); } }} />
             <KeepItButton label={discardEdits ? 'Keep editing' : 'Keep comment'} variant="secondary" onPress={() => { setPendingDeleteComment(null); setDiscardEdits(false); }} />
@@ -2629,46 +2766,37 @@ export function LockedMomentCard({
   });
 
   return (
-    <View
+    <BentoTile
+      variant="heroBlue"
+      grain
+      radius={radii.card}
       style={[
         styles.lockedFrame,
         {
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-          borderRadius: radii.photo,
           padding: spacing.xl,
         },
       ]}>
-      <View style={styles.lockedTopMotif}>
-        <DualFrameMark size={52} />
-      </View>
-
-      <View style={styles.lockedCenter}>
-        <View
-          style={[
-            styles.statusPill,
-            {
-              backgroundColor: colors.surfaceElevated,
-              borderColor: colors.border,
-              borderRadius: radii.pill,
-            },
-          ]}>
-          <Text style={[styles.statusPillText, { color: colors.ink }]}>
-            {partnerName} posted at {timeFormatted}
+      <View style={styles.lockedTopRow}>
+        <BentoToggleGlyph size={24} tone="blueTile" />
+        <View style={[styles.lockedGlassPill, { borderColor: 'rgba(255,255,255,0.22)' }]}>
+          <Text style={styles.statusPillText}>
+            {partnerName} · {timeFormatted}
             {isPromptCheckIn ? ` · ${formatLateDuration(lateBySeconds)}` : ''}
           </Text>
         </View>
+      </View>
 
-        <Text style={[styles.lockedTitle, { color: colors.ink }]}>
+      <View style={styles.lockedCenter}>
+        <Text style={[styles.lockedTitle, { color: '#FFFFFF' }]}>
           {partnerName}’s Moment is waiting
         </Text>
-        <Text style={[styles.lockedBody, { color: colors.inkMuted }]}>
+        <Text style={[styles.lockedBody, { color: 'rgba(255,255,255,0.78)' }]}>
           {`Post your Moment to see ${partnerName}’s.`}
         </Text>
 
         <KeepItButton label="Post Yours to Unlock" onPress={onCaptureMine} />
       </View>
-    </View>
+    </BentoTile>
   );
 }
 
@@ -2678,7 +2806,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 360,
     alignSelf: 'center',
-    borderWidth: 1.5,
+    borderWidth: 1,
     overflow: 'hidden',
     borderCurve: 'continuous',
   },
@@ -3244,7 +3372,7 @@ const styles = StyleSheet.create({
     aspectRatio: 9 / 16,
     borderWidth: 1,
     overflow: 'hidden',
-    backgroundColor: '#09090B',
+    backgroundColor: '#0D0D0D',
   },
   savePreviewCanvasFrame: {
     width: '86%',
@@ -3260,11 +3388,22 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     minHeight: 280,
     justifyContent: 'space-between',
+    gap: 20,
     position: 'relative',
-    borderCurve: 'continuous',
   },
-  lockedTopMotif: {
-    alignSelf: 'flex-start',
+  lockedTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  lockedGlassPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0,0,0,0.42)',
   },
   lockedCenter: {
     gap: 14,
@@ -3273,8 +3412,8 @@ const styles = StyleSheet.create({
   },
   lockedTitle: {
     fontSize: 22,
-    fontWeight: '700',
-    letterSpacing: -0.4,
+    fontWeight: '600',
+    letterSpacing: -0.6,
     textAlign: 'center',
   },
   lockedBody: {

@@ -13,6 +13,7 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -31,11 +32,13 @@ import {
 } from '@/api/pairing';
 import { buildInviteChannelTopic, createFreshRealtimeChannel } from '@/api/realtimeSync';
 import { isSupabaseConfigured, supabase } from '@/api/supabase';
+import { BentoTile, BentoToggleGlyph } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { AppTextInput, PageHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import { CoupleRecord } from '@/types/database';
+import { announcePolite } from '@/utils/a11y';
 
 type PairOperation = 'invite' | 'refresh' | 'join' | 'copy' | 'share' | 'paste' | 'signout';
 
@@ -61,6 +64,7 @@ export default function PairScreen() {
   const [loadingInvite, setLoadingInvite] = useState(true);
   const [operation, setOperation] = useState<PairOperation | null>(null);
   const operationRef = useRef<PairOperation | null>(null);
+  const partnerInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const mounted = useRef(true);
   const completingPairing = useRef(false);
   const [savingPairing, setSavingPairing] = useState(false);
@@ -138,6 +142,7 @@ export default function PairScreen() {
 
   useEffect(() => {
     if (!copiedNotice) return;
+    announcePolite(copiedNotice);
     const timer = setTimeout(() => setCopiedNotice(null), 2500);
     return () => clearTimeout(timer);
   }, [copiedNotice]);
@@ -299,7 +304,12 @@ export default function PairScreen() {
       router.navigate('/(tabs)');
     } catch (err) {
       if (Platform.OS !== 'web') void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      if (mounted.current) setJoinError(err instanceof Error ? err.message : 'Could not pair with that code. Please try again.');
+      if (mounted.current) {
+        const msg = err instanceof Error ? err.message : 'Could not pair with that code. Please try again.';
+        setJoinError(msg);
+        announcePolite(msg);
+        partnerInputRef.current?.focus();
+      }
     } finally {
       finishOperation();
     }
@@ -363,22 +373,44 @@ export default function PairScreen() {
           {savingPairing ? <InlineNotice message="Saving your pairing…" tone="info" /> : null}
           {screenError ? <InlineNotice message={screenError} tone="error" /> : null}
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
+          <BentoTile variant="bottomGlow" grain radius={radii.card} style={styles.card}>
             <View style={styles.codeHeaderRow}>
-              <Text style={[styles.actionText, { color: colors.ink }]}>Your invite code</Text>
-              {remainingLabel ? <Text accessibilityLiveRegion="polite" style={[styles.secondary, { color: colors.inkMuted }]}>{remainingLabel}</Text> : null}
+              <View style={styles.codeTitleCluster}>
+                <BentoToggleGlyph size={22} tone="blueTile" />
+                <Text style={[styles.actionText, { color: '#FFFFFF' }]}>Your invite code</Text>
+              </View>
+              {remainingLabel ? (
+                <View style={[styles.glassPill, { borderColor: 'rgba(255,255,255,0.22)' }]}>
+                  <Text accessibilityLiveRegion="polite" style={[styles.secondary, { color: '#FFFFFF' }]}>
+                    {remainingLabel}
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
-            <View style={[styles.codeBox, { backgroundColor: colors.canvas, borderColor: colors.controlBorder, borderRadius: radii.input }]}>
+            <View
+              style={[
+                styles.codeBox,
+                {
+                  backgroundColor: 'rgba(0,0,0,0.48)',
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  borderRadius: radii.input,
+                },
+              ]}>
               {loadingInvite || operation === 'refresh' ? (
                 <View accessibilityLiveRegion="polite" style={styles.loadingRow}>
-                  <ActivityIndicator size="small" color={colors.ink} />
-                  <Text style={[styles.body, { color: colors.inkMuted }]}>Creating code…</Text>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={[styles.body, { color: 'rgba(255,255,255,0.78)' }]}>Creating code…</Text>
                 </View>
               ) : inviteRecord ? (
-                <Text selectable accessibilityLabel={`Your invite code: ${inviteRecord.invite_code.split('').join(' ')}`} style={[styles.codeDisplay, { color: colors.ink }]}>{formatInviteCodeDisplay(inviteRecord.invite_code)}</Text>
+                <Text
+                  selectable
+                  accessibilityLabel={`Your invite code: ${inviteRecord.invite_code.split('').join(' ')}`}
+                  style={[styles.codeDisplay, { color: '#FFFFFF' }]}>
+                  {formatInviteCodeDisplay(inviteRecord.invite_code)}
+                </Text>
               ) : (
-                <Text style={[styles.body, { color: colors.inkMuted }]}>Code unavailable</Text>
+                <Text style={[styles.body, { color: 'rgba(255,255,255,0.78)' }]}>Code unavailable</Text>
               )}
             </View>
 
@@ -395,12 +427,16 @@ export default function PairScreen() {
                 <KeepItButton label="New Code" accessibilityLabel="Refresh Code" variant="ghost" loading={operation === 'refresh'} loadingLabel="Refreshing…" disabled={busy} onPress={() => void loadInvite(true)} />
               </View>
             )}
-          </View>
+          </BentoTile>
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
-            <Text style={[styles.actionText, { color: colors.ink }]}>Enter partner’s code</Text>
+          <BentoTile variant="dark" pattern="dots" radius={radii.card} style={styles.card}>
+            <Text nativeID="partner-code-label" style={[styles.actionText, { color: colors.ink }]}>Enter partner’s code</Text>
             <View style={styles.joinRow}>
               <AppTextInput
+                ref={partnerInputRef}
+                labelId="partner-code-label"
+                invalid={Boolean(joinError)}
+                errorId={joinError ? 'pair-join-error' : undefined}
                 accessibilityLabel="Partner 6-character invite code"
                 autoCapitalize="characters"
                 autoCorrect={false}
@@ -419,9 +455,13 @@ export default function PairScreen() {
               />
               <KeepItButton label="Paste" variant="secondary" loading={operation === 'paste'} loadingLabel="…" disabled={busy} onPress={() => void handlePaste()} />
             </View>
-            {joinError ? <InlineNotice message={joinError} tone="error" /> : null}
+            {joinError ? (
+              <View nativeID="pair-join-error">
+                <InlineNotice message={joinError} tone="error" />
+              </View>
+            ) : null}
             <KeepItButton label="Connect Partner" loading={operation === 'join'} loadingLabel="Connecting…" disabled={busy || effectivePartnerCode.length !== 6} onPress={() => void handleJoinPartner()} />
-          </View>
+          </BentoTile>
 
           <View style={styles.soloBlock}>
             <KeepItButton label="Continue Solo" variant="secondary" disabled={navigationBusy} onPress={leavePairing} />
@@ -440,8 +480,16 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 15, lineHeight: 22, fontWeight: '600' },
   body: { fontSize: 15, lineHeight: 22 },
   secondary: { fontSize: 13, lineHeight: 20, fontVariant: ['tabular-nums'] },
-  card: { padding: 16, gap: 12, borderWidth: 1, borderCurve: 'continuous' },
+  card: { padding: 18, gap: 14 },
   codeHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  codeTitleCluster: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  glassPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: 'rgba(0,0,0,0.34)',
+  },
   codeBox: { minHeight: 68, padding: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   codeDisplay: { fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: 2.5, fontVariant: ['tabular-nums'], textAlign: 'center' },
   loadingRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },

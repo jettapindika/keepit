@@ -12,7 +12,7 @@ import {
 } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Platform, Text, View } from 'react-native';
 
 import { fetchTodayMomentBundle } from '@/api/moments';
@@ -57,9 +57,21 @@ class AppErrorBoundary extends React.Component<
     return { error };
   }
 
+  override componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[KeepIt] Uncaught render error:', error, info.componentStack);
+  }
+
   override render() {
     if (this.state.error) {
-      return <AppErrorFallback error={this.state.error} onRetry={() => this.setState({ error: null })} />;
+      return (
+        <AppErrorFallback
+          error={this.state.error}
+          onRetry={() => {
+            queryClient.clear();
+            this.setState({ error: null });
+          }}
+        />
+      );
     }
     return this.props.children;
   }
@@ -69,8 +81,18 @@ function AppErrorFallback({ error, onRetry }: { error: Error; onRetry: () => voi
   const { colors, radii } = useKeepItTheme();
   return (
     <View style={{ flex: 1, backgroundColor: colors.canvas, padding: 24, justifyContent: 'center', alignItems: 'center' }}>
-      <View style={{ width: '100%', maxWidth: 480, backgroundColor: colors.surface, borderRadius: radii.card, padding: 24, gap: 16 }}>
-        <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 24, lineHeight: 30, fontWeight: '600' }}>
+      <View
+        style={{
+          width: '100%',
+          maxWidth: 480,
+          backgroundColor: colors.surface,
+          borderRadius: radii.card,
+          borderWidth: 1,
+          borderColor: colors.border,
+          padding: 24,
+          gap: 16,
+        }}>
+        <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 24, lineHeight: 28, fontWeight: '600', letterSpacing: -0.6 }}>
           This screen couldn’t open
         </Text>
         <Text style={{ color: colors.inkMuted, fontSize: 15, lineHeight: 22 }}>{error.message}</Text>
@@ -103,9 +125,22 @@ function NavigationGuard() {
 
   const partner = useSessionStore((s) => s.partner);
   const widgetLayout = useSessionStore((s) => s.widgetLayout);
+  const prevUserIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const nextUserId = user?.id ?? null;
+    if (prevUserIdRef.current && prevUserIdRef.current !== nextUserId) {
+      queryClient.clear();
+    }
+    prevUserIdRef.current = nextUserId;
+  }, [user?.id]);
+
+  // Startup must not compete with hydration for the radio: these only fire once the
+  // cached session has painted.
+  const startupReady = hydrated && Boolean(user?.id);
   const globalBundleQuery = useQuery({
     queryKey: ['today-moment', couple?.id, user?.id],
-    enabled: Boolean(couple?.id && user?.id),
+    enabled: startupReady && Boolean(couple?.id),
     queryFn: () =>
       fetchTodayMomentBundle({
         coupleId: couple!.id,
@@ -114,7 +149,7 @@ function NavigationGuard() {
   });
   const globalStatusQuery = useQuery({
     queryKey: ['couple-statuses', couple?.id, user?.id],
-    enabled: Boolean(couple?.id && user?.id),
+    enabled: startupReady && Boolean(couple?.id),
     queryFn: () =>
       fetchCoupleStatuses({
         coupleId: couple!.id,
@@ -184,6 +219,27 @@ function NavigationGuard() {
     setPendingInviteCode,
   ]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const segmentList = segments as readonly string[];
+    const route = segmentList[segmentList.length - 1] ?? segmentList[0];
+    const titleByRoute: Record<string, string> = {
+      welcome: 'KeepIt · Welcome',
+      pair: 'KeepIt · Pair Partner',
+      'auth-callback': 'KeepIt · Verify Account',
+      '(tabs)': 'KeepIt · Home',
+      index: 'KeepIt · Home',
+      map: 'KeepIt · Map',
+      memories: 'KeepIt · Memories',
+      messages: 'KeepIt · Chat',
+      profile: 'KeepIt · Profile',
+      settings: 'KeepIt · Settings',
+      camera: 'KeepIt · Capture Moment',
+      'status-sheet': 'KeepIt · Share Status',
+    };
+    document.title = (route && titleByRoute[route]) || 'KeepIt';
+  }, [segments]);
+
   return null;
 }
 
@@ -194,6 +250,91 @@ export default function RootLayout() {
   const hydrated = useSessionStore((s) => s.hydrated);
   const { colors, isDark } = useKeepItTheme();
   const { reduced } = useAppMotion();
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.documentElement.lang = 'en';
+    if (!document.title || document.title === 'Expo') {
+      document.title = 'KeepIt';
+    }
+    if (!document.getElementById('keepit-bento-fonts')) {
+      const link = document.createElement('link');
+      link.id = 'keepit-bento-fonts';
+      link.rel = 'stylesheet';
+      link.href =
+        'https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap';
+      document.head.appendChild(link);
+    }
+    let styleEl = document.getElementById('keepit-bento-base') as HTMLStyleElement | null;
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'keepit-bento-base';
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = `
+      html, body, #root {
+        background-color: ${colors.canvas};
+        color: ${colors.ink};
+        font-family: "Inter Tight", "Inter", "Geist", system-ui, -apple-system, sans-serif;
+        overflow-x: hidden;
+      }
+      button:not(:disabled),
+      a[href],
+      summary,
+      select:not(:disabled),
+      [role="button"]:not([aria-disabled="true"]),
+      [role="tab"]:not([aria-disabled="true"]),
+      [role="radio"]:not([aria-disabled="true"]),
+      [role="switch"]:not([aria-disabled="true"]),
+      [role="checkbox"]:not([aria-disabled="true"]) {
+        cursor: pointer;
+      }
+      button:disabled,
+      select:disabled,
+      [aria-disabled="true"] {
+        cursor: not-allowed;
+      }
+      :focus-visible {
+        outline: 2px solid ${colors.focusRing};
+        outline-offset: 2px;
+      }
+      .keepit-skip-link {
+        position: fixed;
+        top: -120px;
+        left: 12px;
+        z-index: 9999;
+        background-color: #2F55FF;
+        color: #FFFFFF;
+        padding: 12px 18px;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 14px;
+        text-decoration: none;
+        border: 1px solid rgba(255,255,255,0.25);
+      }
+      .keepit-skip-link:focus {
+        top: 12px;
+      }
+      .keepit-sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    `;
+  }, [colors.canvas, colors.ink, colors.focusRing]);
 
   useEffect(() => {
     const handleIncomingUrl = async (url: string | null) => {
@@ -278,31 +419,66 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider value={navTheme}>
           <StatusBar style={isDark ? 'light' : 'dark'} />
+          {Platform.OS === 'web'
+            ? React.createElement(
+                'a',
+                {
+                  href: '#keepit-main-content',
+                  className: 'keepit-skip-link',
+                  onClick: (event: { preventDefault?: () => void }) => {
+                    event.preventDefault?.();
+                    const target =
+                      typeof document !== 'undefined'
+                        ? document.getElementById('keepit-main-content')
+                        : null;
+                    if (target && typeof target.focus === 'function') {
+                      target.focus();
+                    }
+                  },
+                },
+                'Skip to main content'
+              )
+            : null}
+          {Platform.OS === 'web'
+            ? React.createElement('div', {
+                id: 'keepit-a11y-announcer',
+                'aria-live': 'polite',
+                'aria-atomic': 'true',
+                className: 'keepit-sr-only',
+              })
+            : null}
           <NavigationGuard />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: colors.canvas },
-              animation: reduced ? 'none' : 'default',
-            }}>
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="auth-callback" />
-            <Stack.Screen
-              name="camera"
-              options={{
-                presentation: 'fullScreenModal',
-                animation: reduced ? 'none' : 'slide_from_bottom',
-              }}
-            />
-            <Stack.Screen
-              name="status-sheet"
-              options={{
-                presentation: 'modal',
-                animation: reduced ? 'none' : 'slide_from_bottom',
-              }}
-            />
-          </Stack>
+          <View
+            nativeID="keepit-main-content"
+            style={{ flex: 1 }}
+            {...(Platform.OS === 'web'
+              ? ({ role: 'main', tabIndex: -1 } as Record<string, unknown>)
+              : {})}>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.canvas },
+                animation: reduced ? 'none' : 'default',
+              }}>
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="auth-callback" />
+              <Stack.Screen
+                name="camera"
+                options={{
+                  presentation: 'fullScreenModal',
+                  animation: reduced ? 'none' : 'slide_from_bottom',
+                }}
+              />
+              <Stack.Screen
+                name="status-sheet"
+                options={{
+                  presentation: 'modal',
+                  animation: reduced ? 'none' : 'slide_from_bottom',
+                }}
+              />
+            </Stack>
+          </View>
         </ThemeProvider>
       </QueryClientProvider>
     </AppErrorBoundary>

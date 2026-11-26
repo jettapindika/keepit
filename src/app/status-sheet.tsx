@@ -7,6 +7,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { clearMyStatus, DURATION_OPTIONS, fetchCoupleStatuses, formatStatusRemaining, STATUS_PRESETS, upsertMyStatus } from '@/api/statuses';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton, SkeletonBlock } from '@/components/ui/Primitives';
 import { AppPressable, AppTextInput, ConfirmModal, PageHeader, SectionHeader } from '@/components/ui/ScreenKit';
 import { useSessionStore } from '@/store/sessionStore';
@@ -102,11 +103,11 @@ export default function StatusSheetScreen() {
           </View> : null}
           {!user || !couple ? <InlineNotice tone="error" message="Sign in to load and edit your status." /> : null}
           {ready ? <>
-            {existing ? <View style={[styles.current, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
+            {existing ? <BentoTile variant="spotlight" radius={radii.card} style={styles.current}>
               <Text style={[styles.secondary, { color: colors.inkMuted }]}>Current status</Text>
               <Text style={[styles.body, { color: colors.ink, fontWeight: '600' }]}>{existing.text}</Text>
               <Text style={[styles.secondary, { color: colors.inkMuted }]}>{formatStatusRemaining(existing.expires_at)}</Text>
-            </View> : null}
+            </BentoTile> : null}
             <View style={styles.section}>
               <SectionHeader title="Quick preset" />
               <AppPressable
@@ -171,8 +172,8 @@ export default function StatusSheetScreen() {
               <View accessibilityRole="radiogroup" accessibilityLabel="Status expiry" style={styles.durationRow}>
                 {DURATION_OPTIONS.map((option) => {
                   const checked = value.duration === option.value;
-                  return <AppPressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked, disabled: Boolean(busy) }} disabled={Boolean(busy)} onPress={() => update({ duration: option.value })} style={[styles.duration, { backgroundColor: checked ? colors.ink : colors.surface, borderColor: checked ? colors.ink : colors.controlBorder, borderRadius: radii.input }]}>
-                    <Text style={[styles.action, { color: checked ? colors.canvas : colors.ink }]}>{option.label}</Text>
+                  return <AppPressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked, disabled: Boolean(busy) }} disabled={Boolean(busy)} onPress={() => update({ duration: option.value })} style={[styles.duration, { backgroundColor: checked ? colors.primary : colors.surface, borderColor: checked ? colors.primary : colors.controlBorder, borderRadius: radii.input }]}>
+                    <Text style={[styles.action, { color: checked ? colors.onAccent : colors.ink }]}>{option.label}</Text>
                   </AppPressable>;
                 })}
               </View>

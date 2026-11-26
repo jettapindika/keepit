@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { WalletHeroArt, WalletArtSlide } from '@/components/onboarding/WalletHeroArt';
 import { useAppMotion } from '@/hooks/useAppMotion';
 import {
@@ -239,10 +240,14 @@ export function WalletOnboarding({
             ))}
           </Pressable>
 
-          <View
-            testID="onboarding-sheet"
-            style={[styles.sheet, { width: sheetWidth, backgroundColor: colors.surface, borderColor: colors.border }, adaptive ? styles.adaptiveSheet : styles.fixedSheet]}
+          <BentoTile
+            variant="spotlight"
+            pattern="dots"
+            grain
+            radius={layout.sheetRadius}
+            style={[styles.sheet, { width: sheetWidth }, adaptive ? styles.adaptiveSheet : styles.fixedSheet]}
           >
+            <View testID="onboarding-sheet">
             <View style={[styles.copyViewport, !adaptive && styles.copyClipping]}>
               {visibleSlides.map((index) => (
                 <Animated.View
@@ -299,7 +304,8 @@ export function WalletOnboarding({
                 onPress={onSignIn}
               />
             </View>
-          </View>
+            </View>
+          </BentoTile>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -393,8 +399,15 @@ function OnboardingButton({
         style={[
           styles.button,
           primary
-            ? [styles.primaryButton, { backgroundColor: hovered ? colors.primary : colors.accent }]
-            : [styles.secondaryButton, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }],
+            ? [
+                styles.primaryButton,
+                {
+                  backgroundColor: hovered ? colors.blue400 : colors.primary,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  borderWidth: 1,
+                },
+              ]
+            : [styles.secondaryButton, { backgroundColor: colors.surfaceElevated, borderColor: colors.controlBorder }],
           focused && [styles.focusRing, { outlineColor: colors.focusRing }],
         ]}
       >
@@ -431,12 +444,12 @@ const styles = StyleSheet.create({
   copyClipping: { overflow: 'hidden' },
   outgoingCopy: { position: 'absolute', top: 0, left: 0, right: 0 },
   title: {
-    minHeight: 70,
+    minHeight: 74,
     fontFamily: type.sansFamily,
     fontSize: type.titleSize,
     fontWeight: '600',
     lineHeight: type.titleLineHeight,
-    letterSpacing: 0,
+    letterSpacing: -0.8,
     textAlign: 'center',
     includeFontPadding: false,
   },
@@ -451,8 +464,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     includeFontPadding: false,
   },
-  pagination: { height: 24, marginTop: 20, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center' },
-  paginationDotBtn: { minHeight: 24, paddingHorizontal: 4, justifyContent: 'center', alignItems: 'center' },
+  pagination: { minHeight: 44, marginTop: 14, flexDirection: 'row', gap: 4, alignItems: 'center', justifyContent: 'center' },
+  paginationDotBtn: { minWidth: 44, minHeight: 44, paddingHorizontal: 4, justifyContent: 'center', alignItems: 'center' },
   primaryGap: { marginTop: 24 },
   secondaryGap: { marginTop: 12 },
   button: { width: '100%', paddingVertical: 14, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', borderCurve: 'continuous' },

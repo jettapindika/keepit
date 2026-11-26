@@ -13,7 +13,9 @@ import {
   View,
 } from 'react-native';
 
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { KeepItButton } from '@/components/ui/Primitives';
+import { useAccessibleModal } from '@/hooks/useAccessibleModal';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 
 /** Shared interaction treatment, with caller layout and native events preserved. */
@@ -53,16 +55,32 @@ export const AppPressable = forwardRef<React.ComponentRef<typeof Pressable>, Pre
   );
 });
 
-export const AppTextInput = forwardRef<React.ComponentRef<typeof TextInput>, TextInputProps>(function AppTextInput(
-  { style, onFocus, onBlur, placeholderTextColor, ...props },
+export interface AppTextInputProps extends TextInputProps {
+  labelId?: string;
+  errorId?: string;
+  invalid?: boolean;
+}
+
+export const AppTextInput = forwardRef<React.ComponentRef<typeof TextInput>, AppTextInputProps>(function AppTextInput(
+  { style, onFocus, onBlur, placeholderTextColor, labelId, errorId, invalid = false, accessibilityLabelledBy, ...props },
   ref,
 ) {
   const { colors, radii, type } = useKeepItTheme();
   const [focused, setFocused] = useState(false);
+  const webProps =
+    Platform.OS === 'web'
+      ? ({
+          'aria-invalid': invalid || undefined,
+          'aria-describedby': errorId || undefined,
+          'aria-labelledby': labelId || undefined,
+        } as Record<string, unknown>)
+      : {};
   return (
     <TextInput
       {...props}
+      {...webProps}
       ref={ref}
+      accessibilityLabelledBy={accessibilityLabelledBy ?? labelId}
       placeholderTextColor={placeholderTextColor ?? colors.placeholder}
       selectionColor={colors.primary}
       onFocus={(event) => {
@@ -83,10 +101,10 @@ export const AppTextInput = forwardRef<React.ComponentRef<typeof TextInput>, Tex
           borderRadius: radii.input,
         },
         style,
-        { borderColor: colors.controlBorder },
+        { borderColor: invalid ? colors.danger : colors.controlBorder },
         focused && {
-          borderColor: colors.focusRing,
-          outlineColor: colors.focusRing,
+          borderColor: invalid ? colors.danger : colors.focusRing,
+          outlineColor: invalid ? colors.danger : colors.focusRing,
           outlineWidth: 2,
           outlineStyle: 'solid',
           outlineOffset: 2,
@@ -100,7 +118,7 @@ export function AppSwitch({ style, onFocus, onBlur, value = false, disabled = fa
   const { colors } = useKeepItTheme();
   const [focused, setFocused] = useState(false);
   const thumb = '#FFFFFF';
-  const track = { false: colors.controlBorder, true: colors.primary };
+  const track = { false: colors.surfaceObject, true: colors.primary };
   const browserColors = Platform.OS === 'web'
     ? { activeThumbColor: '#FFFFFF', activeTrackColor: colors.primary }
     : {};
@@ -206,13 +224,13 @@ export function EmptyState({ title, message, actionLabel, onAction }: {
 }) {
   const { colors, radii, type } = useKeepItTheme();
   return (
-    <View style={[styles.empty, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.card }]}>
+    <BentoTile variant="spotlight" pattern="dots" radius={radii.card} style={styles.empty}>
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.ink, fontFamily: type.fontSans }]}>
         {title}
       </Text>
       <Text style={[styles.emptyBody, { color: colors.inkMuted, fontFamily: type.fontSans }]}>{message}</Text>
       {actionLabel && onAction ? <KeepItButton label={actionLabel} onPress={onAction} /> : null}
-    </View>
+    </BentoTile>
   );
 }
 
@@ -240,6 +258,12 @@ export function ConfirmModal({
   onCancel: () => void;
 }) {
   const { colors, radii, type } = useKeepItTheme();
+  const { dialogRef, dialogA11yProps } = useAccessibleModal({
+    visible,
+    onClose: onCancel,
+    disabled: loading,
+    title,
+  });
   return (
     <Modal
       visible={visible}
@@ -257,12 +281,14 @@ export function ConfirmModal({
           style={StyleSheet.absoluteFill}
         />
         <View
-          accessibilityViewIsModal
+          ref={dialogRef}
+          {...dialogA11yProps}
           style={[
             styles.confirmCard,
             {
               backgroundColor: colors.surface,
               borderColor: colors.border,
+              borderTopColor: colors.topHighlight,
               borderRadius: radii.card,
             },
           ]}
@@ -305,18 +331,18 @@ const styles = StyleSheet.create({
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   headingCopy: { flex: 1, minWidth: 160, gap: 6 },
   headerAction: { flexShrink: 1, maxWidth: '100%' },
-  title: { fontSize: 24, lineHeight: 28, fontWeight: '600', letterSpacing: 0 },
+  title: { fontSize: 26, lineHeight: 30, fontWeight: '600', letterSpacing: -0.6 },
   subtitle: { fontSize: 15, lineHeight: 21, letterSpacing: 0 },
-  sectionTitle: { fontSize: 18, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
+  sectionTitle: { fontSize: 18, lineHeight: 22, fontWeight: '600', letterSpacing: -0.35 },
   back: { alignSelf: 'flex-start', justifyContent: 'center', paddingRight: 16 },
   backLabel: { fontSize: 14, lineHeight: 18, fontWeight: '600', letterSpacing: 0 },
-  empty: { paddingTop: 32, paddingHorizontal: 24, paddingBottom: 28, gap: 16, borderWidth: 1, borderCurve: 'continuous' },
+  empty: { paddingTop: 32, paddingHorizontal: 24, paddingBottom: 28, gap: 16 },
   emptyBody: { fontSize: 15, lineHeight: 22 },
   switchTarget: { minWidth: 56, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   webSwitch: { width: 48, height: 24 },
   confirmBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(10, 7, 8, 0.68)',
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: APP_LAYOUT.pageInset,

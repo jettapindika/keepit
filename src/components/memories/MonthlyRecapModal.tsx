@@ -5,10 +5,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { isMomentPromptCheckIn } from '@/api/moments';
 import { TogetherCollageCard } from '@/components/memories/TogetherCollageCard';
+import {
+  BentoHeroFolderStat,
+  BentoSparklineCard,
+  BentoTile,
+} from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton } from '@/components/ui/Primitives';
 import { AppPressable, EmptyState, SectionHeader } from '@/components/ui/ScreenKit';
+import { useAccessibleModal } from '@/hooks/useAccessibleModal';
 import { APP_LAYOUT, useKeepItTheme } from '@/theme/tokens';
 import { MemoryDayRecord, StreakRecord } from '@/types/database';
+import { announcePolite } from '@/utils/a11y';
 
 export interface MonthlyRecapModalProps {
   visible: boolean;
@@ -47,24 +54,58 @@ function RecapDeck({ onClose, monthLabel, days, streak, myName, partnerName, loa
       run = previous !== null && epoch - previous === 1 ? run + 1 : 1;
       monthBest = Math.max(monthBest, run); previous = epoch;
     }
-    return { highlights: highlights.reverse(), total, onTimePct: checkIns ? Math.round((onTime / checkIns) * 100) : null, monthBest, goldenDays };
+    const weeklyBuckets = [0, 0, 0, 0, 0];
+    for (const day of days) {
+      const dayOfMonth = Number.parseInt(day.prompt_date.slice(8, 10), 10);
+      const weekIdx = Number.isFinite(dayOfMonth)
+        ? Math.min(4, Math.max(0, Math.floor((dayOfMonth - 1) / 7)))
+        : 0;
+      if (day.mine) weeklyBuckets[weekIdx] += 1;
+      if (day.partner) weeklyBuckets[weekIdx] += 1;
+    }
+    return {
+      highlights: highlights.reverse(),
+      total,
+      onTimePct: checkIns ? Math.round((onTime / checkIns) * 100) : null,
+      monthBest,
+      goldenDays,
+      weeklyBuckets,
+    };
   }, [days]);
   const totalSlides = 1 + metrics.highlights.length;
   const step = Math.min(stepIndex, totalSlides - 1);
   const active = step > 0 ? metrics.highlights[step - 1] : null;
   const changeSlide = (next: number) => {
     if (Platform.OS !== 'web') void Haptics.selectionAsync();
-    setStepIndex(Math.max(0, Math.min(totalSlides - 1, next)));
+    const clamped = Math.max(0, Math.min(totalSlides - 1, next));
+    setStepIndex(clamped);
+    announcePolite(`Slide ${clamped + 1} of ${totalSlides}.`);
   };
+  const recapModal = useAccessibleModal({
+    visible: true,
+    onClose,
+    title: `Monthly recap for ${monthLabel}`,
+  });
+
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); } };
+    const onKey = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement | null)?.tagName?.toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        setStepIndex((cur) => Math.min(totalSlides - 1, cur + 1));
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setStepIndex((cur) => Math.max(0, cur - 1));
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [totalSlides]);
 
   return <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
-    <View accessibilityViewIsModal style={styles.shell}>
+    <View ref={recapModal.dialogRef as never} {...recapModal.dialogA11yProps} style={styles.shell}>
       <View style={styles.header}>
         <View style={styles.headingCopy}><Text style={[styles.secondary, { color: colors.inkMuted }]}>Monthly recap · {step + 1} of {totalSlides}</Text><Text accessibilityRole="header" style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>{monthLabel}</Text></View>
         <AppPressable accessibilityRole="button" accessibilityLabel="Close Monthly Recap" onPress={onClose} style={[styles.close, { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radii.input }]}><Text style={[styles.actionText, { color: colors.ink }]}>Close</Text></AppPressable>
@@ -81,17 +122,28 @@ function RecapDeck({ onClose, monthLabel, days, streak, myName, partnerName, loa
       <ScrollView key={step} style={styles.scroll} contentContainerStyle={styles.stage}>
         {loading ? <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={colors.ink} /><Text style={[styles.body, { color: colors.inkMuted }]}>Refreshing archived Moments…</Text></View> : null}
         {error ? <View style={styles.stack}><InlineNotice tone="error" message={error} />{onRetry ? <KeepItButton label="Retry loading recap" variant="secondary" loading={loading} onPress={onRetry} /> : null}</View> : null}
-        {!days.length ? (!loading ? <EmptyState title="No Moments in this recap" message="Post a daily Moment to build this month's archive." actionLabel="Back to memories" onAction={onClose} /> : null) : step === 0 ? <View style={[styles.overview, { backgroundColor: colors.surface, borderRadius: radii.card }]}>
-          <SectionHeader title={paired ? `${myName} & ${partnerName}` : `${myName}'s archive`} subtitle={`${days.length} archived ${days.length === 1 ? 'day' : 'days'} in ${monthLabel}.`} />
-          <View style={styles.heroMetric}><Text style={[styles.bigNumber, { color: colors.ink, fontFamily: type.fontSans }]}>{metrics.highlights.length}</Text><Text style={[styles.sectionTitle, { color: colors.ink }]}>Together collages</Text><Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.total} total {metrics.total === 1 ? 'post' : 'posts'} in your monthly archive.</Text></View>
-          <View style={[styles.metricList, { borderTopColor: colors.border }]}>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Best Together streak this month</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.monthBest} {metrics.monthBest === 1 ? 'day' : 'days'}</Text></View>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>All-time best streak</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.longest_count ?? 0} {(streak?.longest_count ?? 0) === 1 ? 'day' : 'days'}</Text></View>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Golden Sync days (both on time)</Text><Text style={[styles.metricValue, { color: colors.success }]}>{Math.max(metrics.goldenDays, streak?.golden_sync_count ?? 0)}</Text></View>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Grace Shields ready</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.grace_shields ?? 0}</Text></View>
-            <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Prompt check-ins on time</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.onTimePct === null ? 'No check-ins' : `${metrics.onTimePct}%`}</Text></View>
-          </View>
-          <Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.highlights.length ? 'Revisit your Together days. Each highlight lets you swap cameras, cycle unlocked Milestone Stamps, and save the original Moments.' : 'Post on the same day together to make a Together collage. Individual Moments remain in your calendar.'}</Text>
+        {!days.length ? (!loading ? <EmptyState title="No Moments in this recap" message="Post a daily Moment to build this month's archive." actionLabel="Back to memories" onAction={onClose} /> : null) : step === 0 ? <View style={styles.summaryBentoStack}>
+          <BentoHeroFolderStat
+            value={String(metrics.highlights.length)}
+            caption={paired ? `${myName} & ${partnerName} · Together collages in ${monthLabel}` : `${metrics.total} Moments in ${monthLabel}`}
+          />
+          <BentoSparklineCard
+            title="Monthly Moment activity"
+            subtitle="Weekly cadence"
+            valueLabel={`${metrics.total} ${metrics.total === 1 ? 'post' : 'posts'}`}
+            points={metrics.weeklyBuckets}
+          />
+          <BentoTile variant="dark" pattern="dots" radius={radii.card} style={styles.overview}>
+            <SectionHeader title={paired ? `${myName} & ${partnerName}` : `${myName}'s archive`} subtitle={`${days.length} archived ${days.length === 1 ? 'day' : 'days'} in ${monthLabel}.`} />
+            <View style={[styles.metricList, { borderTopColor: colors.border }]}>
+              <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Best Together streak this month</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.monthBest} {metrics.monthBest === 1 ? 'day' : 'days'}</Text></View>
+              <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>All-time best streak</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.longest_count ?? 0} {(streak?.longest_count ?? 0) === 1 ? 'day' : 'days'}</Text></View>
+              <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Golden Sync days (both on time)</Text><Text style={[styles.metricValue, { color: colors.blue400 }]}>{Math.max(metrics.goldenDays, streak?.golden_sync_count ?? 0)}</Text></View>
+              <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Grace Shields ready</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{streak?.grace_shields ?? 0}</Text></View>
+              <View style={styles.metricRow}><Text style={[styles.body, { color: colors.inkMuted }]}>Prompt check-ins on time</Text><Text style={[styles.metricValue, { color: colors.ink }]}>{metrics.onTimePct === null ? 'No check-ins' : `${metrics.onTimePct}%`}</Text></View>
+            </View>
+            <Text style={[styles.body, { color: colors.inkMuted }]}>{metrics.highlights.length ? 'Revisit your Together days. Each highlight lets you swap cameras, cycle unlocked Milestone Stamps, and save the original Moments.' : 'Post on the same day together to make a Together collage. Individual Moments remain in your calendar.'}</Text>
+          </BentoTile>
         </View> : active ? <TogetherCollageCard key={active.prompt_id} promptDate={active.prompt_date} myMoment={active.mine} partnerMoment={active.partner} myName={myName} partnerName={partnerName} streakCount={streak?.current_count ?? metrics.monthBest} longestStreakCount={streak?.longest_count ?? metrics.monthBest} /> : null}
       </ScrollView>
       <View style={styles.footer}>
@@ -126,7 +178,8 @@ const styles = StyleSheet.create({
   stage: { paddingTop: 4, paddingBottom: 20, gap: 16 },
   loading: { padding: 16, gap: 12, alignItems: 'center' },
   stack: { gap: 12 },
-  overview: { padding: 20, gap: 24 },
+  summaryBentoStack: { gap: 12 },
+  overview: { padding: 20, gap: 18 },
   heroMetric: { gap: 4 },
   bigNumber: { fontSize: 52, lineHeight: 60, fontWeight: '600', fontVariant: ['tabular-nums'] },
   metricList: { borderTopWidth: 1, paddingTop: 16, gap: 16 },

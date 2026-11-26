@@ -419,6 +419,9 @@ async function uploadMediaToSupabaseStorage(params: {
     uploadBody = bytes;
   } else {
     const response = await fetch(params.localUri);
+    if (!response.ok) {
+      throw new Error(`Could not read local media (HTTP ${response.status}).`);
+    }
     const blob = await response.blob();
     uploadBody = blob;
     if (blob.type) contentType = blob.type;
@@ -884,7 +887,8 @@ export async function fetchTodayMomentBundle(params: {
     (m) =>
       m.user_id !== params.userId &&
       !m.user_id.startsWith('friend_') &&
-      !friendIdsSet.has(m.user_id) &&
+      ((Boolean(sessionPartnerId) && m.user_id === sessionPartnerId) ||
+        !friendIdsSet.has(m.user_id)) &&
       m.visibility !== 'friends' &&
       (m.couple_id === params.coupleId ||
         m.prompt_id === prompt.id ||
@@ -1392,12 +1396,22 @@ export async function deleteMomentPost(params: {
   const state = await readLocalMoments();
   let deleted = false;
   const storagePathsToRemove: string[] = [];
+  const isRemoteStorageObjectPath = (path: string | null | undefined): path is string =>
+    Boolean(
+      path &&
+        !path.startsWith('data:') &&
+        !path.startsWith('http://') &&
+        !path.startsWith('https://') &&
+        !path.startsWith('file://') &&
+        !path.startsWith('content://')
+    );
+
   for (const [k, rec] of Object.entries(state.moments)) {
     if (rec.id === params.momentId && rec.user_id === params.userId) {
-      if (rec.back_photo_path && !rec.back_photo_path.startsWith('data:') && !rec.back_photo_path.startsWith('http')) {
+      if (isRemoteStorageObjectPath(rec.back_photo_path)) {
         storagePathsToRemove.push(rec.back_photo_path);
       }
-      if (rec.front_photo_path && !rec.front_photo_path.startsWith('data:') && !rec.front_photo_path.startsWith('http')) {
+      if (isRemoteStorageObjectPath(rec.front_photo_path)) {
         storagePathsToRemove.push(rec.front_photo_path);
       }
       delete state.moments[k];

@@ -211,37 +211,40 @@ class KeepItWidgetBridgeModule : Module() {
       val outW = if (aspect == "9:16") 1080 else 900
       val outH = if (aspect == "9:16") 1920 else 1200
       val outBitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-      val canvas = Canvas(outBitmap)
+      var backBmp: Bitmap? = null
+      var frontBmp: Bitmap? = null
 
-      val backBmp = decodeUriToBitmap(backUri)
-      val frontBmp = decodeUriToBitmap(frontUri)
+      try {
+        val canvas = Canvas(outBitmap)
+        backBmp = decodeUriToBitmap(backUri)
+        frontBmp = decodeUriToBitmap(frontUri)
 
-      val safeHandle = authorName.lowercase().replace(Regex("[^a-z0-9_]+"), "").ifBlank { "keepit" }
-      if (aspect == "9:16") {
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-          shader = LinearGradient(
-            0f, 0f, outW * 0.25f, outH.toFloat(),
-            intArrayOf(
-              Color.parseColor(themeTop),
-              Color.parseColor(themeMid),
-              Color.parseColor(themeBottom)
-            ),
-            floatArrayOf(0f, 0.52f, 1f),
-            Shader.TileMode.CLAMP
-          )
-        }
-        canvas.drawRect(0f, 0f, outW.toFloat(), outH.toFloat(), bgPaint)
+        val safeHandle = authorName.lowercase().replace(Regex("[^a-z0-9_]+"), "").ifBlank { "keepit" }
+        if (aspect == "9:16") {
+          val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+              0f, 0f, outW * 0.25f, outH.toFloat(),
+              intArrayOf(
+                safeParseColor(themeTop, Color.parseColor("#2A221E")),
+                safeParseColor(themeMid, Color.parseColor("#181412")),
+                safeParseColor(themeBottom, Color.parseColor("#100E0D"))
+              ),
+              floatArrayOf(0f, 0.52f, 1f),
+              Shader.TileMode.CLAMP
+            )
+          }
+          canvas.drawRect(0f, 0f, outW.toFloat(), outH.toFloat(), bgPaint)
 
-        val glowTopPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-          color = Color.parseColor(themeAccent)
-          alpha = 41
-        }
-        canvas.drawCircle(910f, 210f, 240f, glowTopPaint)
-        val glowBottomPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-          color = Color.parseColor(filterHex)
-          alpha = 36
-        }
-        canvas.drawCircle(170f, 1660f, 290f, glowBottomPaint)
+          val glowTopPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = safeParseColor(themeAccent, Color.parseColor("#E37A55"))
+            alpha = 41
+          }
+          canvas.drawCircle(910f, 210f, 240f, glowTopPaint)
+          val glowBottomPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = safeParseColor(filterHex, Color.parseColor("#E37A55"))
+            alpha = 36
+          }
+          canvas.drawCircle(170f, 1660f, 290f, glowBottomPaint)
 
         // Top Header Pill matching preview
         val headerRect = RectF(250f, 96f, 830f, 172f)
@@ -256,7 +259,9 @@ class KeepItWidgetBridgeModule : Module() {
           color = Color.argb(46, 255, 255, 255)
         }
         canvas.drawRoundRect(headerRect, 38f, 38f, headerBorder)
-        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor(themeAccent) }
+        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = safeParseColor(themeAccent, Color.parseColor("#E37A55"))
+        }
         canvas.drawCircle(302f, 134f, 12f, dotPaint)
         val headerTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
           color = Color.WHITE
@@ -290,7 +295,7 @@ class KeepItWidgetBridgeModule : Module() {
 
       if (filterActive) {
         val tintPaint = Paint().apply {
-          color = Color.parseColor(filterHex)
+          color = safeParseColor(filterHex, Color.parseColor("#E37A55"))
           alpha = 52
         }
         canvas.drawRect(cardRect, tintPaint)
@@ -313,7 +318,9 @@ class KeepItWidgetBridgeModule : Module() {
         canvas.drawRect(pipRect, pipBgPaint)
         val headPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E3B99B") }
         canvas.drawCircle(pipRect.centerX(), pipRect.top + 120f, 48f, headPaint)
-        val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor(filterHex) }
+        val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          color = safeParseColor(filterHex, Color.parseColor("#E37A55"))
+        }
         canvas.drawRoundRect(
           RectF(pipRect.left + 44f, pipRect.top + 182f, pipRect.right - 44f, pipRect.bottom - 18f),
           42f, 42f, bodyPaint
@@ -321,7 +328,7 @@ class KeepItWidgetBridgeModule : Module() {
       }
       if (filterActive) {
         val pipTintPaint = Paint().apply {
-          color = Color.parseColor(filterHex)
+          color = safeParseColor(filterHex, Color.parseColor("#E37A55"))
           alpha = 52
         }
         canvas.drawRect(pipRect, pipTintPaint)
@@ -414,7 +421,7 @@ class KeepItWidgetBridgeModule : Module() {
         if (musicTitle.isNotBlank()) metaParts.add(musicTitle)
         val metaLine = metaParts.joinToString(" · ")
         val metaPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-          color = Color.parseColor(if (metaLine.isNotBlank()) themeAccent else "#9A9AA0")
+          color = if (metaLine.isNotBlank()) safeParseColor(themeAccent, Color.parseColor("#E37A55")) else Color.parseColor("#9A9AA0")
           textSize = 25f
           typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
           textAlign = Paint.Align.CENTER
@@ -454,10 +461,15 @@ class KeepItWidgetBridgeModule : Module() {
         }
       }
 
-      org.json.JSONObject().apply {
-        put("fileUri", Uri.fromFile(outFile).toString())
-        put("savedToGallery", gallerySaved)
-      }.toString()
+        org.json.JSONObject().apply {
+          put("fileUri", Uri.fromFile(outFile).toString())
+          put("savedToGallery", gallerySaved)
+        }.toString()
+      } finally {
+        backBmp?.takeIf { !it.isRecycled }?.recycle()
+        frontBmp?.takeIf { !it.isRecycled }?.recycle()
+        if (!outBitmap.isRecycled) outBitmap.recycle()
+      }
     }
   }
   private fun notifyWidgetUpdate() {
@@ -569,7 +581,15 @@ class KeepItWidgetBridgeModule : Module() {
           applyExifOrientation(decoded, orientation)
         }
         uriStr.startsWith("http://") || uriStr.startsWith("https://") -> {
-          val bytes = URL(uriStr).openStream().use { it.readBytes() }
+          val connection = (URL(uriStr).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 8_000
+            readTimeout = 10_000
+          }
+          val bytes = try {
+            connection.inputStream.use { it.readBytes() }
+          } finally {
+            connection.disconnect()
+          }
           val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
           if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -679,6 +699,9 @@ class KeepItWidgetBridgeModule : Module() {
     }
     canvas.drawPath(path, logoPaint)
   }
+
+  private fun safeParseColor(raw: String, fallback: Int): Int =
+    runCatching { Color.parseColor(raw) }.getOrDefault(fallback)
 
   companion object {
     const val PREFS_NAME = "keepit_widget_prefs"

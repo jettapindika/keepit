@@ -27,6 +27,7 @@ import {
   fetchTodayMomentBundle,
   formatLateDuration,
   submitDailyMoment,
+  todayLocalDateString,
   isMomentPromptCheckIn,
 } from '@/api/moments';
 import {
@@ -109,6 +110,7 @@ export default function CameraModalScreen() {
   }));
   const cameraRef = useRef<CameraView | null>(null);
   const cameraReadyResolverRef = useRef<(() => void) | null>(null);
+  const cameraReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const activeRecordingPromiseRef = useRef<Promise<{ uri: string } | undefined> | null>(null);
   const isMountedRef = useRef(true);
   const overlayCounterRef = useRef(0);
@@ -194,7 +196,10 @@ export default function CameraModalScreen() {
       }),
   });
 
-  const activePromptId = params.promptId || bundleQuery.data?.prompt.id || (couple ? `prompt_${couple.id}_${new Date().toISOString().slice(0, 10)}` : '');
+  const activePromptId =
+    params.promptId ||
+    bundleQuery.data?.prompt.id ||
+    (couple ? `prompt_${couple.id}_${todayLocalDateString()}` : '');
   const activeTriggerAt = params.triggerAt || bundleQuery.data?.prompt.trigger_at;
   const countdown = useMomentCountdown(activeTriggerAt);
 
@@ -209,12 +214,33 @@ export default function CameraModalScreen() {
   );
   const activeFilterMeta = getFilterPresetMeta(filterPreset);
 
+  const waitForCameraReady = (timeoutMs: number): Promise<void> => {
+    clearTimeout(cameraReadyTimeoutRef.current);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    cameraReadyResolverRef.current = resolve;
+    cameraReadyTimeoutRef.current = setTimeout(() => {
+      if (cameraReadyResolverRef.current === resolve) {
+        cameraReadyResolverRef.current = null;
+      }
+      resolve();
+    }, timeoutMs);
+    return promise;
+  };
+
   useEffect(() => {
     isMountedRef.current = true;
     // Do not fire cold OS permission prompt on mount: let user see in-viewfinder primer first
     return () => {
       isMountedRef.current = false;
       clearInterval(recordingTimerRef.current);
+      clearTimeout(cameraReadyTimeoutRef.current);
+      if (activeRecordingPromiseRef.current && Platform.OS !== 'web') {
+        try {
+          cameraRef.current?.stopRecording();
+        } catch {
+          // Recorder may already have stopped
+        }
+      }
       if (cameraReadyResolverRef.current) {
         cameraReadyResolverRef.current();
         cameraReadyResolverRef.current = null;
@@ -225,6 +251,7 @@ export default function CameraModalScreen() {
   const handleCameraReady = () => {
     if (!isMountedRef.current) return;
     setCameraReady(true);
+    clearTimeout(cameraReadyTimeoutRef.current);
     if (cameraReadyResolverRef.current) {
       cameraReadyResolverRef.current();
       cameraReadyResolverRef.current = null;
@@ -286,10 +313,7 @@ export default function CameraModalScreen() {
     if (permission?.granted && cameraRef.current) {
       try {
         if (!cameraReady) {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          cameraReadyResolverRef.current = resolve;
-          setTimeout(resolve, 900);
-          await promise;
+          await waitForCameraReady(900);
         }
         await waitMs(180);
         if (!isMountedRef.current || !cameraRef.current) return;
@@ -315,9 +339,7 @@ export default function CameraModalScreen() {
 
         setStage('switching_lens');
         setCameraReady(false);
-        const { promise: readyPromise, resolve: resolveReady } = Promise.withResolvers<void>();
-        cameraReadyResolverRef.current = resolveReady;
-        setTimeout(resolveReady, 1200);
+        const readyPromise = waitForCameraReady(1200);
         setFacing(secondLens);
         await readyPromise;
         if (!isMountedRef.current) return;
@@ -485,10 +507,7 @@ export default function CameraModalScreen() {
 
     try {
       if (!cameraReady) {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        cameraReadyResolverRef.current = resolve;
-        setTimeout(resolve, 900);
-        await promise;
+        await waitForCameraReady(900);
       }
       if (!isMountedRef.current || !cameraRef.current) return;
 
@@ -537,11 +556,17 @@ export default function CameraModalScreen() {
         setShowLocationPicker(false);
         return;
       }
-      setError('Location permission was declined. Pick a place below or type a custom spot.');
+      if (isMountedRef.current) {
+        setError('Location permission was declined. Pick a place below or type a custom spot.');
+      }
     } catch {
-      setError('GPS signal unavailable on this device. Choose a preset spot or enter a custom place.');
+      if (isMountedRef.current) {
+        setError('GPS signal unavailable on this device. Choose a preset spot or enter a custom place.');
+      }
     } finally {
-      setLocating(false);
+      if (isMountedRef.current) {
+        setLocating(false);
+      }
     }
   };
 
@@ -641,7 +666,13 @@ export default function CameraModalScreen() {
     pendingRemovalRef.current = null;
     setConfirmPrompt(null);
     setAllowLeave(true);
-    repeat?.();
+    disableRemovalPrevention();
+    setTimeout(() => {
+      if (!isMountedRef.current) return;
+      if (repeat) repeat();
+      else if (router.canGoBack()) router.back();
+      else router.replace('/(tabs)');
+    }, 0);
   };
 
   const executeRetakeMoment = () => {
@@ -706,9 +737,11 @@ export default function CameraModalScreen() {
       await queryClient.invalidateQueries({ queryKey: ['today-moment', couple.id] });
       await queryClient.invalidateQueries({ queryKey: ['month-memories', couple.id] });
       await queryClient.invalidateQueries({ queryKey: ['user-posts'] });
+      if (!isMountedRef.current) return;
       setAllowLeave(true);
       disableRemovalPrevention();
       setTimeout(() => {
+        if (!isMountedRef.current) return;
         if (router.canGoBack()) {
           router.back();
         } else {
@@ -778,18 +811,20 @@ export default function CameraModalScreen() {
     if (router.canGoBack()) router.back();
     else router.replace('/(tabs)');
   };
+  const handleCloseRef = useRef(handleClose);
+  handleCloseRef.current = handleClose;
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        handleClose();
+        handleCloseRef.current();
       }
     };
     globalThis.addEventListener('keydown', onKey);
     return () => globalThis.removeEventListener('keydown', onKey);
-  });
+  }, []);
 
   const filterActive = filterPreset !== 'normal' || showFilterTray;
 

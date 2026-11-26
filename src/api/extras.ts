@@ -160,6 +160,16 @@ export async function simulateSandboxPartnerNudge(params: {
   return record;
 }
 
+function momentLocalDateForExtras(rec: Pick<MomentRecord, 'posted_at' | 'captured_at'>): string {
+  const rawIso = rec.posted_at || rec.captured_at;
+  if (!rawIso) return todayLocalDateString();
+  const parsed = new Date(rawIso);
+  if (Number.isNaN(parsed.getTime())) {
+    return rawIso.slice(0, 10);
+  }
+  return todayLocalDateString(parsed);
+}
+
 export async function fetchMonthMemories(params: {
   coupleId: string;
   userId: string;
@@ -181,10 +191,15 @@ export async function fetchMonthMemories(params: {
       await Promise.all(
         days.map(async (day) => {
           if (!day.mine && !day.partner) return;
-          const { data: signedData } = await client.functions.invoke('sign-moment-urls', {
-            body: { promptId: day.prompt_id },
-          });
-          const urlMap = (signedData as { urls?: Record<string, string> } | null)?.urls ?? {};
+          let urlMap: Record<string, string> = {};
+          try {
+            const { data: signedData } = await client.functions.invoke('sign-moment-urls', {
+              body: { promptId: day.prompt_id },
+            });
+            urlMap = (signedData as { urls?: Record<string, string> } | null)?.urls ?? {};
+          } catch {
+            urlMap = {};
+          }
           if (day.mine) {
             day.mine.back_photo_url =
               urlMap[day.mine.back_photo_path] ?? day.mine.back_photo_url ?? day.mine.back_photo_path;
@@ -244,7 +259,7 @@ export async function fetchMonthMemories(params: {
   const sessionPartnerId = useSessionStore.getState().partner?.id;
   for (const rec of Object.values(state.moments)) {
     if (!rec?.id || rec.snap_once) continue;
-    const mDate = (rec.posted_at || rec.captured_at || '').slice(0, 10);
+    const mDate = momentLocalDateForExtras(rec);
     if (!mDate.startsWith(monthPrefix)) continue;
     const belongsToSpace =
       rec.couple_id === params.coupleId ||
@@ -290,7 +305,7 @@ export async function fetchMonthMemories(params: {
   for (const prompt of promptsInMonth) {
     const promptMoments = allUniqueMoments.filter((m) => {
       if (m.snap_once) return false;
-      const mDate = (m.posted_at || m.captured_at || '').slice(0, 10);
+      const mDate = momentLocalDateForExtras(m);
       return (
         m.prompt_id === prompt.id ||
         ((m.couple_id === params.coupleId ||

@@ -5,8 +5,10 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { formatLateDuration, isMomentPromptCheckIn } from '@/api/moments';
+import { BentoTile } from '@/components/ui/BentoPrimitives';
 import { InlineNotice, KeepItButton, KeepItWatermarkLogo, RevealOnAppear } from '@/components/ui/Primitives';
 import { AppPressable } from '@/components/ui/ScreenKit';
+import { useAccessibleModal } from '@/hooks/useAccessibleModal';
 import { useKeepItTheme } from '@/theme/tokens';
 import { MomentRecord } from '@/types/database';
 import { exportAndShareCompositeMoment, formatMomentWatermarkTimestamp } from '@/utils/momentExport';
@@ -173,6 +175,15 @@ export function TogetherCollageCard({
   const isGoldenSync = !myMoment.is_late && !partnerMoment.is_late;
   const canCycleStamp = availableStamps.length > 1;
 
+  const previewModal = useAccessibleModal({
+    visible: Boolean(previewTarget),
+    onClose: () => {
+      if (!saving) setPreviewTarget(null);
+    },
+    disabled: saving !== null,
+    title: previewTarget ? `Save ${previewTarget.name}'s Moment` : 'Save Moment preview',
+  });
+
   const openSavePreview = (
     moment: MomentRecord,
     name: string,
@@ -250,15 +261,7 @@ export function TogetherCollageCard({
 
   return (
     <RevealOnAppear revealKey={revealKey ?? `together:${promptDate}`}>
-      <View
-        style={[
-          styles.card,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderRadius: radii.card,
-          },
-        ]}>
+      <BentoTile variant="spotlight" pattern="dots" radius={radii.card} style={styles.card}>
         <View style={styles.header}>
           <View style={styles.headerTopRow}>
             <Text style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>
@@ -414,7 +417,7 @@ export function TogetherCollageCard({
         {notice ? (
           <InlineNotice tone={notice.error ? 'error' : 'info'} message={notice.message} />
         ) : null}
-      </View>
+      </BentoTile>
 
       <Modal
         visible={Boolean(previewTarget)}
@@ -423,17 +426,23 @@ export function TogetherCollageCard({
         onRequestClose={() => { if (!saving) setPreviewTarget(null); }}>
         <View style={styles.previewModalBackdrop}>
           {previewTarget ? (
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.previewModalContent}
+            <View
+              ref={previewModal.dialogRef as never}
+              {...previewModal.dialogA11yProps}
               style={[
                 styles.previewModalSheet,
                 {
                   backgroundColor: colors.sheetSurface,
                   borderColor: colors.border,
                   borderRadius: radii.group,
+                  borderWidth: 1,
+                  overflow: 'hidden',
                 },
               ]}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.previewModalContent}
+              style={{ maxHeight: '100%' }}>
               <View style={styles.headerTopRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.title, { color: colors.ink, fontFamily: type.fontSans }]}>
@@ -525,6 +534,7 @@ export function TogetherCollageCard({
                 }
               />
             </ScrollView>
+            </View>
           ) : null}
         </View>
       </Modal>

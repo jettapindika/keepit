@@ -2,7 +2,7 @@ import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import { compressImageForCrossDeviceShare } from '../../modules/keepit-widget-bridge';
-export type ProfileImageKind = 'avatar' | 'banner';
+export type ProfileImageKind = 'avatar' | 'banner' | 'message';
 
 export interface PickedProfileImage {
   uri: string;
@@ -13,6 +13,7 @@ export interface PickedProfileImage {
 const MAX_DIMENSIONS: Record<ProfileImageKind, { width: number; height: number }> = {
   avatar: { width: 512, height: 512 },
   banner: { width: 1280, height: 480 },
+  message: { width: 960, height: 960 },
 };
 
 function resizeWebImageToDataUri(
